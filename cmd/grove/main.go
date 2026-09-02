@@ -34,8 +34,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if err == nil {
 		return 0
 	}
-	fmt.Fprintf(stderr, "grove: %v\n", err)
 
+	// A child process that failed has already said so on its own stderr.
+	var exit *exitError
+	if errors.As(err, &exit) {
+		if exit.err != nil {
+			fmt.Fprintf(stderr, "grove: %v\n", exit.err)
+		}
+		return exit.code
+	}
+
+	fmt.Fprintf(stderr, "grove: %v\n", err)
 	var usage usageError
 	if errors.As(err, &usage) {
 		fmt.Fprintln(stderr, "Run 'grove --help' for usage.")
@@ -71,9 +80,30 @@ already reads.`,
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return usageError{err}
 	})
-	root.AddCommand(newContextCommand())
+	root.AddCommand(
+		newContextCommand(),
+		newDaemonCommand(),
+		newExecCommand(),
+		newLsCommand(),
+	)
 	return root
 }
+
+// exitError carries an exit code out to run. A nil err means the command has
+// already reported the failure, as a child process does.
+type exitError struct {
+	code int
+	err  error
+}
+
+func (e *exitError) Error() string {
+	if e.err != nil {
+		return e.err.Error()
+	}
+	return fmt.Sprintf("exit status %d", e.code)
+}
+
+func (e *exitError) Unwrap() error { return e.err }
 
 type usageError struct{ err error }
 

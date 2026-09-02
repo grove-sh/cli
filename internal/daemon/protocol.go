@@ -1,0 +1,35 @@
+package daemon
+
+const (
+	OpAcquire = "acquire"
+	OpList    = "list"
+)
+
+type Request struct {
+	Op       string `json:"op"`
+	Slug     string `json:"slug,omitempty"`
+	Service  string `json:"service,omitempty"`
+	Worktree string `json:"worktree,omitempty"`
+}
+
+type Response struct {
+	Error  string  `json:"error,omitempty"`
+	Grant  *Grant  `json:"grant,omitempty"`
+	Leases []Entry `json:"leases,omitempty"`
+}
+
+// A Grant is a leased port and the hostname routed to it. It lives only as long
+// as the connection that asked for it.
+type Grant struct {
+	Port int    `json:"port"`
+	Host string `json:"host"`
+	URL  string `json:"url"`
+}
+
+type Entry struct {
+	Slug     string `json:"slug"`
+	Service  string `json:"service,omitempty"`
+	Worktree string `json:"worktree"`
+	Port     int    `json:"port"`
+	Host     string `json:"host"`
+}
