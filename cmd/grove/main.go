@@ -4,11 +4,12 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"runtime/debug"
+
+	"github.com/spf13/cobra"
 )
 
 // customVersion is never set in this repo. Downstream packagers stamp it in:
@@ -16,60 +17,88 @@ import (
 //	go build -ldflags '-X main.customVersion=v0.1.0' ./cmd/grove
 var customVersion string
 
+// TODO: comes from ~/.config/grove/config.toml once config parsing lands.
+const defaultDomain = "grov.site"
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("grove", flag.ContinueOnError)
+	root := newRootCommand()
+	root.SetArgs(args)
+	root.SetOut(stdout)
+	root.SetErr(stderr)
 
-	// Silence flag's own error and usage output so every stream below is ours.
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	err := root.Execute()
+	if err == nil {
+		return 0
+	}
+	fmt.Fprintf(stderr, "grove: %v\n", err)
 
-	showVersion := fs.Bool("v", false, "print the grove version and exit")
-	fs.BoolVar(showVersion, "version", false, "print the grove version and exit")
-
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			usage(stdout)
-			return 0
-		}
-		fmt.Fprintf(stderr, "grove: %v\n\n", err)
-		usage(stderr)
+	var usage usageError
+	if errors.As(err, &usage) {
+		fmt.Fprintln(stderr, "Run 'grove --help' for usage.")
 		return 2
 	}
-
-	if *showVersion {
-		fmt.Fprintf(stdout, "grove %s\n", resolveVersion())
-		return 0
-	}
-
-	if fs.NArg() == 0 {
-		usage(stdout)
-		return 0
-	}
-
-	fmt.Fprintf(stderr, "grove: unknown command %q\n\n", fs.Arg(0))
-	usage(stderr)
-	return 2
+	return 1
 }
 
-func usage(w io.Writer) {
-	fmt.Fprint(w, `grove manages local HTTPS hostnames, ports, and env vars per git worktree.
+func newRootCommand() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "grove",
+		Short: "Local HTTPS hostnames, ports, and env vars, scoped per git worktree",
+		Long: `grove gives every git worktree its own hostname, port, and environment.
 
-usage:
-  grove [flags]
-
-flags:
-  -v, -version   print the grove version and exit
-  -h, -help      print this help and exit
-`)
+Each project and each of its worktrees resolves to a unique context, and grove
+maps that context onto a local HTTPS hostname and the env vars your tooling
+already reads.`,
+		// A failure to resolve a context should not print the whole help text.
+		SilenceUsage: true,
+		// run prints errors, on the stream it chose.
+		SilenceErrors: true,
+		Version:       resolveVersion(),
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return usageErrorf("unknown command %q", args[0])
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
+	}
+	root.SetVersionTemplate("grove {{.Version}}\n")
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		return usageError{err}
+	})
+	root.AddCommand(newContextCommand())
+	return root
 }
 
-// The go command derives the version from VCS in a git checkout, so nothing
-// stamps it in at build time. "(devel)" means it had nothing to go on, as with
-// "go run" or -buildvcs=false.
+type usageError struct{ err error }
+
+func (e usageError) Error() string { return e.err.Error() }
+func (e usageError) Unwrap() error { return e.err }
+
+func usageErrorf(format string, a ...any) usageError {
+	return usageError{fmt.Errorf(format, a...)}
+}
+
+// usageArgs marks a cobra argument validator's failures as usage errors, so a
+// bad invocation exits 2 rather than looking like a runtime failure.
+func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if err := validate(cmd, args); err != nil {
+			return usageError{err}
+		}
+		return nil
+	}
+}
+
+// resolveVersion reports the version Go recorded in the binary. The go command
+// derives it from VCS in a git checkout, so nothing stamps it in at build time.
+// "(devel)" means it had nothing to go on, as with "go run" or -buildvcs=false.
 func resolveVersion() string {
 	if customVersion != "" {
 		return customVersion
