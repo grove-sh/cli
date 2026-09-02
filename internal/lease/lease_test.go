@@ -29,8 +29,8 @@ func acquire(t *testing.T, r *lease.Registry, slug, service, worktree string) *l
 	return l
 }
 
-// allFree stands in for the bind probe when a test cares about allocation
-// rather than what the machine happens to be running.
+// allFree replaces the bind probe so allocation tests do not depend on what the
+// machine happens to be running.
 func allFree(int) bool { return true }
 
 func TestPortComesFromTheRange(t *testing.T) {
@@ -70,7 +70,6 @@ func TestServicesOfOneContextGetDifferentPorts(t *testing.T) {
 func TestOccupiedPortIsSkipped(t *testing.T) {
 	r := registry(t, lease.Options{})
 
-	// Learn where this context wants to land, then stand on it.
 	wanted := acquire(t, r, "app1", "web", "/src/app1")
 	port := wanted.Port
 	wanted.Release()
@@ -133,8 +132,8 @@ func TestSecondAcquireOfOneServiceIsBusy(t *testing.T) {
 	}
 }
 
-// Two worktrees that resolve to the same slug must not both claim the hostname.
-// This is where the collision identity cannot detect on its own gets caught.
+// Two worktrees that resolve to one slug must not both claim the hostname.
+// identity.Resolve cannot see this, so the registry is where it gets caught.
 func TestSameSlugFromAnotherWorktreeCollides(t *testing.T) {
 	r := registry(t, lease.Options{Free: allFree})
 	acquire(t, r, "app1-feat1", "web", "/src/feat.1")

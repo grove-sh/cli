@@ -218,7 +218,6 @@ func TestOutsideAGitRepository(t *testing.T) {
 	}
 }
 
-// The bare clone plus worktrees layout, where no worktree is the main one.
 func bareClone(t *testing.T, dest string) {
 	t.Helper()
 	seed := filepath.Join(t.TempDir(), "seed")

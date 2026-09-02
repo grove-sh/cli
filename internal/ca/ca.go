@@ -109,14 +109,12 @@ func generate(certPath, keyPath string) (*CA, error) {
 	return &CA{cert: cert, key: key}, nil
 }
 
-// RootPEM is what goes into the OS trust stores and the bundle grove exports to
-// runtimes that replace their trust store rather than adding to it.
 func (c *CA) RootPEM() []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.cert.Raw})
 }
 
-// Leaf issues a server certificate. A wildcard covers exactly one label and
-// does not cover the domain itself, so callers pass both.
+// Leaf issues a server certificate. A wildcard covers one label and does not
+// cover the domain itself, so callers pass both.
 func (c *CA) Leaf(names ...string) (*tls.Certificate, error) {
 	if len(names) == 0 {
 		return nil, errors.New("ca: no names for leaf")

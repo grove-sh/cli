@@ -13,8 +13,8 @@ import (
 	"strings"
 )
 
-// A DNS label may not exceed 63 bytes. So does a postgres identifier, so one
-// cap covers both.
+// A DNS label may not exceed 63 bytes, and neither may a postgres identifier,
+// so one cap covers both.
 const maxLabel = 63
 
 var ErrBareRepository = errors.New("identity: a bare repository is not a context; cd into one of its worktrees, see git worktree list")
@@ -121,9 +121,8 @@ type repo struct {
 	bare    string // the bare repository, empty when it is not bare
 }
 
-// findRepo locates the worktree containing dir and the repository behind it.
-// Both paths come from git so they are comparable; mixing in os.Getwd would
-// break on macOS, where /tmp resolves through a symlink.
+// findRepo takes both paths from git so they stay comparable. Mixing in
+// os.Getwd would break on macOS, where /tmp resolves through a symlink.
 func findRepo(dir string) (repo, error) {
 	out, err := git(dir, "rev-parse", "--path-format=absolute", "--show-toplevel")
 	if err != nil {
@@ -159,9 +158,8 @@ func findRepo(dir string) (repo, error) {
 	return r, nil
 }
 
-// projectFromBareDir names a project after its bare repository. Both common
-// layouts put the name one level out: app1.git, and app1/.bare next to the
-// worktrees.
+// projectFromBareDir handles both layouts in the wild, which put the name one
+// level out: app1.git, and app1/.bare beside the worktrees.
 func projectFromBareDir(dir string) string {
 	name := strings.TrimSuffix(filepath.Base(dir), ".git")
 	if name == "" || strings.HasPrefix(name, ".") {

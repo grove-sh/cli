@@ -53,9 +53,8 @@ func newRootCommand() *cobra.Command {
 Each project and each of its worktrees resolves to a unique context, and grove
 maps that context onto a local HTTPS hostname and the env vars your tooling
 already reads.`,
-		// A failure to resolve a context should not print the whole help text.
 		SilenceUsage: true,
-		// run prints errors, on the stream it chose.
+		// run prints errors itself, on the stream it chose.
 		SilenceErrors: true,
 		Version:       resolveVersion(),
 		Args: func(_ *cobra.Command, args []string) error {

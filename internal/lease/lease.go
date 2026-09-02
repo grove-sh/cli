@@ -80,8 +80,8 @@ func New(opts Options) (*Registry, error) {
 	}, nil
 }
 
-// Acquire leases a port for one service of one context. The caller holds the
-// lease for as long as the process it started stays alive.
+// Acquire leases a port for one service of one context. The caller holds it for
+// as long as the process it started stays alive.
 func (r *Registry) Acquire(slug, service, worktree string) (*Lease, error) {
 	if slug == "" {
 		return nil, errors.New("lease: acquire needs a slug")
