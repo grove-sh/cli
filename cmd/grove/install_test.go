@@ -11,8 +11,11 @@ import (
 
 // Every case passes --trust=false. Installing for real would touch the system
 // trust store and ask for a password.
+// Every case redirects the unit directory, which puts internal/service in
+// unmanaged mode. A test run must not enable anything on the machine.
 func TestInstallCreatesTheAuthority(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
+	t.Setenv("GROVE_SERVICE_DIR", filepath.Join(dir, "units"))
 
 	code, stdout, stderr := exercise(t, "install", "--state-dir", dir, "--trust=false")
 	if code != 0 {
@@ -40,6 +43,7 @@ func TestInstallCreatesTheAuthority(t *testing.T) {
 
 func TestInstallTightensALooseStateDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
+	t.Setenv("GROVE_SERVICE_DIR", filepath.Join(dir, "units"))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +69,7 @@ func TestInstallTightensALooseStateDir(t *testing.T) {
 // authorities.
 func TestInstallReusesTheRoot(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
+	t.Setenv("GROVE_SERVICE_DIR", filepath.Join(dir, "units"))
 
 	exercise(t, "install", "--state-dir", dir, "--trust=false")
 	first, err := os.ReadFile(filepath.Join(dir, "root.crt"))
@@ -84,6 +89,7 @@ func TestInstallReusesTheRoot(t *testing.T) {
 
 func TestExecPassesTheCAEnvironmentToTheChild(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "state")
+	t.Setenv("GROVE_SERVICE_DIR", filepath.Join(state, "units"))
 	if _, _, stderr := exercise(t, "install", "--state-dir", state, "--trust=false"); stderr != "" {
 		t.Fatal(stderr)
 	}

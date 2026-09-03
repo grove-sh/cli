@@ -2,28 +2,32 @@ package main
 
 import (
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
 	"github.com/grove-sh/cli/internal/ca"
 	"github.com/grove-sh/cli/internal/daemon"
+	"github.com/grove-sh/cli/internal/service"
 	"github.com/grove-sh/cli/internal/trust"
 )
 
 const unprivilegedPortsFile = "/proc/sys/net/ipv4/ip_unprivileged_port_start"
 
 func newInstallCommand() *cobra.Command {
-	var stateDir string
-	var installTrust bool
+	var stateDir, listen string
+	var installTrust, installService bool
 
 	cmd := &cobra.Command{
 		Use:   "install",
@@ -68,6 +72,7 @@ setting you should apply yourself.`,
 			fmt.Fprintf(w, "system bundle\t%s\n", bundleState(root.Certificate()))
 			w.Flush()
 
+			reportService(out, listen, installService)
 			reportPrivilegedPorts(out)
 			return nil
 		},
@@ -75,6 +80,8 @@ setting you should apply yourself.`,
 
 	cmd.Flags().StringVar(&stateDir, "state-dir", daemon.StateDir(), "directory holding the CA and bundle")
 	cmd.Flags().BoolVar(&installTrust, "trust", true, "install the root into the system trust stores")
+	cmd.Flags().BoolVar(&installService, "service", true, "install and start the daemon as a systemd user unit")
+	cmd.Flags().StringVar(&listen, "listen", "127.0.0.1:443", "address the installed service serves HTTPS on")
 	return cmd
 }
 
@@ -89,6 +96,85 @@ func bundleState(root *x509.Certificate) string {
 	default:
 		return trust.SystemBundle() + " does not carry this root yet"
 	}
+}
+
+// reportService installs the user unit when there is a service manager to hand
+// it to, and says why not when there is not.
+func reportService(out io.Writer, listen string, wanted bool) {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	defer w.Flush()
+
+	switch {
+	case !wanted:
+		fmt.Fprintf(w, "service\tskipped by --service=false\n")
+		return
+	case !service.Available():
+		fmt.Fprintf(w, "service\tno systemd here, so run the daemon yourself with grove restart\n")
+		return
+	}
+
+	executable, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(w, "service\t%v\n", err)
+		return
+	}
+	path, err := service.Write(executable, listen)
+	if err != nil {
+		fmt.Fprintf(w, "service\t%v\n", err)
+		return
+	}
+	fmt.Fprintf(w, "service\t%s\n", path)
+
+	// Redirecting the unit directory means the real service manager is off
+	// limits, so say that rather than claiming work nobody did.
+	if !service.Managed() {
+		fmt.Fprintf(w, "service\twritten only, GROVE_SERVICE_DIR keeps grove away from systemd\n")
+		return
+	}
+
+	if err := service.Enable(); err != nil {
+		fmt.Fprintf(w, "service\tcould not enable it: %v\n", err)
+		return
+	}
+
+	// Starting a daemon that cannot bind its port leaves systemd waiting for a
+	// readiness notification that never comes, so check the port first.
+	if held := whatHolds(listen); held != "" {
+		fmt.Fprintf(w, "service\tenabled, not started yet: %s\n", held)
+		return
+	}
+	if err := service.Start(); err != nil {
+		fmt.Fprintf(w, "service\tenabled, but it did not start: %v\n", err)
+		return
+	}
+	fmt.Fprintf(w, "service\tenabled and running\n")
+
+	if service.Lingering() {
+		fmt.Fprintf(w, "lingering\talready on, so it survives logout\n")
+		return
+	}
+	if err := service.EnableLingering(); err != nil {
+		fmt.Fprintf(w, "lingering\toff, and grove could not turn it on: %v\n", err)
+		fmt.Fprintf(w, "lingering\trun: loginctl enable-linger $USER\n")
+		return
+	}
+	fmt.Fprintf(w, "lingering\tturned on, so it survives logout\n")
+}
+
+// whatHolds reports why an address cannot be bound, or nothing when it can.
+func whatHolds(address string) string {
+	ln, err := net.Listen("tcp", address)
+	if err == nil {
+		ln.Close()
+		return ""
+	}
+	switch {
+	case errors.Is(err, syscall.EACCES):
+		return address + " needs privileges grove does not have yet"
+	case errors.Is(err, syscall.EADDRINUSE):
+		return address + " is already in use"
+	}
+	return err.Error()
 }
 
 func newUninstallCommand() *cobra.Command {

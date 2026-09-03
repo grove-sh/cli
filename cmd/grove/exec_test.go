@@ -229,7 +229,8 @@ func TestExecReportsAMissingCommand(t *testing.T) {
 func TestExecWithoutADaemon(t *testing.T) {
 	t.Chdir(tempRepo(t, "app1"))
 
-	code, _, stderr := exercise(t, "exec", "--socket", filepath.Join(t.TempDir(), "absent.sock"), "--", "true")
+	code, _, stderr := exercise(t, "exec", "--autostart=false",
+		"--socket", filepath.Join(t.TempDir(), "absent.sock"), "--", "true")
 
 	if code != 1 {
 		t.Errorf("exit = %d, want 1", code)
@@ -331,5 +332,44 @@ func TestSyncSaysSoWhenThereIsNothingToDo(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "no detached ports") {
 		t.Errorf("stdout = %q", stdout)
+	}
+}
+
+// Nothing is running, so exec has to bring a daemon up before it can lease a
+// port, and clean up after itself is the caller's job, not grove's.
+func TestExecStartsADaemonWhenNoneIsRunning(t *testing.T) {
+	state := t.TempDir()
+	socket := filepath.Join(state, "control.sock")
+	t.Setenv("GROVE_STATE_DIR", state)
+	t.Setenv("GROVE_SOCKET", socket)
+	t.Setenv("GROVE_LISTEN", "127.0.0.1:0")
+	t.Setenv("GROVE_TEST_RUN_CLI", "1")
+	if _, err := ca.OpenOrCreate(state); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if client, err := daemon.Dial(socket); err == nil {
+			client.Stop()
+			client.Close()
+		}
+	})
+
+	repo := tempRepo(t, "app1")
+	t.Chdir(repo)
+
+	code, _, stderr := exercise(t, "exec", "--", "sh", "-c", "echo $PORT > port.txt")
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+
+	written, err := os.ReadFile(filepath.Join(repo, "port.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(written)) == "" {
+		t.Error("the child got no port, so the daemon never came up")
+	}
+	if _, err := daemon.Dial(socket); err != nil {
+		t.Errorf("the daemon did not stay up: %v", err)
 	}
 }

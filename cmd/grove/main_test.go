@@ -10,6 +10,16 @@ import (
 	"testing"
 )
 
+// TestMain lets the test binary stand in for the grove binary, which is what
+// autostart re-executes. Without it, os.Executable() under go test points at
+// the test binary and the spawned "daemon" is parsed as test flags.
+func TestMain(m *testing.M) {
+	if os.Getenv("GROVE_TEST_RUN_CLI") == "1" {
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	}
+	os.Exit(m.Run())
+}
+
 func exercise(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var out, err bytes.Buffer

@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/grove-sh/cli/internal/daemon"
+	"github.com/grove-sh/cli/internal/service"
 )
 
 // daemonOptions are shared by the command that runs a daemon and the one that
@@ -23,11 +24,56 @@ type daemonOptions struct {
 	caDir  string
 }
 
+func defaultDaemonOptions() daemonOptions {
+	listen := os.Getenv("GROVE_LISTEN")
+	if listen == "" {
+		listen = "127.0.0.1:443"
+	}
+	return daemonOptions{
+		socket: daemon.DefaultSocket(),
+		listen: listen,
+		domain: defaultDomain,
+		caDir:  daemon.StateDir(),
+	}
+}
+
 func (o *daemonOptions) bind(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&o.socket, "socket", daemon.DefaultSocket(), "control socket path")
-	cmd.Flags().StringVar(&o.listen, "listen", "127.0.0.1:443", "address to serve HTTPS on")
-	cmd.Flags().StringVar(&o.domain, "domain", defaultDomain, "domain every context lives under")
-	cmd.Flags().StringVar(&o.caDir, "ca-dir", daemon.StateDir(), "directory holding the local CA")
+	defaults := defaultDaemonOptions()
+	cmd.Flags().StringVar(&o.socket, "socket", defaults.socket, "control socket path")
+	cmd.Flags().StringVar(&o.listen, "listen", defaults.listen, "address to serve HTTPS on")
+	cmd.Flags().StringVar(&o.domain, "domain", defaults.domain, "domain every context lives under")
+	cmd.Flags().StringVar(&o.caDir, "ca-dir", defaults.caDir, "directory holding the local CA")
+}
+
+// dialOrStart connects to the daemon, starting one when nothing answers. Only
+// exec does this: a daemon appearing because you asked what was running, or
+// because you asked to stop it, would be a surprise.
+func dialOrStart(socket string, autostart bool) (*daemon.Client, error) {
+	client, err := daemon.Dial(socket)
+	if err == nil {
+		return client, nil
+	}
+	var down *daemon.NotRunningError
+	if !autostart || !errors.As(err, &down) {
+		return nil, err
+	}
+	if err := ensureDaemon(socket); err != nil {
+		return nil, err
+	}
+	return daemon.Dial(socket)
+}
+
+// ensureDaemon prefers the service manager when there is a unit for it to
+// manage, so a daemon grove starts is one systemd knows about.
+func ensureDaemon(socket string) error {
+	if service.Available() && service.Status().Installed {
+		if err := service.Start(); err == nil {
+			return waitForSocket(socket, 15*time.Second)
+		}
+	}
+	opts := defaultDaemonOptions()
+	opts.socket = socket
+	return spawnDaemon(opts)
 }
 
 func (o daemonOptions) args() []string {

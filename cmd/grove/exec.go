@@ -20,6 +20,7 @@ import (
 
 func newExecCommand() *cobra.Command {
 	var socket, service string
+	var autostart bool
 
 	cmd := &cobra.Command{
 		Use:   "exec [flags] -- command [args...]",
@@ -50,7 +51,7 @@ command. Signals and the exit code pass through.`,
 				return err
 			}
 
-			client, err := daemon.Dial(socket)
+			client, err := dialOrStart(socket, autostart)
 			if err != nil {
 				return err
 			}
@@ -73,6 +74,7 @@ command. Signals and the exit code pass through.`,
 	cmd.Flags().SetInterspersed(false)
 	cmd.Flags().StringVarP(&service, "service", "s", "", "route or port to bind, overriding the directory")
 	cmd.Flags().StringVar(&socket, "socket", daemon.DefaultSocket(), "control socket path")
+	cmd.Flags().BoolVar(&autostart, "autostart", true, "start a daemon if none is running")
 	return cmd
 }
 

@@ -17,6 +17,7 @@ import (
 
 	"github.com/grove-sh/cli/internal/ca"
 	"github.com/grove-sh/cli/internal/daemon"
+	"github.com/grove-sh/cli/internal/service"
 	"github.com/grove-sh/cli/internal/trust"
 )
 
@@ -50,6 +51,7 @@ script; a warning does not.`,
 				checkAuthority(stateDir),
 				checkBundle(stateDir),
 				checkDaemon(socket),
+				checkService(),
 				checkPort443(),
 			}
 
@@ -174,6 +176,45 @@ func checkDaemon(socket string) finding {
 	}
 	f.state = ok
 	f.detail = fmt.Sprintf("on %s, pid %d, %d lease(s)", status.Listen, status.PID, status.Leases)
+	return f
+}
+
+func checkService() finding {
+	f := finding{name: "service"}
+
+	if !service.Available() {
+		f.state = warn
+		f.detail = "no systemd here, so nothing restarts the daemon for you"
+		f.advice = "Start it yourself with grove restart, or leave grove daemon running."
+		return f
+	}
+
+	state := service.Status()
+	switch {
+	case !state.Installed:
+		f.state = warn
+		f.detail = "not installed, so the daemon will not come back after a reboot"
+		f.advice = "Run grove install."
+		return f
+	case !state.Enabled:
+		f.state = warn
+		f.detail = "installed but not enabled"
+		f.advice = "Run: systemctl --user enable --now grove"
+		return f
+	case !service.Lingering():
+		f.state = warn
+		f.detail = "enabled, but your user manager does not linger, so it stops at logout"
+		f.advice = "Run: loginctl enable-linger $USER"
+		return f
+	case !state.Active:
+		f.state = bad
+		f.detail = "enabled but not running"
+		f.advice = "Look at why with: systemctl --user status grove"
+		return f
+	}
+
+	f.state = ok
+	f.detail = "enabled, running, and lingering"
 	return f
 }
 
