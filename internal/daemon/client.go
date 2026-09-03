@@ -36,20 +36,21 @@ func Dial(socket string) (*Client, error) {
 
 func (c *Client) Close() error { return c.conn.Close() }
 
-// Acquire leases a port. The lease lasts until the client is closed, so the
-// caller keeps it open for as long as the process it starts is alive.
-func (c *Client) Acquire(slug, service, worktree string) (Grant, error) {
-	resp, err := c.roundTrip(Request{Op: OpAcquire, Slug: slug, Service: service, Worktree: worktree})
+// Acquire leases a port for each entry, keyed by name in the reply. Attached
+// leases last until the client is closed, so the caller keeps it open for as
+// long as the process it starts is alive; detached ones outlive it.
+func (c *Client) Acquire(slug, worktree string, entries []Entry) (map[string]Grant, error) {
+	resp, err := c.roundTrip(Request{Op: OpAcquire, Slug: slug, Worktree: worktree, Entries: entries})
 	if err != nil {
-		return Grant{}, err
+		return nil, err
 	}
-	if resp.Grant == nil {
-		return Grant{}, errors.New("daemon: acquire returned no grant")
+	if resp.Grants == nil {
+		return nil, errors.New("daemon: acquire returned no grants")
 	}
-	return *resp.Grant, nil
+	return resp.Grants, nil
 }
 
-func (c *Client) List() ([]Entry, error) {
+func (c *Client) List() ([]Live, error) {
 	resp, err := c.roundTrip(Request{Op: OpList})
 	if err != nil {
 		return nil, err

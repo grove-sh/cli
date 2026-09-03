@@ -34,9 +34,17 @@ running, so the list is empty rather than stale.`,
 			}
 
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "HOST\tPORT\tWORKTREE")
+			fmt.Fprintln(w, "NAME\tPORT\tHELD\tWORKTREE")
 			for _, e := range entries {
-				fmt.Fprintf(w, "%s\t%s\t%s\n", e.Host, strconv.Itoa(e.Port), e.Worktree)
+				name := e.Host
+				if name == "" {
+					name = e.Slug + ":" + e.Service
+				}
+				held := "command"
+				if e.Detached {
+					held = "detached"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", name, strconv.Itoa(e.Port), held, e.Worktree)
 			}
 			return w.Flush()
 		},

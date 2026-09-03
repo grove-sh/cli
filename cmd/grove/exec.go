@@ -5,11 +5,14 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
 
+	"github.com/grove-sh/cli/internal/config"
 	"github.com/grove-sh/cli/internal/daemon"
 	"github.com/grove-sh/cli/internal/identity"
 	"github.com/grove-sh/cli/internal/trust"
@@ -20,12 +23,14 @@ func newExecCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "exec [flags] -- command [args...]",
-		Short: "Run a command with this context's port and hostname in its environment",
-		Long: `Run a command with this context's port and hostname in its environment.
+		Short: "Run a command with this context's ports and hostnames in its environment",
+		Long: `Run a command with this context's ports and hostnames in its environment.
 
-grove leases a port, routes this context's hostname to it, and holds that lease
-for as long as the command runs. Signals and the exit code pass through.`,
-		Example: "  grove exec -- pnpm dev\n  grove exec -s api -- pnpm dev:api",
+grove leases a port for the route this directory belongs to, routes the route's
+hostname to it, and holds that lease for as long as the command runs. Entries
+marked detached are always active, since whatever binds them outlives the
+command. Signals and the exit code pass through.`,
+		Example: "  grove exec -- pnpm dev\n  grove exec -s admin -- pnpm dev",
 		Args:    usageArgs(cobra.MinimumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir, err := os.Getwd()
@@ -36,6 +41,14 @@ for as long as the command runs. Signals and the exit code pass through.`,
 			if err != nil {
 				return err
 			}
+			cfg, err := config.Load(dir)
+			if err != nil {
+				return err
+			}
+			active, err := cfg.Select(dir, service)
+			if err != nil {
+				return err
+			}
 
 			client, err := daemon.Dial(socket)
 			if err != nil {
@@ -43,36 +56,119 @@ for as long as the command runs. Signals and the exit code pass through.`,
 			}
 			defer client.Close()
 
-			grant, err := client.Acquire(context.Slug, service, context.Root)
+			grants, err := client.Acquire(context.Slug, context.Root, entriesToLease(cfg, active))
 			if err != nil {
 				return err
 			}
 
-			return runChild(args, grant, trust.Env(daemon.StateDir()))
+			env, err := environment(cfg, context, active, grants)
+			if err != nil {
+				return err
+			}
+			return runChild(args, env)
 		},
 	}
 
 	// Stop flag parsing at the command name so its own flags reach the child.
 	cmd.Flags().SetInterspersed(false)
-	cmd.Flags().StringVarP(&service, "service", "s", "", "service to bind (default is the context's bare hostname)")
+	cmd.Flags().StringVarP(&service, "service", "s", "", "route or port to bind, overriding the directory")
 	cmd.Flags().StringVar(&socket, "socket", daemon.DefaultSocket(), "control socket path")
 	return cmd
 }
 
-func runChild(args []string, grant daemon.Grant, caEnv []string) error {
-	port := strconv.Itoa(grant.Port)
+func entriesToLease(cfg *config.Config, active *config.Entry) []daemon.Entry {
+	var out []daemon.Entry
+	add := func(entry *config.Entry) {
+		out = append(out, daemon.Entry{
+			Name:     entry.Name,
+			Label:    entry.Label,
+			Routed:   entry.Kind == config.KindRoute,
+			Detached: entry.Detached,
+		})
+	}
 
+	for _, entry := range cfg.Detached() {
+		add(entry)
+	}
+	if active != nil && !active.Detached {
+		add(active)
+	}
+	return out
+}
+
+// environment layers what the child runs with, most specific last: the parent's
+// environment, the CA variables for runtimes that ignore the OS trust store,
+// the project's env_files, and finally grove's own resolved values, which win
+// because a hand-copied port in a checked-in .env is the drift grove exists to
+// remove.
+func environment(cfg *config.Config, context identity.Context, active *config.Entry, grants map[string]daemon.Grant) ([]string, error) {
+	values := config.Values{
+		Context: config.Context{
+			Slug:    context.Slug,
+			Project: context.Project,
+			Variant: context.Variant,
+		},
+		Routes: make(map[string]config.Binding, len(grants)),
+		Ports:  make(map[string]config.Binding, len(grants)),
+	}
+	for name, grant := range grants {
+		binding := config.Binding{Port: grant.Port, Host: grant.Host, URL: grant.URL}
+		if _, isRoute := cfg.Routes[name]; isRoute {
+			values.Routes[name] = binding
+		} else {
+			values.Ports[name] = binding
+		}
+	}
+
+	resolved, err := cfg.Environment(active, values)
+	if err != nil {
+		return nil, err
+	}
+
+	fromFiles, err := cfg.LoadEnvFiles()
+	if err != nil {
+		return nil, err
+	}
+
+	layered := make(map[string]string, len(fromFiles)+len(resolved)+4)
+	for _, entry := range trust.Env(daemon.StateDir()) {
+		name, value, _ := strings.Cut(entry, "=")
+		layered[name] = value
+	}
+	for name, value := range fromFiles {
+		layered[name] = value
+	}
+	if active != nil {
+		if grant, ok := grants[active.Name]; ok {
+			layered["GROVE_PORT"] = strconv.Itoa(grant.Port)
+			if grant.Host != "" {
+				layered["GROVE_HOST"] = grant.Host
+				layered["GROVE_URL"] = grant.URL
+			}
+		}
+	}
+	for name, value := range resolved {
+		layered[name] = value
+	}
+
+	env := os.Environ()
+	names := make([]string, 0, len(layered))
+	for name := range layered {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		env = append(env, name+"="+layered[name])
+	}
+	return env, nil
+}
+
+func runChild(args []string, env []string) error {
 	// Inheriting the parent's descriptors keeps the child on the same terminal,
 	// so it still detects a tty and keeps its colors and prompts.
 	child := exec.Command(args[0], args[1:]...)
 	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
-	child.Env = append(os.Environ(),
-		"PORT="+port,
-		"GROVE_PORT="+port,
-		"GROVE_HOST="+grant.Host,
-		"GROVE_URL="+grant.URL,
-	)
-	child.Env = append(child.Env, caEnv...)
+	child.Env = env
 
 	if err := child.Start(); err != nil {
 		if errors.Is(err, exec.ErrNotFound) {

@@ -21,7 +21,7 @@ func registry(t *testing.T, opts lease.Options) *lease.Registry {
 
 func acquire(t *testing.T, r *lease.Registry, slug, service, worktree string) *lease.Lease {
 	t.Helper()
-	l, err := r.Acquire(slug, service, worktree)
+	l, err := r.Acquire(lease.Request{Slug: slug, Service: service, Worktree: worktree})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestOccupiedPortIsSkipped(t *testing.T) {
 func TestReleaseFreesThePort(t *testing.T) {
 	r := registry(t, lease.Options{Free: allFree})
 
-	first, err := r.Acquire("app1", "web", "/src/app1")
+	first, err := r.Acquire(lease.Request{Slug: "app1", Service: "web", Worktree: "/src/app1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestReleaseFreesThePort(t *testing.T) {
 
 func TestReleaseIsIdempotent(t *testing.T) {
 	r := registry(t, lease.Options{Free: allFree})
-	l, err := r.Acquire("app1", "web", "/src/app1")
+	l, err := r.Acquire(lease.Request{Slug: "app1", Service: "web", Worktree: "/src/app1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestSecondAcquireOfOneServiceIsBusy(t *testing.T) {
 	r := registry(t, lease.Options{Free: allFree})
 	first := acquire(t, r, "app1", "web", "/src/app1")
 
-	_, err := r.Acquire("app1", "web", "/src/app1")
+	_, err := r.Acquire(lease.Request{Slug: "app1", Service: "web", Worktree: "/src/app1"})
 
 	var busy *lease.BusyError
 	if !errors.As(err, &busy) {
@@ -138,7 +138,7 @@ func TestSameSlugFromAnotherWorktreeCollides(t *testing.T) {
 	r := registry(t, lease.Options{Free: allFree})
 	acquire(t, r, "app1-feat1", "web", "/src/feat.1")
 
-	_, err := r.Acquire("app1-feat1", "web", "/src/feat-1")
+	_, err := r.Acquire(lease.Request{Slug: "app1-feat1", Service: "web", Worktree: "/src/feat-1"})
 
 	var collision *lease.CollisionError
 	if !errors.As(err, &collision) {
@@ -151,21 +151,21 @@ func TestSameSlugFromAnotherWorktreeCollides(t *testing.T) {
 
 func TestCollisionClearsWhenTheHolderReleases(t *testing.T) {
 	r := registry(t, lease.Options{Free: allFree})
-	held, err := r.Acquire("app1-feat1", "web", "/src/feat.1")
+	held, err := r.Acquire(lease.Request{Slug: "app1-feat1", Service: "web", Worktree: "/src/feat.1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	held.Release()
 
-	if _, err := r.Acquire("app1-feat1", "web", "/src/feat-1"); err != nil {
+	if _, err := r.Acquire(lease.Request{Slug: "app1-feat1", Service: "web", Worktree: "/src/feat-1"}); err != nil {
 		t.Errorf("still colliding after release: %v", err)
 	}
 }
 
 func TestOwnershipSurvivesWhileAnotherServiceHoldsIt(t *testing.T) {
 	r := registry(t, lease.Options{Free: allFree})
-	web, err := r.Acquire("app1", "web", "/src/app1")
+	web, err := r.Acquire(lease.Request{Slug: "app1", Service: "web", Worktree: "/src/app1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestOwnershipSurvivesWhileAnotherServiceHoldsIt(t *testing.T) {
 	web.Release()
 
 	var collision *lease.CollisionError
-	if _, err := r.Acquire("app1", "web", "/elsewhere/app1"); !errors.As(err, &collision) {
+	if _, err := r.Acquire(lease.Request{Slug: "app1", Service: "web", Worktree: "/elsewhere/app1"}); !errors.As(err, &collision) {
 		t.Errorf("err = %v, want CollisionError while api still holds the context", err)
 	}
 }
@@ -183,7 +183,7 @@ func TestExhaustedRange(t *testing.T) {
 	r := registry(t, lease.Options{Range: lease.PortRange{Low: 20000, High: 20000}, Free: allFree})
 	acquire(t, r, "app1", "web", "/src/app1")
 
-	_, err := r.Acquire("app2", "web", "/src/app2")
+	_, err := r.Acquire(lease.Request{Slug: "app2", Service: "web", Worktree: "/src/app2"})
 
 	var exhausted *lease.ExhaustedError
 	if !errors.As(err, &exhausted) {
@@ -200,7 +200,7 @@ func TestConcurrentAcquiresNeverShareAPort(t *testing.T) {
 	for i := range n {
 		wg.Go(func() {
 			slug := "app" + strconv.Itoa(i)
-			l, err := r.Acquire(slug, "web", "/src/"+slug)
+			l, err := r.Acquire(lease.Request{Slug: slug, Service: "web", Worktree: "/src/" + slug})
 			if err != nil {
 				t.Error(err)
 				return
@@ -241,5 +241,70 @@ func TestListIsSorted(t *testing.T) {
 		if got[i].Slug != w[0] || got[i].Service != w[1] {
 			t.Errorf("[%d] = %s/%s, want %s/%s", i, got[i].Slug, got[i].Service, w[0], w[1])
 		}
+	}
+}
+
+// A detached lease is re-asserted by every command in the context, so acquiring
+// one twice hands back the same allocation instead of reporting a clash.
+func TestDetachedAcquireIsIdempotent(t *testing.T) {
+	r := registry(t, lease.Options{Free: allFree})
+	req := lease.Request{Slug: "app1", Service: "studio", Worktree: "/src/app1", Detached: true}
+
+	first, err := r.Acquire(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := r.Acquire(req)
+	if err != nil {
+		t.Fatalf("second acquire: %v", err)
+	}
+
+	if first.Port != second.Port {
+		t.Errorf("ports %d and %d differ", first.Port, second.Port)
+	}
+	if got := len(r.List()); got != 1 {
+		t.Errorf("%d leases, want 1", got)
+	}
+}
+
+// Something else binds a detached port, so a port already in use is expected.
+// Walking past it would hand back a number nothing is listening on.
+func TestDetachedAllocationDoesNotProbe(t *testing.T) {
+	r := registry(t, lease.Options{})
+	req := lease.Request{Slug: "app1", Service: "studio", Worktree: "/src/app1", Detached: true}
+
+	wanted, err := r.Acquire(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := wanted.Port
+	wanted.Release()
+
+	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		t.Skipf("could not occupy port %d: %v", port, err)
+	}
+	defer ln.Close()
+
+	again, err := r.Acquire(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Port != port {
+		t.Errorf("port = %d, want the same %d the stack is already on", again.Port, port)
+	}
+}
+
+func TestAttachedAndDetachedCannotShareAKey(t *testing.T) {
+	r := registry(t, lease.Options{Free: allFree})
+	if _, err := r.Acquire(lease.Request{Slug: "app1", Service: "web", Worktree: "/src/app1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := r.Acquire(lease.Request{Slug: "app1", Service: "web", Worktree: "/src/app1", Detached: true})
+
+	var busy *lease.BusyError
+	if !errors.As(err, &busy) {
+		t.Errorf("err = %v, want BusyError", err)
 	}
 }

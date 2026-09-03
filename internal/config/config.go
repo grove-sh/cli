@@ -238,6 +238,11 @@ func buildEntry(name string, kind Kind, raw *entry) (*Entry, error) {
 }
 
 func validate(cfg *Config) error {
+	for name := range cfg.Routes {
+		if _, clash := cfg.Ports[name]; clash {
+			return fmt.Errorf("config: %q is both a route and a port; each name leases its own port, so they cannot share one", name)
+		}
+	}
 	for _, entry := range cfg.All() {
 		if strings.HasPrefix(entry.Dir, "..") {
 			return fmt.Errorf("config: [%s] dir %q points outside the project", entry.Ref(), entry.Dir)

@@ -45,6 +45,24 @@ func startDaemon(t *testing.T) string {
 	return control.Addr().String()
 }
 
+// A single app on the context's own hostname, plus a detached port standing in
+// for a container stack.
+const repoConfig = `
+env_files = [".env"]
+
+[routes.web]
+dir = "."
+label = ""
+env = { PORT = "{port}", SITE_URL = "{url}" }
+
+[ports.db]
+detached = true
+env = { DB_PORT = "{port}" }
+
+[env]
+DATABASE_URL = "postgres://127.0.0.1:{ports.db}/app"
+`
+
 func tempRepo(t *testing.T, name string) string {
 	t.Helper()
 
@@ -60,6 +78,9 @@ func tempRepo(t *testing.T, name string) string {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
+	if err := os.WriteFile(filepath.Join(dir, "grove.toml"), []byte(repoConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return dir
 }
 
@@ -69,7 +90,7 @@ func TestExecSetsTheContextEnvironment(t *testing.T) {
 	t.Chdir(repo)
 
 	code, _, stderr := exercise(t, "exec", "--socket", socket, "--",
-		"sh", "-c", `printf '%s\n%s\n%s\n%s\n' "$PORT" "$GROVE_PORT" "$GROVE_HOST" "$GROVE_URL" > env.txt`)
+		"sh", "-c", `printf '%s\n%s\n%s\n%s\n' "$PORT" "$GROVE_PORT" "$SITE_URL" "$GROVE_URL" > env.txt`)
 	if code != 0 {
 		t.Fatalf("exit = %d: %s", code, stderr)
 	}
@@ -82,10 +103,10 @@ func TestExecSetsTheContextEnvironment(t *testing.T) {
 	if len(lines) != 4 {
 		t.Fatalf("child saw %d values: %q", len(lines), written)
 	}
-	port, groovePort, host, url := lines[0], lines[1], lines[2], lines[3]
+	port, grovePort, siteURL, url := lines[0], lines[1], lines[2], lines[3]
 
-	if port != groovePort {
-		t.Errorf("PORT = %q but GROVE_PORT = %q", port, groovePort)
+	if port != grovePort {
+		t.Errorf("PORT = %q but GROVE_PORT = %q", port, grovePort)
 	}
 	n, err := strconv.Atoi(port)
 	if err != nil {
@@ -94,11 +115,85 @@ func TestExecSetsTheContextEnvironment(t *testing.T) {
 	if n < 20000 || n > 20999 {
 		t.Errorf("PORT = %d, outside the default range", n)
 	}
-	if host != "app1."+defaultDomain {
-		t.Errorf("GROVE_HOST = %q", host)
-	}
-	if url != "https://"+host {
+	if url != "https://app1."+defaultDomain {
 		t.Errorf("GROVE_URL = %q", url)
+	}
+	if siteURL != url {
+		t.Errorf("SITE_URL = %q, want the route's own URL %q", siteURL, url)
+	}
+}
+
+func TestExecNeedsAConfig(t *testing.T) {
+	socket := startDaemon(t)
+	bare := t.TempDir()
+	t.Chdir(bare)
+
+	code, _, stderr := exercise(t, "exec", "--socket", socket, "--", "true")
+
+	if code != 1 {
+		t.Errorf("exit = %d, want 1", code)
+	}
+	if !strings.Contains(stderr, "grove.toml") {
+		t.Errorf("stderr does not name the missing file: %q", stderr)
+	}
+}
+
+// A command that binds nothing still needs the detached ports, since that is
+// where a database URL comes from.
+func TestExecInjectsDetachedPortsWithNothingBound(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	deep := filepath.Join(repo, "packages", "db")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(deep)
+
+	code, _, stderr := exercise(t, "exec", "--socket", socket, "-s", "db", "--",
+		"sh", "-c", `printf '%s\n%s\n' "$DB_PORT" "$DATABASE_URL" > out.txt`)
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+
+	written, err := os.ReadFile(filepath.Join(deep, "out.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(written)), "\n")
+	if lines[0] == "" {
+		t.Fatal("DB_PORT was not set")
+	}
+	if want := "postgres://127.0.0.1:" + lines[0] + "/app"; lines[1] != want {
+		t.Errorf("DATABASE_URL = %q, want %q", lines[1], want)
+	}
+}
+
+// A stale port hand copied into .env is the drift grove exists to remove, so
+// grove's own values win over the file.
+func TestGroveOverridesEnvFiles(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	if err := os.WriteFile(filepath.Join(repo, ".env"), []byte("PORT=3000\nAPI_KEY=secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+
+	code, _, stderr := exercise(t, "exec", "--socket", socket, "--",
+		"sh", "-c", `printf '%s\n%s\n' "$PORT" "$API_KEY" > out.txt`)
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+
+	written, err := os.ReadFile(filepath.Join(repo, "out.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(written)), "\n")
+	if lines[0] == "3000" {
+		t.Error("the file's PORT won over the leased one")
+	}
+	if lines[1] != "secret" {
+		t.Errorf("API_KEY = %q, want the file's value to survive", lines[1])
 	}
 }
 
@@ -174,9 +269,14 @@ func TestLsSeesTheContextWhileExecRuns(t *testing.T) {
 		t.Errorf("exec exited %d", code)
 	}
 
+	// The route goes with the command. The detached port does not, since
+	// whatever binds it is still running.
 	_, listed, _ = exercise(t, "ls", "--socket", socket)
-	if listed != "" {
-		t.Errorf("ls still shows a context after the child exited:\n%s", listed)
+	if strings.Contains(listed, "app1."+defaultDomain) {
+		t.Errorf("the route outlived the command:\n%s", listed)
+	}
+	if !strings.Contains(listed, "app1:db") {
+		t.Errorf("the detached port was released with the command:\n%s", listed)
 	}
 }
 

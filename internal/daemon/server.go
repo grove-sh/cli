@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/grove-sh/cli/internal/ca"
+	"github.com/grove-sh/cli/internal/identity"
 	"github.com/grove-sh/cli/internal/lease"
 	"github.com/grove-sh/cli/internal/proxy"
 )
@@ -34,7 +35,13 @@ type Server struct {
 	mu      sync.Mutex
 	control net.Listener
 	conns   map[net.Conn]struct{}
+	routed  map[routeKey]string
 	closing bool
+}
+
+type routeKey struct {
+	slug    string
+	service string
 }
 
 func New(cfg Config) (*Server, error) {
@@ -63,6 +70,7 @@ func New(cfg Config) (*Server, error) {
 		cert:     cert,
 		root:     root.RootPEM(),
 		conns:    make(map[net.Conn]struct{}),
+		routed:   make(map[routeKey]string),
 	}, nil
 }
 
@@ -182,60 +190,105 @@ func (s *Server) handle(conn net.Conn) {
 }
 
 func (s *Server) acquire(conn net.Conn, enc *json.Encoder, req Request) {
-	held, err := s.registry.Acquire(req.Slug, req.Service, req.Worktree)
-	if err != nil {
-		enc.Encode(Response{Error: err.Error()})
-		return
-	}
-	defer func() {
-		held.Release()
+	grants := make(map[string]Grant, len(req.Entries))
+	var attached []*lease.Lease
+
+	releaseAttached := func() {
+		if len(attached) == 0 {
+			return
+		}
+		s.mu.Lock()
+		for _, held := range attached {
+			delete(s.routed, routeKey{slug: held.Slug, service: held.Service})
+		}
+		s.mu.Unlock()
+		for _, held := range attached {
+			held.Release()
+		}
 		s.syncRoutes()
-	}()
+	}
+
+	for _, entry := range req.Entries {
+		held, err := s.registry.Acquire(lease.Request{
+			Slug:     req.Slug,
+			Service:  entry.Name,
+			Worktree: req.Worktree,
+			Detached: entry.Detached,
+		})
+		if err != nil {
+			releaseAttached()
+			enc.Encode(Response{Error: err.Error()})
+			return
+		}
+		if !entry.Detached {
+			attached = append(attached, held)
+		}
+
+		grant := Grant{Port: held.Port}
+		if entry.Routed {
+			grant.Host = s.host(req.Slug, entry.Label)
+			grant.URL = "https://" + grant.Host
+			s.mu.Lock()
+			s.routed[routeKey{slug: req.Slug, service: entry.Name}] = grant.Host
+			s.mu.Unlock()
+		}
+		grants[entry.Name] = grant
+	}
+
+	defer releaseAttached()
 	s.syncRoutes()
 
-	host := s.host(held.Slug, held.Service)
-	grant := Grant{Port: held.Port, Host: host, URL: "https://" + host}
-	if err := enc.Encode(Response{Grant: &grant}); err != nil {
+	if err := enc.Encode(Response{Grants: grants}); err != nil {
 		return
 	}
 
-	// The lease lasts as long as the connection. The kernel reports the close
-	// whether the client exited, crashed, or was killed outright.
+	// The attached leases last as long as the connection. The kernel reports
+	// the close whether the client exited, crashed, or was killed outright.
 	io.Copy(io.Discard, conn)
 }
 
 func (s *Server) syncRoutes() {
 	live := s.registry.List()
+
+	s.mu.Lock()
 	routes := make([]proxy.Route, 0, len(live))
 	for _, l := range live {
+		host, routed := s.routed[routeKey{slug: l.Slug, service: l.Service}]
+		if !routed {
+			continue
+		}
 		routes = append(routes, proxy.Route{
-			Host:     s.host(l.Slug, l.Service),
+			Host:     host,
 			Upstream: net.JoinHostPort("127.0.0.1", strconv.Itoa(l.Port)),
 		})
 	}
+	s.mu.Unlock()
+
 	s.proxy.SetRoutes(routes)
 }
 
-func (s *Server) entries() []Entry {
+func (s *Server) entries() []Live {
 	live := s.registry.List()
-	out := make([]Entry, 0, len(live))
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	out := make([]Live, 0, len(live))
 	for _, l := range live {
-		out = append(out, Entry{
+		out = append(out, Live{
 			Slug:     l.Slug,
 			Service:  l.Service,
 			Worktree: l.Worktree,
 			Port:     l.Port,
-			Host:     s.host(l.Slug, l.Service),
+			Host:     s.routed[routeKey{slug: l.Slug, service: l.Service}],
+			Detached: l.Detached,
 		})
 	}
 	return out
 }
 
-// The default service takes the bare context hostname. Others get a suffix,
-// since a wildcard certificate covers only one label.
-func (s *Server) host(slug, service string) string {
-	if service != "" {
-		slug += "-" + service
-	}
-	return slug + "." + s.domain
+// An empty label means the context's own hostname. Capping happens on the
+// composed label, since that is what has to fit in 63 bytes.
+func (s *Server) host(slug, label string) string {
+	return identity.ComposeLabel(slug, label) + "." + s.domain
 }

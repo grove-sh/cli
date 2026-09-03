@@ -85,6 +85,11 @@ func (h *harness) dial(t *testing.T) *daemon.Client {
 	return c
 }
 
+// routed asks for one entry that gets a hostname, which is the common case.
+func routed(name, label string) []daemon.Entry {
+	return []daemon.Entry{{Name: name, Label: label, Routed: true}}
+}
+
 func (h *harness) status(t *testing.T, host string) (int, string) {
 	t.Helper()
 	resp, err := h.client.Get("https://" + host + "/")
@@ -128,10 +133,11 @@ func eventually(t *testing.T, what string, ok func() bool) {
 func TestLeasedPortIsReachableByHostname(t *testing.T) {
 	h := start(t)
 
-	grant, err := h.dial(t).Acquire("app1-feat1", "", "/src/feat1")
+	grants, err := h.dial(t).Acquire("app1-feat1", "/src/feat1", routed("web", ""))
 	if err != nil {
 		t.Fatal(err)
 	}
+	grant := grants["web"]
 	if grant.Host != "app1-feat1."+domain {
 		t.Errorf("host = %q", grant.Host)
 	}
@@ -150,12 +156,12 @@ func TestLeasedPortIsReachableByHostname(t *testing.T) {
 func TestNamedServiceGetsASuffixedHostname(t *testing.T) {
 	h := start(t)
 
-	grant, err := h.dial(t).Acquire("app1", "api", "/src/app1")
+	grants, err := h.dial(t).Acquire("app1", "/src/app1", routed("api", "api"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if grant.Host != "app1-api."+domain {
+	if grant := grants["api"]; grant.Host != "app1-api."+domain {
 		t.Errorf("host = %q, want a suffix rather than a subdomain", grant.Host)
 	}
 }
@@ -168,10 +174,11 @@ func TestClosingTheClientEndsTheLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	grant, err := client.Acquire("app1", "", "/src/app1")
+	grants, err := client.Acquire("app1", "/src/app1", routed("web", ""))
 	if err != nil {
 		t.Fatal(err)
 	}
+	grant := grants["web"]
 	serveOn(t, grant.Port, "up")
 	if code, _ := h.status(t, grant.Host); code != 200 {
 		t.Fatalf("status = %d before close, want 200", code)
@@ -190,10 +197,10 @@ func TestClosingTheClientEndsTheLease(t *testing.T) {
 
 func TestListReportsLiveLeases(t *testing.T) {
 	h := start(t)
-	if _, err := h.dial(t).Acquire("app1", "", "/src/app1"); err != nil {
+	if _, err := h.dial(t).Acquire("app1", "/src/app1", routed("web", "")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.dial(t).Acquire("app2", "web", "/src/app2"); err != nil {
+	if _, err := h.dial(t).Acquire("app2", "/src/app2", routed("web", "web")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -215,11 +222,11 @@ func TestListReportsLiveLeases(t *testing.T) {
 
 func TestCollisionReachesTheClient(t *testing.T) {
 	h := start(t)
-	if _, err := h.dial(t).Acquire("app1-feat1", "", "/src/feat.1"); err != nil {
+	if _, err := h.dial(t).Acquire("app1-feat1", "/src/feat.1", routed("web", "")); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := h.dial(t).Acquire("app1-feat1", "", "/src/feat-1")
+	_, err := h.dial(t).Acquire("app1-feat1", "/src/feat-1", routed("web", ""))
 
 	if err == nil {
 		t.Fatal("second worktree acquired the same context")
@@ -228,6 +235,39 @@ func TestCollisionReachesTheClient(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %q: %v", want, err)
 		}
+	}
+}
+
+// supabase start returns as soon as its containers are up, so the ports it was
+// given have to survive the command that asked for them.
+func TestDetachedLeaseOutlivesTheClient(t *testing.T) {
+	h := start(t)
+	client, err := daemon.Dial(h.socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grants, err := client.Acquire("app1", "/src/app1", []daemon.Entry{
+		{Name: "studio", Label: "studio", Routed: true, Detached: true},
+		{Name: "db", Detached: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	studio := grants["studio"]
+	serveOn(t, studio.Port, "studio")
+
+	client.Close()
+
+	// Give the daemon the chance to drop it that an attached lease would take.
+	eventually(t, "the lease to settle", func() bool {
+		live, err := h.dial(t).List()
+		return err == nil && len(live) == 2
+	})
+	if code, _ := h.status(t, studio.Host); code != 200 {
+		t.Errorf("status = %d after the client closed, want 200", code)
+	}
+	if grants["db"].Host != "" {
+		t.Errorf("a bare port got the hostname %q", grants["db"].Host)
 	}
 }
 

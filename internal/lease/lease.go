@@ -55,8 +55,19 @@ type Lease struct {
 	Worktree string
 	Port     int
 
+	// Detached says the port belongs to something that outlives the command
+	// that asked for it, so closing that command's connection must not end it.
+	Detached bool
+
 	registry *Registry
 	released bool
+}
+
+type Request struct {
+	Slug     string
+	Service  string
+	Worktree string
+	Detached bool
 }
 
 func New(opts Options) (*Registry, error) {
@@ -80,37 +91,48 @@ func New(opts Options) (*Registry, error) {
 	}, nil
 }
 
-// Acquire leases a port for one service of one context. The caller holds it for
-// as long as the process it started stays alive.
-func (r *Registry) Acquire(slug, service, worktree string) (*Lease, error) {
-	if slug == "" {
+// Acquire leases a port for one service of one context. An attached lease lasts
+// as long as the caller holds it. A detached one is idempotent, since every
+// command in the context re-asserts the same allocation.
+func (r *Registry) Acquire(req Request) (*Lease, error) {
+	if req.Slug == "" {
 		return nil, errors.New("lease: acquire needs a slug")
 	}
-	if worktree == "" {
+	if req.Worktree == "" {
 		return nil, errors.New("lease: acquire needs a worktree path")
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if held, ok := r.owners[slug]; ok && held != worktree {
-		return nil, &CollisionError{Slug: slug, Held: held, Wanted: worktree}
+	if held, ok := r.owners[req.Slug]; ok && held != req.Worktree {
+		return nil, &CollisionError{Slug: req.Slug, Held: held, Wanted: req.Worktree}
 	}
 
-	k := key{slug: slug, service: service}
+	k := key{slug: req.Slug, service: req.Service}
 	if existing, ok := r.leases[k]; ok {
-		return nil, &BusyError{Slug: slug, Service: service, Port: existing.Port}
+		if existing.Detached && req.Detached {
+			return existing, nil
+		}
+		return nil, &BusyError{Slug: req.Slug, Service: req.Service, Port: existing.Port}
 	}
 
-	port, err := r.pick(k)
+	port, err := r.pick(k, req.Detached)
 	if err != nil {
 		return nil, err
 	}
 
-	l := &Lease{Slug: slug, Service: service, Worktree: worktree, Port: port, registry: r}
+	l := &Lease{
+		Slug:     req.Slug,
+		Service:  req.Service,
+		Worktree: req.Worktree,
+		Port:     port,
+		Detached: req.Detached,
+		registry: r,
+	}
 	r.leases[k] = l
 	r.ports[port] = k
-	r.owners[slug] = worktree
+	r.owners[req.Slug] = req.Worktree
 	return l, nil
 }
 
@@ -158,13 +180,26 @@ func (r *Registry) List() []Lease {
 
 // pick starts from a hash of the context so the same context tends to get the
 // same port on any machine, with no state on disk, then walks the range.
-func (r *Registry) pick(k key) (int, error) {
+//
+// A detached port stops at the hash. Grove's own child is not the one binding
+// it, so a port already in use is the expected case, and walking past it would
+// hand back a number nothing is listening on. Stopping there is also what lets
+// a restarted daemon re-adopt a running stack instead of allocating beside it.
+func (r *Registry) pick(k key, detached bool) (int, error) {
 	size := r.rng.size()
 	h := fnv.New32a()
 	h.Write([]byte(k.slug))
 	h.Write([]byte{0})
 	h.Write([]byte(k.service))
 	offset := int(h.Sum32() % uint32(size))
+
+	if detached {
+		port := r.rng.Low + offset
+		if _, taken := r.ports[port]; taken {
+			return 0, &ExhaustedError{Range: r.rng}
+		}
+		return port, nil
+	}
 
 	for i := 0; i < size; i++ {
 		port := r.rng.Low + (offset+i)%size

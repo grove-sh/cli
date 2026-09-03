@@ -219,6 +219,16 @@ func ValidateLabel(v string) (string, error) {
 	return s, nil
 }
 
+// ComposeLabel joins a context slug and a route's label into the single DNS
+// label a hostname uses. The cap belongs here rather than on the slug alone,
+// since it is the composed value that has to fit in 63 bytes.
+func ComposeLabel(slug, label string) string {
+	if label == "" {
+		return cap63(slug)
+	}
+	return cap63(slug + "-" + label)
+}
+
 func cap63(slug string) string {
 	if len(slug) <= maxLabel {
 		return slug
