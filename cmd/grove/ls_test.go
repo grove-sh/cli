@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"strconv"
 	"strings"
 	"testing"
@@ -50,7 +51,9 @@ func TestLsPredictsThePortAllocationWouldGive(t *testing.T) {
 	}
 }
 
-func TestLsMarksDetachedAndRunningApart(t *testing.T) {
+// A detached port nothing answers on reads claimed, which is what a stopped
+// stack looks like: grove handed the port out and is still holding it.
+func TestLsTellsAClaimedPortFromAnIdleRoute(t *testing.T) {
 	socket := startDaemon(t)
 	repo := tempRepo(t, "app1")
 	t.Chdir(repo)
@@ -60,17 +63,17 @@ func TestLsMarksDetachedAndRunningApart(t *testing.T) {
 
 	_, stdout, _ := exercise(t, "ls", "--socket", socket)
 
-	var detached, idle bool
+	var claimed, idle bool
 	for _, line := range strings.Split(stdout, "\n") {
 		switch {
 		case strings.HasPrefix(line, "db"):
-			detached = strings.Contains(line, "detached")
+			claimed = strings.Contains(line, "claimed")
 		case strings.HasPrefix(line, "web"):
 			idle = strings.Contains(line, "idle")
 		}
 	}
-	if !detached {
-		t.Errorf("the synced port is not detached:\n%s", stdout)
+	if !claimed {
+		t.Errorf("the synced port is not held:\n%s", stdout)
 	}
 	if !idle {
 		t.Errorf("the unheld route is not idle:\n%s", stdout)
@@ -141,4 +144,58 @@ func TestLsUsesTheConfiguredLabel(t *testing.T) {
 	if !strings.Contains(stdout, want) {
 		t.Errorf("want %s in:\n%s", want, stdout)
 	}
+}
+
+// A detached port is claimed until something answers on it, which is the
+// difference between a stack that is running and one that was stopped without
+// releasing its ports.
+func TestLsReportsADetachedPortAsRunningOnlyWhenSomethingAnswers(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	t.Chdir(repo)
+	if code, _, stderr := exercise(t, "sync", "--socket", socket); code != 0 {
+		t.Fatal(stderr)
+	}
+
+	_, before, _ := exercise(t, "ls", "--socket", socket)
+	port := portOf(t, before, "db")
+
+	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		t.Skipf("could not stand on port %d: %v", port, err)
+	}
+	_, after, _ := exercise(t, "ls", "--socket", socket)
+	ln.Close()
+
+	if !lineFor(before, "db", "claimed") {
+		t.Errorf("with nothing listening, db is not claimed:\n%s", before)
+	}
+	if !lineFor(after, "db", "running") {
+		t.Errorf("with something listening, db is not running:\n%s", after)
+	}
+}
+
+func portOf(t *testing.T, table, route string) int {
+	t.Helper()
+	for _, line := range strings.Split(table, "\n") {
+		if !strings.HasPrefix(line, route+" ") {
+			continue
+		}
+		for _, field := range strings.Fields(line) {
+			if port, err := strconv.Atoi(field); err == nil {
+				return port
+			}
+		}
+	}
+	t.Fatalf("no port for %q in:\n%s", route, table)
+	return 0
+}
+
+func lineFor(table, route, want string) bool {
+	for _, line := range strings.Split(table, "\n") {
+		if strings.HasPrefix(line, route+" ") {
+			return strings.Contains(line, want)
+		}
+	}
+	return false
 }

@@ -3,9 +3,11 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -28,6 +30,10 @@ Every hostname comes from the config rather than from a lease, so a route that
 nothing is serving still has a URL, marked idle. Its port is where allocation
 would put it: that is a prediction, since a port already in use sends an
 attached lease further along the range.
+
+A port grove has handed out reads running when something answers on it and
+claimed when nothing does, which is what a stopped stack looks like: its ports
+stay allocated until grove release hands them back.
 
 Outside a project, and with --all, this lists every live lease on the machine
 instead.`,
@@ -79,9 +85,15 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 		port, state, holder := lease.PredictPort(lease.PortRange{}, context.Slug, entry.Name), "idle", "-"
 		if held, ok := live[entry.Name]; ok {
 			port = held.Port
-			state = "running"
-			if held.Detached {
-				state = "detached"
+			// An attached lease is held by a command grove is watching, so it
+			// is running by definition. A detached one stands for something
+			// grove cannot see, and whether anything answers is the question
+			// worth asking: a stopped stack keeps its ports until released.
+			switch {
+			case !held.Detached, answering(held.Port):
+				state = "running"
+			default:
+				state = "claimed"
 			}
 			if held.PID != 0 {
 				holder = strconv.Itoa(held.PID)
@@ -118,6 +130,17 @@ func listLeases(cmd *cobra.Command, socket string) error {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", name, strconv.Itoa(e.Port), held, e.Worktree)
 	}
 	return w.Flush()
+}
+
+// answering reports whether anything is listening on a loopback port. A
+// refused connection comes back at once, so this costs nothing worth measuring.
+func answering(port int) bool {
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 // liveLeases reports what one context holds, and whether a daemon answered at

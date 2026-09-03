@@ -296,13 +296,16 @@ func TestLsSeesTheContextWhileExecRuns(t *testing.T) {
 	}
 
 	// The route's lease goes with the command, so it reads idle again. The
-	// detached port does not, since whatever binds it is still running.
+	// detached port is still held, and reads claimed because this fixture
+	// binds nothing: grove handed the port out, nothing answers on it.
 	_, listed, _ := exercise(t, "ls", "--socket", socket)
-	if !strings.Contains(listed, "idle") {
-		t.Errorf("the route outlived the command:\n%s", listed)
-	}
-	if !strings.Contains(listed, "detached") {
-		t.Errorf("the detached port was released with the command:\n%s", listed)
+	for _, line := range strings.Split(listed, "\n") {
+		switch {
+		case strings.HasPrefix(line, "web") && !strings.Contains(line, "idle"):
+			t.Errorf("the route outlived the command:\n%s", listed)
+		case strings.HasPrefix(line, "db") && !strings.Contains(line, "claimed"):
+			t.Errorf("the detached port was released with the command:\n%s", listed)
+		}
 	}
 }
 
@@ -335,7 +338,7 @@ func TestSyncRestoresDetachedEntries(t *testing.T) {
 	_, listed, _ := exercise(t, "ls", "--socket", socket)
 	for _, line := range strings.Split(listed, "\n") {
 		switch {
-		case strings.HasPrefix(line, "db") && !strings.Contains(line, "detached"):
+		case strings.HasPrefix(line, "db") && !strings.Contains(line, "claimed"):
 			t.Errorf("the daemon does not hold the detached port:\n%s", listed)
 		// An attached route needs a running command to mean anything, so sync
 		// must leave it alone.
