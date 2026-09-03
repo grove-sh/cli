@@ -97,3 +97,38 @@ func TestEnvRejectsAnUnknownFormat(t *testing.T) {
 		t.Errorf("stderr does not name the choices: %q", stderr)
 	}
 }
+
+// A hostname is static per context, so a command that binds nothing can still
+// name a route's URL. Only ports need an allocation. Without this, a build at
+// the repository root cannot know its own public URL.
+func TestRouteURLsResolveWithoutALease(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	writeConfig(t, repo, `
+[routes.web]
+dir = "apps/web"
+label = ""
+env = { PORT = "{port}" }
+
+[env]
+SITE_URL = "{routes.web.url}"
+SITE_HOST = "{routes.web.host}"
+`)
+	t.Chdir(repo)
+
+	code, stdout, stderr := exercise(t, "env", "--socket", socket)
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+
+	if !strings.Contains(stdout, "export SITE_URL='https://app1."+defaultDomain+"'") {
+		t.Errorf("no URL for an unbound route:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "export SITE_HOST='app1."+defaultDomain+"'") {
+		t.Errorf("no hostname for an unbound route:\n%s", stdout)
+	}
+	// The port still needs a lease, and nothing is holding one.
+	if strings.Contains(stdout, "export PORT=") {
+		t.Errorf("a port appeared without an allocation:\n%s", stdout)
+	}
+}

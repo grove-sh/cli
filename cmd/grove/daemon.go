@@ -45,22 +45,46 @@ func (o *daemonOptions) bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&o.caDir, "ca-dir", defaults.caDir, "directory holding the local CA")
 }
 
-// dialOrStart connects to the daemon, starting one when nothing answers. Only
-// exec does this: a daemon appearing because you asked what was running, or
-// because you asked to stop it, would be a surprise.
-func dialOrStart(socket string, autostart bool) (*daemon.Client, error) {
+// connect reaches the daemon, starting one when nothing answers. A nil client
+// with a nil error means grove has nothing to add and the caller should run the
+// command as it stands.
+//
+// Only exec does any of this: a daemon appearing because you asked what was
+// running, or because you asked to stop it, would be a surprise.
+func connect(socket string, autostart, optional bool) (*daemon.Client, error) {
 	client, err := daemon.Dial(socket)
 	if err == nil {
 		return client, nil
 	}
 	var down *daemon.NotRunningError
-	if !autostart || !errors.As(err, &down) {
+	if !errors.As(err, &down) {
+		return nil, err
+	}
+
+	// A build server has its own environment and grove is not the authority
+	// there, so with nothing to talk to the honest move is to get out of the
+	// way rather than to inject half an answer or to fail a deploy.
+	if optional || underCI() {
+		return nil, nil
+	}
+	if !autostart {
 		return nil, err
 	}
 	if err := ensureDaemon(socket); err != nil {
 		return nil, err
 	}
 	return daemon.Dial(socket)
+}
+
+// underCI follows the convention every build service shares. It only decides
+// what happens when no daemon answered: a daemon deliberately running in CI is
+// used like any other.
+func underCI() bool {
+	switch os.Getenv("CI") {
+	case "", "0", "false":
+		return false
+	}
+	return true
 }
 
 // ensureDaemon prefers the service manager when there is a unit for it to

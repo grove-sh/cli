@@ -249,6 +249,9 @@ func TestExecReportsAMissingCommand(t *testing.T) {
 
 func TestExecWithoutADaemon(t *testing.T) {
 	t.Chdir(tempRepo(t, "app1"))
+	// This suite runs on a build server too, where a missing daemon is
+	// tolerated rather than fatal.
+	t.Setenv("CI", "")
 
 	code, _, stderr := exercise(t, "exec", "--autostart=false",
 		"--socket", filepath.Join(socketDir(t), "absent.sock"), "--", "true")
@@ -368,6 +371,9 @@ func TestExecStartsADaemonWhenNoneIsRunning(t *testing.T) {
 	t.Setenv("GROVE_LISTEN", "127.0.0.1:0")
 	t.Setenv("GROVE_TEST_RUN_CLI", "1")
 	t.Setenv("GROVE_SERVICE_DIR", filepath.Join(state, "units"))
+	// Autostart is the non-CI path: with CI set, a missing daemon is stepped
+	// around rather than started.
+	t.Setenv("CI", "")
 	if _, err := ca.OpenOrCreate(state); err != nil {
 		t.Fatal(err)
 	}
@@ -450,5 +456,74 @@ func TestGroveOverridesAnInlinePort(t *testing.T) {
 	}
 	if strings.TrimSpace(string(written)) == "4000" {
 		t.Error("an inline PORT won, so the hostname would route to the wrong port")
+	}
+}
+
+// A build service is the authority on its own environment: grove is not
+// running there, and tests and migrations need the POSTGRES_URL that CI set.
+// So with nothing to talk to, the command runs untouched rather than failing.
+func TestUnderCIWithNoDaemonTheEnvironmentIsUntouched(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	t.Chdir(repo)
+	t.Setenv("CI", "true")
+	t.Setenv("POSTGRES_URL", "postgres://ci-supplied/db")
+
+	code, _, stderr := exercise(t, "exec", "--socket", filepath.Join(socketDir(t), "absent.sock"), "--",
+		"sh", "-c", `printf '%s\n%s\n' "$POSTGRES_URL" "${DB_PORT:-unset}" > out.txt`)
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+
+	written, err := os.ReadFile(filepath.Join(repo, "out.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(written)), "\n")
+	if lines[0] != "postgres://ci-supplied/db" {
+		t.Errorf("POSTGRES_URL = %q, want the value CI set", lines[0])
+	}
+	// Nothing at all from grove, rather than half an answer: an injected
+	// {ports.db} would name a port that does not exist on a build server.
+	if lines[1] != "unset" {
+		t.Errorf("DB_PORT = %q, want nothing", lines[1])
+	}
+	if !strings.Contains(stderr, "as it stands") {
+		t.Errorf("stderr does not say what happened: %q", stderr)
+	}
+}
+
+// The trigger is CI plus no daemon, not CI alone: a daemon deliberately
+// running on a build server gets used like any other.
+func TestUnderCIWithADaemonGroveStillApplies(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	t.Chdir(repo)
+	t.Setenv("CI", "true")
+
+	code, _, stderr := exercise(t, "exec", "--socket", socket, "--",
+		"sh", "-c", `echo "$DB_PORT" > out.txt`)
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+
+	written, err := os.ReadFile(filepath.Join(repo, "out.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(written)) == "" {
+		t.Error("grove did nothing, though a daemon was running")
+	}
+}
+
+func TestIfAvailableToleratesAMissingDaemonAnywhere(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	t.Chdir(repo)
+	t.Setenv("CI", "")
+
+	code, _, stderr := exercise(t, "exec", "--if-available",
+		"--socket", filepath.Join(socketDir(t), "absent.sock"), "--", "true")
+
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
 	}
 }

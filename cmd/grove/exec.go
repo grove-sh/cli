@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -20,7 +21,7 @@ import (
 
 func newExecCommand() *cobra.Command {
 	var socket, service string
-	var autostart bool
+	var autostart, optional bool
 
 	cmd := &cobra.Command{
 		Use:   "exec [flags] -- command [args...]",
@@ -30,10 +31,29 @@ func newExecCommand() *cobra.Command {
 grove leases a port for the route this directory belongs to, routes the route's
 hostname to it, and holds that lease for as long as the command runs. Entries
 marked detached are always active, since whatever binds them outlives the
-command. Signals and the exit code pass through.`,
+command. Signals and the exit code pass through.
+
+With CI set in the environment and no daemon to talk to, the command runs with
+its environment untouched instead of failing, because a build service is the
+authority on its own environment and grove is not running there. --if-available
+asks for the same tolerance anywhere.`,
 		Example: "  grove exec -- pnpm dev\n  grove exec -s admin -- pnpm dev",
 		Args:    usageArgs(cobra.MinimumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Before anything else, since a command grove is not going to
+			// touch should not pay for reading git and the config, and a
+			// project whose config has a typo should not fail a deploy over a
+			// tool that is doing nothing there.
+			client, err := connect(socket, autostart, optional)
+			if err != nil {
+				return err
+			}
+			if client == nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "grove: no daemon, so running %s with the environment as it stands\n", args[0])
+				return runChild(args, os.Environ())
+			}
+			defer client.Close()
+
 			dir, err := os.Getwd()
 			if err != nil {
 				return err
@@ -50,12 +70,6 @@ command. Signals and the exit code pass through.`,
 			if err != nil {
 				return err
 			}
-
-			client, err := dialOrStart(socket, autostart)
-			if err != nil {
-				return err
-			}
-			defer client.Close()
 
 			grants, err := client.Acquire(context.Slug, context.Root, entriesToLease(cfg, active))
 			if err != nil {
@@ -75,6 +89,7 @@ command. Signals and the exit code pass through.`,
 	cmd.Flags().StringVarP(&service, "service", "s", "", "route or port to bind, overriding the directory")
 	cmd.Flags().StringVar(&socket, "socket", daemon.DefaultSocket(), "control socket path")
 	cmd.Flags().BoolVar(&autostart, "autostart", true, "start a daemon if none is running")
+	cmd.Flags().BoolVar(&optional, "if-available", false, "run the command unchanged when no daemon is running, rather than failing")
 	return cmd
 }
 
@@ -98,22 +113,34 @@ func entriesToLease(cfg *config.Config, active *config.Entry) []daemon.Entry {
 	return out
 }
 
-func valuesFrom(cfg *config.Config, context identity.Context, ports map[string]config.Binding) config.Values {
+// valuesFrom assembles what templates resolve against. Every route's hostname
+// is known from the context and the config, with no lease involved, which is
+// what lets a command that binds nothing still name a route's URL. Only ports
+// come from an allocation.
+func valuesFrom(cfg *config.Config, context identity.Context, allocated map[string]config.Binding) config.Values {
 	values := config.Values{
 		Context: config.Context{
 			Slug:    context.Slug,
 			Project: context.Project,
 			Variant: context.Variant,
 		},
-		Routes: make(map[string]config.Binding, len(ports)),
-		Ports:  make(map[string]config.Binding, len(ports)),
+		Routes: make(map[string]config.Binding, len(cfg.Routes)),
+		Ports:  make(map[string]config.Binding, len(cfg.Ports)),
 	}
-	for name, binding := range ports {
+
+	for name, route := range cfg.Routes {
+		host := identity.ComposeLabel(context.Slug, route.Label) + "." + defaultDomain
+		values.Routes[name] = config.Binding{Host: host, URL: "https://" + host}
+	}
+
+	for name, binding := range allocated {
 		if _, isRoute := cfg.Routes[name]; isRoute {
-			values.Routes[name] = binding
-		} else {
-			values.Ports[name] = binding
+			held := values.Routes[name]
+			held.Port = binding.Port
+			values.Routes[name] = held
+			continue
 		}
+		values.Ports[name] = binding
 	}
 	return values
 }
