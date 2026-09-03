@@ -135,21 +135,7 @@ func TestInitKeepsTwoAppsApart(t *testing.T) {
 func TestInitAllocatesEverySupabasePort(t *testing.T) {
 	repo := tempRepo(t, "app1")
 	os.Remove(filepath.Join(repo, config.FileName))
-	stack := filepath.Join(repo, "packages", "db", "supabase")
-	if err := os.MkdirAll(stack, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stack, "config.toml"), []byte(`
-project_id = "whatever"
-
-[api]
-enabled = false
-
-[local_smtp]
-enabled = false
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeStack(t, filepath.Join(repo, "packages", "db", "supabase"), disabledStack)
 	t.Chdir(repo)
 
 	exercise(t, "init")
@@ -158,14 +144,13 @@ enabled = false
 	if err != nil {
 		t.Fatalf("what init wrote does not load: %v\n%s", err, generated(t, repo))
 	}
-	for _, name := range []string{"api", "studio", "mail"} {
-		if _, ok := cfg.Routes[name]; !ok {
-			t.Errorf("no route for %q, though supabase may publish its port either way", name)
-		}
+	allocated := map[string]bool{}
+	for _, entry := range cfg.All() {
+		allocated[entry.Name] = true
 	}
-	for _, name := range []string{"db", "shadow", "pooler", "analytics"} {
-		if _, ok := cfg.Ports[name]; !ok {
-			t.Errorf("no port for %q", name)
+	for _, name := range []string{"api", "studio", "mail", "db", "shadow", "pooler", "analytics"} {
+		if !allocated[name] {
+			t.Errorf("nothing allocated for %q, though supabase may publish its port either way", name)
 		}
 	}
 	if cfg.Env["SUPABASE_PROJECT_ID"] == "" {
@@ -184,18 +169,63 @@ enabled = false
 	}
 }
 
+// A hostname is worth minting only for something that will answer on it. The
+// port is still allocated, since that is what keeps two worktrees apart.
+func TestInitGivesNoHostnameToADisabledService(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	os.Remove(filepath.Join(repo, config.FileName))
+	writeStack(t, filepath.Join(repo, "packages", "db", "supabase"), disabledStack)
+	t.Chdir(repo)
+
+	exercise(t, "init")
+
+	cfg, err := config.Load(repo)
+	if err != nil {
+		t.Fatalf("what init wrote does not load: %v\n%s", err, generated(t, repo))
+	}
+	for _, name := range []string{"api", "mail"} {
+		if _, ok := cfg.Routes[name]; ok {
+			t.Errorf("%q got a hostname, though the stack has it turned off", name)
+		}
+		if _, ok := cfg.Ports[name]; !ok {
+			t.Errorf("%q lost its allocation along with its hostname", name)
+		}
+	}
+	// This one the config says nothing about, so it keeps its hostname.
+	if _, ok := cfg.Routes["studio"]; !ok {
+		t.Error("studio lost its hostname, though nothing turned it off")
+	}
+}
+
+// The supabase URL names the api route, so a disabled api has to leave it
+// unset: naming a route that was never written would not load.
+func TestInitNamesNoSupabaseURLForADisabledAPI(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	os.Remove(filepath.Join(repo, config.FileName))
+	writeApp(t, filepath.Join(repo, "apps", "web"), `{"scripts":{"dev":"next dev"},"dependencies":{"next":"15"}}`)
+	writeStack(t, filepath.Join(repo, "packages", "db", "supabase"), disabledStack)
+	t.Chdir(repo)
+
+	exercise(t, "init")
+
+	cfg, err := config.Load(repo)
+	if err != nil {
+		t.Fatalf("what init wrote does not load: %v\n%s", err, generated(t, repo))
+	}
+	if got := cfg.Env["NEXT_PUBLIC_SUPABASE_URL"]; got != "" {
+		t.Errorf("NEXT_PUBLIC_SUPABASE_URL = %q, but the api has no hostname", got)
+	}
+	if got := cfg.Env["NEXT_PUBLIC_SITE_URL"]; got != "{routes.web.url}" {
+		t.Errorf("the app lost its own URL with it: %q", got)
+	}
+}
+
 // Both mail spellings are emitted, since the key was renamed at CLI 2.108 and
 // each version binds only the one it knows.
 func TestInitEmitsBothMailBindings(t *testing.T) {
 	repo := tempRepo(t, "app1")
 	os.Remove(filepath.Join(repo, config.FileName))
-	stack := filepath.Join(repo, "supabase")
-	if err := os.MkdirAll(stack, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stack, "config.toml"), []byte("project_id = \"x\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeStack(t, filepath.Join(repo, "supabase"), "project_id = \"x\"\n")
 	t.Chdir(repo)
 
 	exercise(t, "init")
@@ -340,13 +370,7 @@ func TestInitNamesTheSupabaseAPIForTheApp(t *testing.T) {
 	repo := tempRepo(t, "app1")
 	os.Remove(filepath.Join(repo, config.FileName))
 	writeApp(t, filepath.Join(repo, "apps", "web"), `{"scripts":{"dev":"next dev"},"dependencies":{"next":"15"}}`)
-	stack := filepath.Join(repo, "packages", "db", "supabase")
-	if err := os.MkdirAll(stack, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stack, "config.toml"), []byte("project_id = \"x\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeStack(t, filepath.Join(repo, "packages", "db", "supabase"), "project_id = \"x\"\n")
 	t.Chdir(repo)
 
 	exercise(t, "init")
@@ -379,5 +403,27 @@ func TestInitNamesNoSupabaseURLWithoutAStack(t *testing.T) {
 	}
 	if got := cfg.Env["VITE_SUPABASE_URL"]; got != "" {
 		t.Errorf("VITE_SUPABASE_URL = %q, but there is no stack", got)
+	}
+}
+
+// disabledStack is the shape that started all this: kong publishes 54321 with
+// the api turned off, and nothing at all answers for mail.
+const disabledStack = `
+project_id = "whatever"
+
+[api]
+enabled = false
+
+[local_smtp]
+enabled = false
+`
+
+func writeStack(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

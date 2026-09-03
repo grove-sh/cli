@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
 
 	"github.com/grove-sh/cli/internal/config"
@@ -113,6 +114,19 @@ func scaffold(root, project string) (string, []string) {
 
 	apps, unsure := findApps(root)
 	stack, stackDir := findSupabase(root)
+	var services []supabaseService
+	var demoted []string
+	if stack {
+		services, demoted = supabaseServices(filepath.Join(root, stackDir, "config.toml"))
+	}
+	routed := func(name string) bool {
+		for _, service := range services {
+			if service.name == name {
+				return service.routed
+			}
+		}
+		return false
+	}
 
 	// A URL belongs in [env] rather than on its route: [env] applies to every
 	// command, while a route's own variables apply only when that route is the
@@ -135,8 +149,9 @@ func scaffold(root, project string) (string, []string) {
 	for _, found := range apps {
 		claim(found.siteURLVar(), "{routes."+found.name+".url}")
 		// Every app in a project talks to the same stack, so they agree on
-		// this one and it does not count as a clash.
-		if stack {
+		// this one and it does not count as a clash. A disabled api has no
+		// hostname to point at, and naming one would not load.
+		if routed("api") {
 			claim(found.supabaseURLVar(), "{routes.api.url}")
 		}
 	}
@@ -155,6 +170,9 @@ SUPABASE_PROJECT_ID = "{context.slug}"
 POSTGRES_URL = "postgres://postgres:postgres@localhost:{ports.db}/postgres"
 `)
 		notes = append(notes, "a supabase stack in "+stackDir+", whose ports grove will allocate")
+		if len(demoted) > 0 {
+			notes = append(notes, "no hostname for "+strings.Join(demoted, ", ")+", which the stack has turned off")
+		}
 	}
 	for _, name := range sortedKeys(urls) {
 		if shared[name] {
@@ -206,7 +224,7 @@ POSTGRES_URL = "postgres://postgres:postgres@localhost:{ports.db}/postgres"
 	}
 
 	if stack {
-		b.WriteString(supabaseEntries())
+		b.WriteString(supabaseEntries(services))
 	}
 	return b.String(), notes
 }
@@ -337,47 +355,98 @@ func findSupabase(root string) (found bool, dir string) {
 	return false, ""
 }
 
-// supabaseEntries allocates for every port the stack can publish, without
-// consulting the enabled flags in its config. Kong publishes its port even
-// with "[api] enabled = false", so a flag is not a reliable signal, and the
-// costs are not symmetric: a spare allocation is one number out of a thousand,
-// while a missing one collides with whatever worktree started first.
-func supabaseEntries() string {
-	return `
+// supabaseService is one port the stack can publish. Routed says it earns a
+// hostname, which only a service you would open in a browser does.
+type supabaseService struct {
+	name   string
+	routed bool
+	note   string
+	env    string
+}
+
+// supabaseServices reports what to allocate for a stack, reading the enabled
+// flags only to decide which services deserve a hostname. Every port is
+// allocated either way: kong publishes its own even with "[api] enabled =
+// false", so a flag is not a reliable signal of what binds, and the costs are
+// not symmetric. A spare allocation is one number out of a thousand, while a
+// missing one collides with whatever worktree started first. A hostname is the
+// opposite: nothing collides, and one that never answers is only clutter.
+func supabaseServices(stackConfig string) (services []supabaseService, demoted []string) {
+	services = []supabaseService{
+		{name: "api", routed: true, env: `SUPABASE_API_PORT = "{port}"`},
+		{name: "studio", routed: true, env: `SUPABASE_STUDIO_PORT = "{port}"`},
+		{
+			name:   "mail",
+			routed: true,
+			note: `# The key was renamed at CLI 2.108, and each version binds only the one it
+# knows, so both spellings are harmless and one of them lands.`,
+			env: `SUPABASE_INBUCKET_PORT = "{port}", SUPABASE_LOCAL_SMTP_PORT = "{port}"`,
+		},
+		{name: "db", env: `SUPABASE_DB_PORT = "{port}"`},
+		{name: "shadow", env: `SUPABASE_DB_SHADOW_PORT = "{port}"`},
+		{name: "pooler", env: `SUPABASE_DB_POOLER_PORT = "{port}"`},
+		{name: "analytics", env: `SUPABASE_ANALYTICS_PORT = "{port}"`},
+	}
+
+	off := disabledSupabase(stackConfig)
+	for i := range services {
+		if services[i].routed && off[services[i].name] {
+			services[i].routed = false
+			demoted = append(demoted, services[i].name)
+		}
+	}
+	return services, demoted
+}
+
+// disabledSupabase reports which services the stack's config turns off. Only
+// an explicit false counts, so a config this cannot read, or one that says
+// nothing, leaves every service as it was.
+func disabledSupabase(path string) map[string]bool {
+	var raw struct {
+		API      struct{ Enabled *bool } `toml:"api"`
+		Studio   struct{ Enabled *bool } `toml:"studio"`
+		Inbucket struct{ Enabled *bool } `toml:"inbucket"`
+		// The section was renamed along with the port key at CLI 2.108.
+		LocalSMTP struct{ Enabled *bool } `toml:"local_smtp"`
+	}
+	if _, err := toml.DecodeFile(path, &raw); err != nil {
+		return nil
+	}
+
+	off := map[string]bool{}
+	disabled := func(name string, flag *bool) {
+		if flag != nil && !*flag {
+			off[name] = true
+		}
+	}
+	disabled("api", raw.API.Enabled)
+	disabled("studio", raw.Studio.Enabled)
+	disabled("mail", raw.Inbucket.Enabled)
+	disabled("mail", raw.LocalSMTP.Enabled)
+	return off
+}
+
+func supabaseEntries(services []supabaseService) string {
+	b := &strings.Builder{}
+	b.WriteString(`
 # Ports for the supabase stack. Grove allocates all of them, because supabase
 # publishes some regardless of the enabled flags in its config, and an unused
-# allocation costs nothing next to a collision between two worktrees. The
-# variable names are the supabase CLI's own automatic bindings, so its
-# config.toml needs no edit.
-
-[routes.api]
-detached = true
-env = { SUPABASE_API_PORT = "{port}" }
-
-[routes.studio]
-detached = true
-env = { SUPABASE_STUDIO_PORT = "{port}" }
-
-[routes.mail]
-detached = true
-# The key was renamed at CLI 2.108, and each version binds only the one it
-# knows, so both spellings are harmless and one of them lands.
-env = { SUPABASE_INBUCKET_PORT = "{port}", SUPABASE_LOCAL_SMTP_PORT = "{port}" }
-
-[ports.db]
-detached = true
-env = { SUPABASE_DB_PORT = "{port}" }
-
-[ports.shadow]
-detached = true
-env = { SUPABASE_DB_SHADOW_PORT = "{port}" }
-
-[ports.pooler]
-detached = true
-env = { SUPABASE_DB_POOLER_PORT = "{port}" }
-
-[ports.analytics]
-detached = true
-env = { SUPABASE_ANALYTICS_PORT = "{port}" }
-`
+# allocation costs nothing next to a collision between two worktrees. A
+# service the config turns off is listed under [ports], since a hostname
+# nothing answers on is worth less than the line it takes up. The variable
+# names are the supabase CLI's own automatic bindings, so its config.toml
+# needs no edit.
+`)
+	for _, service := range services {
+		section := "ports"
+		if service.routed {
+			section = "routes"
+		}
+		fmt.Fprintf(b, "\n[%s.%s]\ndetached = true\n", section, service.name)
+		if service.note != "" {
+			fmt.Fprintln(b, service.note)
+		}
+		fmt.Fprintf(b, "env = { %s }\n", service.env)
+	}
+	return b.String()
 }
