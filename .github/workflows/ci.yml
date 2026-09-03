@@ -55,6 +55,25 @@ jobs:
       - name: Test
         run: go test -race -count=1 ./...
 
+  # macOS reaches every temporary directory through a symlink, since /var
+  # resolves to /private/var, and git reports resolved paths. Pointing TMPDIR
+  # through a symlink reproduces that on Linux, where the tests are quick.
+  symlinked-tmp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Test with a symlinked TMPDIR
+        run: |
+          mkdir -p /tmp/real-tmp
+          ln -sfn /tmp/real-tmp /tmp/linked-tmp
+          TMPDIR=/tmp/linked-tmp go test -count=1 ./...
+
   build:
     strategy:
       fail-fast: false

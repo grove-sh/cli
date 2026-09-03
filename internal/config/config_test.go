@@ -105,8 +105,14 @@ func TestFindWalksUp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if cfg.Dir != root {
-		t.Errorf("Dir = %q, want %q", cfg.Dir, root)
+	// Config reports resolved paths, as git does, so the expectation resolves
+	// too. On macOS every temporary directory arrives through a symlink.
+	want, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Dir != want {
+		t.Errorf("Dir = %q, want %q", cfg.Dir, want)
 	}
 }
 
@@ -171,6 +177,14 @@ func TestSelectByDirectory(t *testing.T) {
 	cfg, err := config.Load(root)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	// These have to exist: you can only run a command in a directory that
+	// does, and resolving a path that does not is a different question.
+	for _, dir := range []string{"apps/web/src/app", "apps/admin", "packages/db"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	for dir, want := range map[string]string{

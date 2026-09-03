@@ -313,19 +313,28 @@ func (c *Config) Select(cwd, named string) (*Entry, error) {
 	return best, nil
 }
 
-// resolvePath reports an absolute path with symlinks followed. A path that cannot
-// be resolved falls back to absolute, since refusing to run over it would be
-// worse than comparing it as written.
+// resolvePath reports an absolute path with symlinks followed. EvalSymlinks
+// needs the whole path to exist, so this resolves the deepest part that does
+// and keeps the rest: half-resolving would be worse than not resolving, since
+// a resolved config directory would stop matching an unresolved one below it.
 func resolvePath(dir string) (string, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return "", err
 	}
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		return abs, nil
+
+	remainder := ""
+	for current := abs; ; {
+		if resolved, err := filepath.EvalSymlinks(current); err == nil {
+			return filepath.Join(resolved, remainder), nil
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return abs, nil
+		}
+		remainder = filepath.Join(filepath.Base(current), remainder)
+		current = parent
 	}
-	return resolved, nil
 }
 
 func within(root, relative, target string) bool {
