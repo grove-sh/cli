@@ -395,3 +395,58 @@ func TestExecStartsADaemonWhenNoneIsRunning(t *testing.T) {
 		t.Errorf("the daemon did not stay up: %v", err)
 	}
 }
+
+// An inline override is the most deliberate thing in the chain, so a
+// checked-in .env must not clobber it. dotenv behaves this way too, and
+// swapping one for the other should not change what `PORT=4000 pnpm dev` does.
+func TestEnvFilesYieldToTheInvokingEnvironment(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	if err := os.WriteFile(filepath.Join(repo, ".env"), []byte("API_KEY=from-file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+	t.Setenv("API_KEY", "from-shell")
+
+	code, _, stderr := exercise(t, "exec", "--socket", socket, "--",
+		"sh", "-c", `printf '%s\n%s\n' "$API_KEY" "$PORT" > out.txt`)
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+
+	written, err := os.ReadFile(filepath.Join(repo, "out.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(written)), "\n")
+	if lines[0] != "from-shell" {
+		t.Errorf("API_KEY = %q, want the inline value to survive", lines[0])
+	}
+	// The leased port still wins, since the hostname routes to it.
+	if lines[1] == "" || lines[1] == "3000" {
+		t.Errorf("PORT = %q, want the leased one", lines[1])
+	}
+}
+
+// And the inverse: grove's own values override an inline attempt to name the
+// port, because the route already points at the one it leased.
+func TestGroveOverridesAnInlinePort(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	t.Chdir(repo)
+	t.Setenv("PORT", "4000")
+
+	code, _, stderr := exercise(t, "exec", "--socket", socket, "--",
+		"sh", "-c", `echo "$PORT" > port.txt`)
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+
+	written, err := os.ReadFile(filepath.Join(repo, "port.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(written)) == "4000" {
+		t.Error("an inline PORT won, so the hostname would route to the wrong port")
+	}
+}

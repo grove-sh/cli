@@ -164,7 +164,15 @@ func layer(cfg *config.Config, resolved map[string]string, active *config.Entry,
 		name, value, _ := strings.Cut(entry, "=")
 		layered[name] = value
 	}
+	// An env_file yields to the environment grove was invoked from, because an
+	// inline override is the most deliberate thing in the chain and a checked
+	// in file is the least. Grove's own resolved values still win over both:
+	// the route points at the port it leased, so letting anything else name
+	// that port would make the routing a lie.
 	for name, value := range fromFiles {
+		if _, inherited := os.LookupEnv(name); inherited {
+			continue
+		}
 		layered[name] = value
 	}
 	if active != nil {
