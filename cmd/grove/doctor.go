@@ -171,8 +171,8 @@ func checkBundle(stateDir string) finding {
 	return f
 }
 
-// checkDaemon reports the daemon's own account of itself, which the port check
-// then uses, so the two cannot disagree about who holds 443.
+// checkDaemon returns the daemon's own account of itself, or nil when nothing
+// answers.
 func checkDaemon(socket string) (*daemon.Status, finding) {
 	f := finding{name: "daemon"}
 

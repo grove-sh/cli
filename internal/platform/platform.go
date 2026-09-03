@@ -5,12 +5,11 @@ package platform
 // PortAccess describes whether a process running as you can bind a port below
 // 1024, which is what serving hostnames without a port in them requires.
 type PortAccess struct {
-	// Allowed means grove can take the port as it stands.
 	Allowed bool
 
-	// Detail says what the situation is, in one line.
+	// Detail is one line on how things stand, whatever the answer.
 	Detail string
 
-	// Advice says how to change it, and is empty when nothing needs changing.
+	// Advice is how to change it, and is empty when nothing needs changing.
 	Advice string
 }

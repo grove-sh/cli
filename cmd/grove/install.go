@@ -81,11 +81,9 @@ setting you should apply yourself.`,
 	return cmd
 }
 
-// settleBundle decides what python's requests and Deno should be pointed at.
-// Installing into the OS store rewrites the system bundle on Linux, so there
-// the system's own file is the answer and any copy grove made is deleted. The
-// keychain install on macOS leaves that file untouched, so there grove merges
-// its own copy, which is the only way those runtimes can trust it at all.
+// settleBundle leaves exactly one bundle in play for the runtimes that carry
+// their own roots, deleting grove's copy the moment the system file will do.
+// trust.Bundle explains which is which.
 func settleBundle(stateDir string, root *x509.Certificate, rootPEM []byte) string {
 	system := trust.SystemBundle()
 	if system == "" {

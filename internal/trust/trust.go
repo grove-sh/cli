@@ -43,8 +43,8 @@ func Trusted(root *x509.Certificate) bool {
 	return err == nil
 }
 
-// Go reads these in order when SSL_CERT_FILE is unset. macOS has no such file,
-// which is why WriteBundle can come back empty there.
+// The order Go itself reads them in when SSL_CERT_FILE is unset. macOS has the
+// last one, which matters: the file is there, and its trust install ignores it.
 var systemBundles = []string{
 	"/etc/ssl/certs/ca-certificates.crt",
 	"/etc/pki/tls/certs/ca-bundle.crt",
@@ -69,9 +69,8 @@ func SystemBundle() string {
 	return ""
 }
 
-// SystemBundleTrusts reports whether the system bundle carries grove's root.
-// Installing into the OS trust store rewrites that bundle on Linux, so after a
-// successful install the answer is yes and grove needs no copy of its own.
+// SystemBundleTrusts reports whether the system bundle carries grove's root,
+// which is what Bundle decides on.
 func SystemBundleTrusts(root *x509.Certificate) bool {
 	path := SystemBundle()
 	if path == "" {
@@ -105,10 +104,9 @@ func Bundle(stateDir string) (path string, merged bool) {
 	return SystemBundle(), false
 }
 
-// WriteBundle merges the system roots with grove's own into one file, for the
-// platforms whose trust install leaves the system bundle alone. Callers use it
-// only when SystemBundleTrusts says the system file will not do, since a copy
-// of a trust store goes stale as the real one gains roots.
+// WriteBundle merges the system roots with grove's own into one file. Use it
+// only when the system file will not do: a copy of a trust store goes stale as
+// the real one gains roots.
 func WriteBundle(stateDir string, rootPEM []byte) (string, error) {
 	system := SystemBundle()
 	if system == "" {

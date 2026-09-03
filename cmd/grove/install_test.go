@@ -9,10 +9,9 @@ import (
 	"github.com/grove-sh/cli/internal/trust"
 )
 
-// Every case passes --trust=false. Installing for real would touch the system
-// trust store and ask for a password.
-// Every case redirects the unit directory, which puts internal/service in
-// unmanaged mode. A test run must not enable anything on the machine.
+// Every case passes --trust=false and redirects the unit directory. A test run
+// must not touch the system trust store, prompt for a password, or register
+// anything with a service manager.
 func TestInstallCreatesTheAuthority(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
 	t.Setenv("GROVE_SERVICE_DIR", filepath.Join(dir, "units"))

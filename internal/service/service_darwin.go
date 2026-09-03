@@ -18,10 +18,8 @@ func defaultDir() string {
 
 var errNotWritten = errors.New("service: launchd support is not written yet")
 
-// A LaunchAgent would keep the daemon running the way the systemd user unit
-// does on Linux, and it runs into the same wall on port 443: an agent runs as
-// you and cannot bind a low port. That is one decision, taken once, for both
-// this file and platform.PrivilegedPorts.
+// Writing an agent waits on the port question in platform.PrivilegedPorts,
+// tracked in grove-sh/cli#2, since an agent runs as you and cannot bind 443.
 func Supported() (bool, string) {
 	return false, "grove does not write a launchd agent yet, so start the daemon yourself with grove restart"
 }
