@@ -37,11 +37,11 @@ command. Signals and the exit code pass through.`,
 			if err != nil {
 				return err
 			}
-			context, err := identity.Resolve(dir)
+			cfg, err := config.Load(dir)
 			if err != nil {
 				return err
 			}
-			cfg, err := config.Load(dir)
+			context, err := resolveContext(dir, cfg)
 			if err != nil {
 				return err
 			}

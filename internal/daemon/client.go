@@ -59,6 +59,7 @@ func (c *Client) List() ([]Live, error) {
 }
 
 func (c *Client) roundTrip(req Request) (Response, error) {
+	req.Version = Version
 	if err := c.enc.Encode(req); err != nil {
 		return Response{}, err
 	}
@@ -69,5 +70,20 @@ func (c *Client) roundTrip(req Request) (Response, error) {
 	if resp.Error != "" {
 		return Response{}, errors.New(resp.Error)
 	}
+	// A daemon too old to know about versions reports none, which is exactly
+	// the case worth naming: it predates this binary.
+	if resp.Version != Version {
+		return Response{}, &VersionError{Daemon: resp.Version, CLI: Version}
+	}
 	return resp, nil
+}
+
+// VersionError says the running daemon does not speak this binary's protocol.
+type VersionError struct {
+	Daemon int
+	CLI    int
+}
+
+func (e *VersionError) Error() string {
+	return fmt.Sprintf("the running daemon speaks control protocol v%d and this grove speaks v%d; stop the daemon and start it again", e.Daemon, e.CLI)
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -312,5 +314,65 @@ func TestListenRefusesASecondDaemon(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "already listening") {
 		t.Errorf("error does not explain the conflict: %v", err)
+	}
+}
+
+func TestServerRejectsAnUnknownProtocolVersion(t *testing.T) {
+	h := start(t)
+	conn, err := net.Dial("unix", h.socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	if err := json.NewEncoder(conn).Encode(map[string]any{"version": 99, "op": "list"}); err != nil {
+		t.Fatal(err)
+	}
+	var resp daemon.Response
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(resp.Error, "protocol") {
+		t.Errorf("error = %q, want it to name the mismatch", resp.Error)
+	}
+	if resp.Version != daemon.Version {
+		t.Errorf("response version = %d, want %d", resp.Version, daemon.Version)
+	}
+}
+
+// A daemon built before versions existed answers without one. That is the case
+// worth naming, since grove gets rebuilt far more often than it gets restarted.
+func TestClientNamesAnOlderDaemon(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "old.sock")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		json.NewDecoder(conn).Decode(new(map[string]any))
+		json.NewEncoder(conn).Encode(map[string]any{"leases": []any{}})
+	}()
+
+	client, err := daemon.Dial(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	_, err = client.List()
+
+	var mismatch *daemon.VersionError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("err = %v, want VersionError", err)
+	}
+	if !strings.Contains(err.Error(), "start it again") {
+		t.Errorf("error does not say what to do: %v", err)
 	}
 }

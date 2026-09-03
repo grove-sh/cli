@@ -282,3 +282,49 @@ func TestBareRepositoryIsAnError(t *testing.T) {
 		t.Errorf("err = %v, want ErrBareRepository", err)
 	}
 }
+
+// A name in grove.toml is the project's own idea of what it is called, which
+// beats whatever the directory happens to be named.
+func TestWithProjectRenamesTheContext(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "myapp-repo")
+	gitRepo(t, repo)
+	wt := filepath.Join(base, "feat1")
+	addWorktree(t, repo, wt, "feat1")
+
+	renamed, err := resolve(t, wt).WithProject("myapp")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if renamed.Project != "myapp" || renamed.Slug != "myapp-feat1" {
+		t.Errorf("project = %q, slug = %q", renamed.Project, renamed.Slug)
+	}
+	if renamed.Variant != "feat1" {
+		t.Errorf("variant = %q, want the worktree to survive the rename", renamed.Variant)
+	}
+}
+
+func TestWithProjectYieldsToTheEnvironmentOverride(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "myapp-repo")
+	gitRepo(t, repo)
+	t.Setenv("GROVE_CONTEXT", "pinned")
+
+	renamed, err := resolve(t, repo).WithProject("myapp")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if renamed.Slug != "pinned" {
+		t.Errorf("slug = %q, want GROVE_CONTEXT to keep winning", renamed.Slug)
+	}
+}
+
+func TestWithProjectRejectsAnUnusableName(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "myapp")
+	gitRepo(t, repo)
+
+	if _, err := resolve(t, repo).WithProject("my.app"); err == nil {
+		t.Error("a dotted name was accepted")
+	}
+}

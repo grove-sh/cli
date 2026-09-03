@@ -2,14 +2,30 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
+	"github.com/grove-sh/cli/internal/config"
 	"github.com/grove-sh/cli/internal/identity"
 )
+
+// resolveContext reports the context a command runs in. A project that names
+// itself in grove.toml overrides the directory it happens to live in; a config
+// that is absent, as in a repository grove does not manage, changes nothing.
+func resolveContext(dir string, cfg *config.Config) (identity.Context, error) {
+	ctx, err := identity.Resolve(dir)
+	if err != nil {
+		return identity.Context{}, err
+	}
+	if cfg == nil {
+		return ctx, nil
+	}
+	return ctx.WithProject(cfg.Name)
+}
 
 func newContextCommand() *cobra.Command {
 	var asJSON bool
@@ -29,7 +45,11 @@ hostname, database, and ports grove allocates. GROVE_CONTEXT overrides it.
 			if err != nil {
 				return err
 			}
-			ctx, err := identity.Resolve(dir)
+			cfg, err := config.Load(dir)
+			if err != nil && !errors.Is(err, config.ErrNotFound) {
+				return err
+			}
+			ctx, err := resolveContext(dir, cfg)
 			if err != nil {
 				return err
 			}

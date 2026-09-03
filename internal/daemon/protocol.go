@@ -1,11 +1,17 @@
 package daemon
 
+// Version is the control protocol both sides must agree on. A grove binary is
+// rebuilt far more often than its daemon is restarted, so the mismatch has to
+// name itself rather than surface as a missing field.
+const Version = 1
+
 const (
 	OpAcquire = "acquire"
 	OpList    = "list"
 )
 
 type Request struct {
+	Version  int     `json:"version"`
 	Op       string  `json:"op"`
 	Slug     string  `json:"slug,omitempty"`
 	Worktree string  `json:"worktree,omitempty"`
@@ -22,9 +28,10 @@ type Entry struct {
 }
 
 type Response struct {
-	Error  string           `json:"error,omitempty"`
-	Grants map[string]Grant `json:"grants,omitempty"`
-	Leases []Live           `json:"leases,omitempty"`
+	Version int              `json:"version"`
+	Error   string           `json:"error,omitempty"`
+	Grants  map[string]Grant `json:"grants,omitempty"`
+	Leases  []Live           `json:"leases,omitempty"`
 }
 
 // A Grant is a leased port, and the hostname routed to it when there is one. An

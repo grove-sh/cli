@@ -178,14 +178,20 @@ func (s *Server) handle(conn net.Conn) {
 	if err := json.NewDecoder(conn).Decode(&req); err != nil {
 		return
 	}
+	if req.Version != Version {
+		enc.Encode(Response{Version: Version, Error: fmt.Sprintf(
+			"this grove speaks control protocol v%d and the running daemon speaks v%d; stop the daemon and start it again",
+			req.Version, Version)})
+		return
+	}
 
 	switch req.Op {
 	case OpList:
-		enc.Encode(Response{Leases: s.entries()})
+		enc.Encode(Response{Version: Version, Leases: s.entries()})
 	case OpAcquire:
 		s.acquire(conn, enc, req)
 	default:
-		enc.Encode(Response{Error: fmt.Sprintf("daemon: unknown op %q", req.Op)})
+		enc.Encode(Response{Version: Version, Error: fmt.Sprintf("daemon: unknown op %q", req.Op)})
 	}
 }
 
@@ -217,7 +223,7 @@ func (s *Server) acquire(conn net.Conn, enc *json.Encoder, req Request) {
 		})
 		if err != nil {
 			releaseAttached()
-			enc.Encode(Response{Error: err.Error()})
+			enc.Encode(Response{Version: Version, Error: err.Error()})
 			return
 		}
 		if !entry.Detached {
@@ -238,7 +244,7 @@ func (s *Server) acquire(conn net.Conn, enc *json.Encoder, req Request) {
 	defer releaseAttached()
 	s.syncRoutes()
 
-	if err := enc.Encode(Response{Grants: grants}); err != nil {
+	if err := enc.Encode(Response{Version: Version, Grants: grants}); err != nil {
 		return
 	}
 

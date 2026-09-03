@@ -42,6 +42,29 @@ func (c Context) Host(domain string) string {
 	return c.Slug + "." + domain
 }
 
+// WithProject renames the project, keeping whichever worktree this is. A name
+// in grove.toml wins over the directory the repository happens to sit in, but
+// not over GROVE_CONTEXT, which replaces the whole context.
+func (c Context) WithProject(name string) (Context, error) {
+	if name == "" || c.Source == FromOverride {
+		return c, nil
+	}
+	normalized, err := ValidateLabel(name)
+	if err != nil {
+		return Context{}, err
+	}
+	c.Project = normalized
+	c.Slug = composeSlug(normalized, c.Variant)
+	return c, nil
+}
+
+func composeSlug(project, variant string) string {
+	if variant == "" {
+		return cap63(project)
+	}
+	return cap63(project + "-" + variant)
+}
+
 // Resolve reports the context for dir. GROVE_CONTEXT overrides everything.
 func Resolve(dir string) (Context, error) {
 	abs, err := filepath.Abs(dir)
@@ -101,15 +124,13 @@ func Resolve(dir string) (Context, error) {
 		IsMain: repo.bare == "" && repo.current == repo.main,
 		Source: FromGit,
 	}
-	slug := project
 	if !ctx.IsMain {
 		ctx.Variant = slugify(filepath.Base(repo.current))
 		if ctx.Variant == "" {
 			return Context{}, fmt.Errorf("identity: %q does not slugify to a usable worktree name", repo.current)
 		}
-		slug = project + "-" + ctx.Variant
 	}
-	ctx.Slug = cap63(slug)
+	ctx.Slug = composeSlug(project, ctx.Variant)
 	return ctx, nil
 }
 
