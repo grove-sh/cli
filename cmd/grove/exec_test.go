@@ -291,3 +291,45 @@ func waitForFile(t *testing.T, path string) {
 	}
 	t.Fatalf("timed out waiting for %s", path)
 }
+
+// A restarted daemon knows nothing, so the context has to be able to say it
+// exists without running a command.
+func TestSyncRestoresDetachedEntries(t *testing.T) {
+	socket := startDaemon(t)
+	t.Chdir(tempRepo(t, "app1"))
+
+	code, stdout, stderr := exercise(t, "sync", "--socket", socket)
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "app1:db") {
+		t.Errorf("sync did not report the detached port:\n%s", stdout)
+	}
+
+	_, listed, _ := exercise(t, "ls", "--socket", socket)
+	if !strings.Contains(listed, "app1:db") {
+		t.Errorf("the daemon does not know the context:\n%s", listed)
+	}
+	// The attached route needs a running command to mean anything.
+	if strings.Contains(listed, "app1."+defaultDomain) {
+		t.Errorf("sync restored an attached route:\n%s", listed)
+	}
+}
+
+func TestSyncSaysSoWhenThereIsNothingToDo(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	if err := os.WriteFile(filepath.Join(repo, "grove.toml"), []byte("[routes.web]\ndir = \".\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+
+	code, stdout, _ := exercise(t, "sync", "--socket", socket)
+
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(stdout, "no detached ports") {
+		t.Errorf("stdout = %q", stdout)
+	}
+}

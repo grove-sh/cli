@@ -21,7 +21,7 @@ type NotRunningError struct {
 }
 
 func (e *NotRunningError) Error() string {
-	return fmt.Sprintf("no grove daemon at %s; start one with 'grove daemon'", e.Socket)
+	return fmt.Sprintf("no grove daemon at %s; start one with 'grove restart'", e.Socket)
 }
 
 func (e *NotRunningError) Unwrap() error { return e.Err }

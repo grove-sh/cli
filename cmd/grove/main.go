@@ -89,6 +89,7 @@ already reads.`,
 		newReleaseCommand(),
 		newRestartCommand(),
 		newStopCommand(),
+		newSyncCommand(),
 		newUninstallCommand(),
 		newLsCommand(),
 	)

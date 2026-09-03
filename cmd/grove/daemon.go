@@ -149,6 +149,13 @@ directory.`,
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "grove daemon on %s, pid %d\n", status.Listen, status.PID)
+
+			// A fresh daemon knows nothing. Restore this context at least,
+			// since restarting from inside the project you are working on is
+			// the usual case. Other contexts need their own grove sync.
+			if err := syncContext(cmd.OutOrStdout(), opts.socket, false); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "grove: could not restore this context: %v\n", err)
+			}
 			return nil
 		},
 	}
