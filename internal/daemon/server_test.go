@@ -384,8 +384,10 @@ func TestClientNamesAnOlderDaemon(t *testing.T) {
 	if !errors.As(err, &mismatch) {
 		t.Fatalf("err = %v, want VersionError", err)
 	}
-	if !strings.Contains(err.Error(), "start it again") {
-		t.Errorf("error does not say what to do: %v", err)
+	for _, want := range []string{"grove restart", "grove sync"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not name %q, so it says a problem without a way out: %v", want, err)
+		}
 	}
 }
 
@@ -502,5 +504,47 @@ func TestDetachedLeasesReportNoHolder(t *testing.T) {
 		case !held.Detached && held.PID == 0:
 			t.Errorf("attached %q reports no pid, though a command holds it", held.Service)
 		}
+	}
+}
+
+// A service runs the copy taken when it was installed, so the daemon has to say
+// which build it is: the protocol version cannot, since it sits still across
+// releases.
+func TestStatusReportsTheDaemonBuild(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := ca.OpenOrCreate(dir); err != nil {
+		t.Fatal(err)
+	}
+	server, err := daemon.New(daemon.Config{Domain: domain, CADir: dir, Version: "v9.9.9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := daemon.Listen(filepath.Join(socketDir(t), "control.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	https, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(control, https) }()
+	t.Cleanup(func() {
+		server.Shutdown()
+		<-served
+	})
+
+	client, err := daemon.Dial(control.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	status, err := client.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Grove != "v9.9.9" {
+		t.Errorf("status.Grove = %q, want the build the daemon was given", status.Grove)
 	}
 }

@@ -115,5 +115,5 @@ type VersionError struct {
 }
 
 func (e *VersionError) Error() string {
-	return fmt.Sprintf("the running daemon speaks control protocol v%d and this grove speaks v%d; stop the daemon and start it again", e.Daemon, e.CLI)
+	return fmt.Sprintf("the running daemon speaks control protocol v%d and this grove speaks v%d; restart it with 'grove restart', then 'grove sync' in each project, since a restart drops every detached port", e.Daemon, e.CLI)
 }

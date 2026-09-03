@@ -124,7 +124,22 @@ func reportService(out io.Writer, listen string, wanted bool) {
 		fmt.Fprintf(w, "service\t%v\n", err)
 		return
 	}
-	path, err := service.Install(executable, listen)
+
+	// The unit names a copy grove keeps, since the binary running right now
+	// may sit in a package tree that the next upgrade moves and a clean script
+	// deletes. Redirecting the unit somewhere means no service manager will
+	// ever read it, so there is nothing to protect and the copy is skipped:
+	// that also keeps a test from ever writing to a real install path.
+	target := executable
+	if service.Managed() {
+		target, err = service.Anchor(executable, filepath.Join(daemon.DataDir(), "bin"))
+		if err != nil {
+			fmt.Fprintf(w, "service\tcould not keep a copy of grove: %v\n", err)
+			return
+		}
+	}
+
+	path, err := service.Install(target, listen)
 	if err != nil {
 		fmt.Fprintf(w, "service\t%v\n", err)
 		return
@@ -137,6 +152,7 @@ func reportService(out io.Writer, listen string, wanted bool) {
 		fmt.Fprintf(w, "service\twritten only, GROVE_SERVICE_DIR keeps grove away from the service manager\n")
 		return
 	}
+	fmt.Fprintf(w, "grove\t%s, the copy the unit runs\n", target)
 
 	if err := service.Enable(); err != nil {
 		fmt.Fprintf(w, "service\tcould not enable it: %v\n", err)

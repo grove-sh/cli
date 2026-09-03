@@ -193,7 +193,27 @@ func checkDaemon(socket string) (*daemon.Status, finding) {
 	}
 	f.state = ok
 	f.detail = fmt.Sprintf("on %s, pid %d, %d lease(s)", status.Listen, status.PID, status.Leases)
+	if stale := staleDaemon(status.Grove, resolveVersion()); stale != "" {
+		f.state = warn
+		f.detail += ", " + stale
+		f.advice = "Refresh the copy the service runs with grove install, then grove restart. Detached ports need a grove sync afterwards, since a restart drops them."
+	}
 	return &status, f
+}
+
+// staleDaemon describes the running daemon's build when it is worth mentioning,
+// which is only when it is not this one: the service runs a copy taken at
+// install time, so upgrading the package leaves the old one serving. An empty
+// version comes from a daemon built before it could report one, which says the
+// same thing more loudly.
+func staleDaemon(daemonBuild, cliBuild string) string {
+	switch {
+	case daemonBuild == cliBuild:
+		return ""
+	case daemonBuild == "":
+		return "built before it could report its version"
+	}
+	return "built from " + daemonBuild + ", not " + cliBuild
 }
 
 func checkService() finding {

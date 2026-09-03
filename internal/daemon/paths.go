@@ -35,3 +35,23 @@ func StateDir() string {
 	}
 	return filepath.Join(home, ".local", "state", "grove")
 }
+
+// DataDir holds what grove installs rather than what it writes while running:
+// the copy of itself a service unit points at. Kept apart from StateDir so
+// clearing state cannot take the installed binary with it.
+func DataDir() string {
+	if dir := os.Getenv("GROVE_DATA_DIR"); dir != "" {
+		return dir
+	}
+	if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
+		return filepath.Join(dir, "grove")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), "grove")
+	}
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(home, "Library", "Application Support", "grove")
+	}
+	return filepath.Join(home, ".local", "share", "grove")
+}

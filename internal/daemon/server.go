@@ -24,6 +24,10 @@ type Config struct {
 	Domain string
 	CADir  string
 	Range  lease.PortRange
+
+	// Version is what this build calls itself, reported to clients so they can
+	// say when the running daemon is not the grove asking.
+	Version string
 }
 
 type Server struct {
@@ -33,6 +37,7 @@ type Server struct {
 	cert     *tls.Certificate
 	root     []byte
 
+	version string
 	listen  string
 	started time.Time
 
@@ -69,6 +74,7 @@ func New(cfg Config) (*Server, error) {
 	}
 	return &Server{
 		domain:   cfg.Domain,
+		version:  cfg.Version,
 		registry: registry,
 		proxy:    proxy.New(),
 		cert:     cert,
@@ -193,9 +199,7 @@ func (s *Server) handle(conn net.Conn) {
 		return
 	}
 	if req.Version != Version {
-		enc.Encode(Response{Version: Version, Error: fmt.Sprintf(
-			"this grove speaks control protocol v%d and the running daemon speaks v%d; stop the daemon and start it again",
-			req.Version, Version)})
+		enc.Encode(Response{Version: Version, Error: (&VersionError{Daemon: Version, CLI: req.Version}).Error()})
 		return
 	}
 
@@ -282,6 +286,7 @@ func (s *Server) status() *Status {
 
 	return &Status{
 		Version: Version,
+		Grove:   s.version,
 		PID:     os.Getpid(),
 		Listen:  listen,
 		Leases:  len(s.registry.List()),

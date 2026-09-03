@@ -126,7 +126,7 @@ port it leased, and holds the leases. A lease lasts exactly as long as the
 'grove exec' connection that asked for it.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			server, err := daemon.New(daemon.Config{Domain: opts.domain, CADir: opts.caDir})
+			server, err := daemon.New(daemon.Config{Domain: opts.domain, CADir: opts.caDir, Version: resolveVersion()})
 			if err != nil {
 				return err
 			}
