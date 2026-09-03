@@ -44,6 +44,15 @@ func TestInitWritesLoadableConfig(t *testing.T) {
 	if !strings.Contains(stdout, "apps/web") {
 		t.Errorf("output does not say what it found:\n%s", stdout)
 	}
+	// The derived name is reported, not written into the file: a fork tree
+	// shares one grove.toml, and a per-clone comment would conflict on every
+	// merge from upstream.
+	if !strings.Contains(stdout, "the name app1") {
+		t.Errorf("output does not report the derived name:\n%s", stdout)
+	}
+	if strings.Contains(generated(t, repo), `name = "app1"`) {
+		t.Error("the derived name was written into the file")
+	}
 
 	cfg, err := config.Load(repo)
 	if err != nil {
@@ -60,8 +69,16 @@ func TestInitWritesLoadableConfig(t *testing.T) {
 	if route.Label != "" {
 		t.Errorf("label = %q, want the bare hostname", route.Label)
 	}
-	if route.Env["NEXT_PUBLIC_SITE_URL"] == "" {
-		t.Errorf("nothing carries the URL: %v", route.Env)
+	// The URL goes in [env], not on the route: a build binds nothing, and a
+	// route's own variables apply only while that route is bound.
+	if got := cfg.Env["NEXT_PUBLIC_SITE_URL"]; got != "{routes.web.url}" {
+		t.Errorf("[env] NEXT_PUBLIC_SITE_URL = %q", got)
+	}
+	if route.Env["NEXT_PUBLIC_SITE_URL"] != "" {
+		t.Errorf("the URL stayed on the route, where a build cannot see it: %v", route.Env)
+	}
+	if route.Env["PORT"] == "" {
+		t.Errorf("the port left the route, where it belongs: %v", route.Env)
 	}
 }
 
@@ -287,5 +304,80 @@ func TestInitReportsAnAppItCannotIdentify(t *testing.T) {
 	}
 	if len(cfg.Routes) != 0 {
 		t.Errorf("routes = %v, want the guess left to the reader", cfg.Routes)
+	}
+}
+
+// Two apps naming the same URL variable cannot both claim it in [env], so it
+// stays on each route, where it applies only while that route is bound.
+func TestInitLeavesASharedURLVariableOnItsRoutes(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	os.Remove(filepath.Join(repo, config.FileName))
+	for _, name := range []string{"one", "two"} {
+		writeApp(t, filepath.Join(repo, "apps", name),
+			`{"scripts":{"dev":"astro dev"},"devDependencies":{"astro":"5"}}`)
+	}
+	t.Chdir(repo)
+
+	exercise(t, "init")
+
+	cfg, err := config.Load(repo)
+	if err != nil {
+		t.Fatalf("what init wrote does not load: %v\n%s", err, generated(t, repo))
+	}
+	if cfg.Env["PUBLIC_SITE_URL"] != "" {
+		t.Errorf("[env] claims a variable two apps disagree about: %q", cfg.Env["PUBLIC_SITE_URL"])
+	}
+	for _, name := range []string{"one", "two"} {
+		if cfg.Routes[name].Env["PUBLIC_SITE_URL"] == "" {
+			t.Errorf("route %q lost its URL: %v", name, cfg.Routes[name].Env)
+		}
+	}
+}
+
+// Every app in a project talks to the same stack, so the API's URL is worth
+// setting for them, under whatever prefix each framework exposes.
+func TestInitNamesTheSupabaseAPIForTheApp(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	os.Remove(filepath.Join(repo, config.FileName))
+	writeApp(t, filepath.Join(repo, "apps", "web"), `{"scripts":{"dev":"next dev"},"dependencies":{"next":"15"}}`)
+	stack := filepath.Join(repo, "packages", "db", "supabase")
+	if err := os.MkdirAll(stack, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stack, "config.toml"), []byte("project_id = \"x\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+
+	exercise(t, "init")
+
+	cfg, err := config.Load(repo)
+	if err != nil {
+		t.Fatalf("what init wrote does not load: %v\n%s", err, generated(t, repo))
+	}
+	if got := cfg.Env["NEXT_PUBLIC_SUPABASE_URL"]; got != "{routes.api.url}" {
+		t.Errorf("NEXT_PUBLIC_SUPABASE_URL = %q", got)
+	}
+	// Both names come from one prefix, so they cannot drift apart.
+	if got := cfg.Env["NEXT_PUBLIC_SITE_URL"]; got != "{routes.web.url}" {
+		t.Errorf("NEXT_PUBLIC_SITE_URL = %q", got)
+	}
+}
+
+// Without a stack there is no API to name, so nothing is set.
+func TestInitNamesNoSupabaseURLWithoutAStack(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	os.Remove(filepath.Join(repo, config.FileName))
+	writeApp(t, filepath.Join(repo, "apps", "web"), `{"scripts":{"dev":"vite dev"},"devDependencies":{"vite":"6"}}`)
+	t.Chdir(repo)
+
+	exercise(t, "init")
+
+	cfg, err := config.Load(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Env["VITE_SUPABASE_URL"]; got != "" {
+		t.Errorf("VITE_SUPABASE_URL = %q, but there is no stack", got)
 	}
 }

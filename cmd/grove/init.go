@@ -69,9 +69,26 @@ func projectRoot(dir string) (root, project string) {
 }
 
 type app struct {
-	name   string
-	dir    string
-	urlFor string
+	name string
+	dir  string
+
+	// prefix is what this app's framework puts on a browser-visible variable,
+	// so the same one names both its own URL and the API's.
+	prefix string
+}
+
+func (a app) siteURLVar() string {
+	if a.prefix == "" {
+		return ""
+	}
+	return a.prefix + "SITE_URL"
+}
+
+func (a app) supabaseURLVar() string {
+	if a.prefix == "" {
+		return ""
+	}
+	return a.prefix + "SUPABASE_URL"
 }
 
 func scaffold(root, project string) (string, []string) {
@@ -82,8 +99,9 @@ func scaffold(root, project string) (string, []string) {
 # Every route below gets its own hostname, one per worktree:
 #   <context>.grov.site, or <context>-<label>.grov.site
 #
-# name is what grove derived from this directory. Set it when they differ.
-# name = "` + project + `"
+# The project name comes from this directory. Uncomment to override it, which
+# is worth doing when the directory and the project disagree.
+# name = "example"
 `)
 
 	if _, err := os.Stat(filepath.Join(root, ".env")); err == nil {
@@ -91,13 +109,45 @@ func scaffold(root, project string) (string, []string) {
 		notes = append(notes, ".env, which grove will load in place of dotenv")
 	}
 
+	notes = append(notes, "the name "+project+", from this directory")
+
+	apps, unsure := findApps(root)
 	stack, stackDir := findSupabase(root)
+
+	// A URL belongs in [env] rather than on its route: [env] applies to every
+	// command, while a route's own variables apply only when that route is the
+	// one being bound, and a build binds nothing. Ports stay on the route,
+	// since a port means nothing without a lease.
+	urls := map[string]string{}
+	shared := map[string]bool{}
+	claim := func(name, template string) {
+		if name == "" {
+			return
+		}
+		if existing, taken := urls[name]; taken {
+			if existing != template {
+				shared[name] = true
+			}
+			return
+		}
+		urls[name] = template
+	}
+	for _, found := range apps {
+		claim(found.siteURLVar(), "{routes."+found.name+".url}")
+		// Every app in a project talks to the same stack, so they agree on
+		// this one and it does not count as a clash.
+		if stack {
+			claim(found.supabaseURLVar(), "{routes.api.url}")
+		}
+	}
+
+	if stack || len(urls) > 0 {
+		b.WriteString("\n[env]\n")
+	}
 	if stack {
-		b.WriteString(`
-# The supabase CLI reads these on its own, so its config.toml needs no edit.
+		b.WriteString(`# The supabase CLI reads these on its own, so its config.toml needs no edit.
 # They are its automatic bindings: SUPABASE_ plus the config key path. A key
 # renamed in a later CLI is a one line change here.
-[env]
 SUPABASE_PROJECT_ID = "{context.slug}"
 
 # The stack brings its own postgres, on the port grove allocated for it. The
@@ -106,8 +156,13 @@ POSTGRES_URL = "postgres://postgres:postgres@localhost:{ports.db}/postgres"
 `)
 		notes = append(notes, "a supabase stack in "+stackDir+", whose ports grove will allocate")
 	}
+	for _, name := range sortedKeys(urls) {
+		if shared[name] {
+			continue
+		}
+		fmt.Fprintf(&b, "%s = %q\n", name, urls[name])
+	}
 
-	apps, unsure := findApps(root)
 	for _, found := range apps {
 		fmt.Fprintf(&b, "\n[routes.%s]\n", found.name)
 		if found.dir != "." {
@@ -116,12 +171,18 @@ POSTGRES_URL = "postgres://postgres:postgres@localhost:{ports.db}/postgres"
 		if len(apps) == 1 {
 			b.WriteString("label = \"\"\n")
 		}
-		if found.urlFor == "" {
+		switch {
+		case found.siteURLVar() == "":
 			fmt.Fprintf(&b, "env = { PORT = \"{port}\" }\n")
 			fmt.Fprintf(&b, "# Add the variable this app reads its own URL from, if it has one:\n")
-			fmt.Fprintf(&b, "# env = { PORT = \"{port}\", PUBLIC_SITE_URL = \"{url}\" }\n")
-		} else {
-			fmt.Fprintf(&b, "env = { PORT = \"{port}\", %s = \"{url}\" }\n", found.urlFor)
+			fmt.Fprintf(&b, "# %s = \"{routes.%s.url}\" under [env] above\n", "PUBLIC_SITE_URL", found.name)
+		case shared[found.siteURLVar()]:
+			// Two apps naming the same variable cannot both put it in [env].
+			fmt.Fprintf(&b, "env = { PORT = \"{port}\", %s = \"{url}\" }\n", found.siteURLVar())
+			fmt.Fprintf(&b, "# %s is shared with another app, so it stays here rather than\n", found.siteURLVar())
+			fmt.Fprintf(&b, "# in [env], and only applies while this route is the one bound.\n")
+		default:
+			fmt.Fprintf(&b, "env = { PORT = \"{port}\" }\n")
 		}
 		notes = append(notes, "an app in "+found.dir+", as route "+found.name)
 	}
@@ -150,6 +211,15 @@ POSTGRES_URL = "postgres://postgres:postgres@localhost:{ports.db}/postgres"
 	return b.String(), notes
 }
 
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for key := range m {
+		out = append(out, key)
+	}
+	slices.Sort(out)
+	return out
+}
+
 // findApps looks under apps/, which is where a monorepo puts the things that
 // get deployed, and at the root for a single app repository. Libraries under
 // packages/ are not apps: a watching type checker has a dev script too, and it
@@ -162,10 +232,10 @@ func findApps(root string) (found []app, unsure []string) {
 				continue
 			}
 			dir := filepath.Join("apps", entry.Name())
-			serves, urlFor := serves(filepath.Join(root, dir))
+			serves, prefix := serves(filepath.Join(root, dir))
 			switch {
 			case serves:
-				found = append(found, app{name: entry.Name(), dir: dir, urlFor: urlFor})
+				found = append(found, app{name: entry.Name(), dir: dir, prefix: prefix})
 			case hasDevScript(filepath.Join(root, dir)):
 				unsure = append(unsure, dir)
 			}
@@ -173,8 +243,8 @@ func findApps(root string) (found []app, unsure []string) {
 	}
 
 	if len(found) == 0 && len(unsure) == 0 {
-		if serves, urlFor := serves(root); serves {
-			found = append(found, app{name: "web", dir: ".", urlFor: urlFor})
+		if serves, prefix := serves(root); serves {
+			found = append(found, app{name: "web", dir: ".", prefix: prefix})
 		}
 	}
 
@@ -189,16 +259,16 @@ type manifest struct {
 	DevDependencies map[string]string `json:"devDependencies"`
 }
 
-// frameworks that serve HTTP, and the variable each conventionally reads its
-// own public URL from. Guessing this is why init tells you to read what it
+// frameworks that serve HTTP, and the prefix each puts on a variable it will
+// expose to the browser. Guessing this is why init tells you to read what it
 // wrote.
 var frameworks = map[string]string{
-	"next":           "NEXT_PUBLIC_SITE_URL",
-	"nuxt":           "NUXT_PUBLIC_SITE_URL",
-	"vite":           "VITE_SITE_URL",
-	"astro":          "PUBLIC_SITE_URL",
-	"@remix-run/dev": "PUBLIC_SITE_URL",
-	"@sveltejs/kit":  "PUBLIC_SITE_URL",
+	"next":           "NEXT_PUBLIC_",
+	"nuxt":           "NUXT_PUBLIC_",
+	"vite":           "VITE_",
+	"astro":          "PUBLIC_",
+	"@remix-run/dev": "PUBLIC_",
+	"@sveltejs/kit":  "PUBLIC_",
 }
 
 // servers that listen without a convention for their own URL, so they get a
@@ -227,8 +297,8 @@ func serves(dir string) (bool, string) {
 	}
 	for _, deps := range []map[string]string{parsed.Dependencies, parsed.DevDependencies} {
 		for name := range deps {
-			if urlFor, isFramework := frameworks[name]; isFramework {
-				return true, urlFor
+			if prefix, isFramework := frameworks[name]; isFramework {
+				return true, prefix
 			}
 			if slices.Contains(servers, name) {
 				return true, ""
