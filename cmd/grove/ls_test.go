@@ -28,12 +28,6 @@ func TestLsListsIdleRoutesWithTheirURLs(t *testing.T) {
 	if !strings.Contains(stdout, "idle") {
 		t.Errorf("the idle route is not marked:\n%s", stdout)
 	}
-	// A bare port has no hostname, so claiming one would be a lie.
-	for _, line := range strings.Split(stdout, "\n") {
-		if strings.HasPrefix(line, "db") && strings.Contains(line, "https://") {
-			t.Errorf("a bare port was given a URL: %q", line)
-		}
-	}
 }
 
 // The predicted port has to be the one allocation actually hands out, or it is
@@ -51,9 +45,31 @@ func TestLsPredictsThePortAllocationWouldGive(t *testing.T) {
 	}
 }
 
-// A detached port nothing answers on reads claimed, which is what a stopped
-// stack looks like: grove handed the port out and is still holding it.
-func TestLsTellsAClaimedPortFromAnIdleRoute(t *testing.T) {
+// A route nothing answers on reads claimed once grove has handed it a port,
+// which is what a stopped stack looks like: the port is still held. A route
+// with no lease at all is a different thing, and reads idle.
+func TestLsTellsAClaimedRouteFromAnIdleOne(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	writeConfig(t, repo, "[routes.web]\n\n[routes.admin]\ndetached = true\n")
+	t.Chdir(repo)
+	if code, _, stderr := exercise(t, "sync", "--socket", socket); code != 0 {
+		t.Fatal(stderr)
+	}
+
+	_, stdout, _ := exercise(t, "ls", "--socket", socket)
+
+	if !lineFor(stdout, "admin", "claimed") {
+		t.Errorf("the synced route is not held:\n%s", stdout)
+	}
+	if !lineFor(stdout, "web", "idle") {
+		t.Errorf("the unheld route is not idle:\n%s", stdout)
+	}
+}
+
+// A bare port is a number grove writes into an env var, so one that nothing is
+// serving is noise in a table about what you can reach.
+func TestLsLeavesOutAPortNothingIsServing(t *testing.T) {
 	socket := startDaemon(t)
 	repo := tempRepo(t, "app1")
 	t.Chdir(repo)
@@ -63,20 +79,15 @@ func TestLsTellsAClaimedPortFromAnIdleRoute(t *testing.T) {
 
 	_, stdout, _ := exercise(t, "ls", "--socket", socket)
 
-	var claimed, idle bool
-	for _, line := range strings.Split(stdout, "\n") {
-		switch {
-		case strings.HasPrefix(line, "db"):
-			claimed = strings.Contains(line, "claimed")
-		case strings.HasPrefix(line, "web"):
-			idle = strings.Contains(line, "idle")
-		}
+	if lineFor(stdout, "db", "") {
+		t.Errorf("a claimed port nothing answers on was listed:\n%s", stdout)
 	}
-	if !claimed {
-		t.Errorf("the synced port is not held:\n%s", stdout)
+	if !lineFor(stdout, "web", "idle") {
+		t.Errorf("the route went missing with it:\n%s", stdout)
 	}
-	if !idle {
-		t.Errorf("the unheld route is not idle:\n%s", stdout)
+	// It is still held, which is what the machine-wide view is for.
+	if _, all, _ := exercise(t, "ls", "--socket", socket, "--all"); !strings.Contains(all, "app1:db") {
+		t.Errorf("--all does not show the port grove is holding:\n%s", all)
 	}
 }
 
@@ -146,10 +157,9 @@ func TestLsUsesTheConfiguredLabel(t *testing.T) {
 	}
 }
 
-// A detached port is claimed until something answers on it, which is the
-// difference between a stack that is running and one that was stopped without
-// releasing its ports.
-func TestLsReportsADetachedPortAsRunningOnlyWhenSomethingAnswers(t *testing.T) {
+// Serving something on a held port is what brings it into the table, so the
+// listing follows the stack coming up rather than the lease being taken.
+func TestLsListsAPortOnceSomethingAnswersOnIt(t *testing.T) {
 	socket := startDaemon(t)
 	repo := tempRepo(t, "app1")
 	t.Chdir(repo)
@@ -157,21 +167,26 @@ func TestLsReportsADetachedPortAsRunningOnlyWhenSomethingAnswers(t *testing.T) {
 		t.Fatal(stderr)
 	}
 
-	_, before, _ := exercise(t, "ls", "--socket", socket)
-	port := portOf(t, before, "db")
+	_, held, _ := exercise(t, "ls", "--socket", socket, "--all")
+	port := portOf(t, held, "app1:db")
 
 	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		t.Skipf("could not stand on port %d: %v", port, err)
 	}
-	_, after, _ := exercise(t, "ls", "--socket", socket)
+	_, serving, _ := exercise(t, "ls", "--socket", socket)
 	ln.Close()
+	_, stopped, _ := exercise(t, "ls", "--socket", socket)
 
-	if !lineFor(before, "db", "claimed") {
-		t.Errorf("with nothing listening, db is not claimed:\n%s", before)
+	if !lineFor(serving, "db", "running") {
+		t.Errorf("with something listening, db is not running:\n%s", serving)
 	}
-	if !lineFor(after, "db", "running") {
-		t.Errorf("with something listening, db is not running:\n%s", after)
+	// A bare port has no hostname, so claiming one would be a lie.
+	if lineFor(serving, "db", "https://") {
+		t.Errorf("a bare port was given a URL:\n%s", serving)
+	}
+	if lineFor(stopped, "db", "") {
+		t.Errorf("db outlived the thing serving it:\n%s", stopped)
 	}
 }
 
@@ -191,6 +206,8 @@ func portOf(t *testing.T, table, route string) int {
 	return 0
 }
 
+// lineFor reports whether a row for route says want. An empty want asks only
+// whether the row is there at all, which is now half of what ls decides.
 func lineFor(table, route, want string) bool {
 	for _, line := range strings.Split(table, "\n") {
 		if strings.HasPrefix(line, route+" ") {

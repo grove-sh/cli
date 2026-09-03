@@ -24,16 +24,19 @@ func newLsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List this context's routes, or every lease on the machine",
-		Long: `List the routes and ports this context declares, live or not.
+		Long: `List the routes this context declares, live or not, and the ports it is serving.
 
 Every hostname comes from the config rather than from a lease, so a route that
 nothing is serving still has a URL, marked idle. Its port is where allocation
 would put it: that is a prediction, since a port already in use sends an
 attached lease further along the range.
 
-A port grove has handed out reads running when something answers on it and
-claimed when nothing does, which is what a stopped stack looks like: its ports
-stay allocated until grove release hands them back.
+A route grove has handed a port to reads running when something answers on it
+and claimed when nothing does, which is what a stopped stack looks like: its
+ports stay allocated until grove release hands them back.
+
+A bare port has no URL, so it is listed only while something is serving it.
+Use --all to see every port grove is holding.
 
 Outside a project, and with --all, this lists every live lease on the machine
 instead.`,
@@ -77,11 +80,6 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ROUTE\tURL\tPORT\tSTATE\tPID")
 	for _, entry := range cfg.All() {
-		url := "-"
-		if entry.Kind == config.KindRoute {
-			url = "https://" + identity.ComposeLabel(context.Slug, entry.Label) + "." + defaultDomain
-		}
-
 		port, state, holder := lease.PredictPort(lease.PortRange{}, context.Slug, entry.Name), "idle", "-"
 		if held, ok := live[entry.Name]; ok {
 			port = held.Port
@@ -98,6 +96,18 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 			if held.PID != 0 {
 				holder = strconv.Itoa(held.PID)
 			}
+		}
+
+		// A route is worth listing whatever its state, since its URL is the
+		// thing you would go and open. A bare port is a number grove puts in
+		// an env var for you, so an idle one is noise; --all still shows it.
+		if entry.Kind != config.KindRoute && state != "running" {
+			continue
+		}
+
+		url := "-"
+		if entry.Kind == config.KindRoute {
+			url = "https://" + identity.ComposeLabel(context.Slug, entry.Label) + "." + defaultDomain
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", entry.Name, url, strconv.Itoa(port), state, holder)
 	}

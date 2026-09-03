@@ -295,17 +295,16 @@ func TestLsSeesTheContextWhileExecRuns(t *testing.T) {
 		t.Errorf("exec exited %d", code)
 	}
 
-	// The route's lease goes with the command, so it reads idle again. The
-	// detached port is still held, and reads claimed because this fixture
-	// binds nothing: grove handed the port out, nothing answers on it.
+	// The route's lease goes with the command, so it reads idle again.
 	_, listed, _ := exercise(t, "ls", "--socket", socket)
-	for _, line := range strings.Split(listed, "\n") {
-		switch {
-		case strings.HasPrefix(line, "web") && !strings.Contains(line, "idle"):
-			t.Errorf("the route outlived the command:\n%s", listed)
-		case strings.HasPrefix(line, "db") && !strings.Contains(line, "claimed"):
-			t.Errorf("the detached port was released with the command:\n%s", listed)
-		}
+	if !lineFor(listed, "web", "idle") {
+		t.Errorf("the route outlived the command:\n%s", listed)
+	}
+	// The detached port is still held. Nothing binds it in this fixture, so
+	// the project view leaves it out and the machine-wide view is where the
+	// lease shows.
+	if _, all, _ := exercise(t, "ls", "--socket", socket, "--all"); !strings.Contains(all, "app1:db") {
+		t.Errorf("the detached port was released with the command:\n%s", all)
 	}
 }
 
