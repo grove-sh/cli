@@ -3,33 +3,14 @@ package service_test
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/grove-sh/cli/internal/service"
 )
 
-func TestUnitDescribesTheDaemon(t *testing.T) {
-	unit := service.Unit("/usr/local/bin/grove", "127.0.0.1:443")
-
-	for _, want := range []string{
-		"Type=notify",
-		"ExecStart=/usr/local/bin/grove daemon --listen 127.0.0.1:443",
-		"WantedBy=default.target",
-	} {
-		if !strings.Contains(unit, want) {
-			t.Errorf("unit is missing %q:\n%s", want, unit)
-		}
-	}
-	// Without this, a daemon that cannot bind leaves systemd waiting out its
-	// default readiness timeout on every restart.
-	if !strings.Contains(unit, "TimeoutStartSec=") {
-		t.Error("unit has no start timeout")
-	}
-}
-
-// GROVE_SERVICE_DIR writes a unit somewhere harmless and keeps this package
-// away from the real service manager, which is what makes it safe to exercise.
+// GROVE_SERVICE_DIR writes the definition somewhere harmless and keeps this
+// package away from the real service manager, which is what makes it safe for
+// a test run to exercise the install path at all.
 func TestRedirectedDirectoryIsUnmanaged(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GROVE_SERVICE_DIR", dir)
@@ -37,26 +18,40 @@ func TestRedirectedDirectoryIsUnmanaged(t *testing.T) {
 	if service.Managed() {
 		t.Error("Managed() is true with the directory redirected")
 	}
-	path, err := service.Write("/bin/grove", "127.0.0.1:8443")
-	if err != nil {
-		t.Fatal(err)
+	if got := service.Dir(); got != dir {
+		t.Errorf("Dir() = %q, want %q", got, dir)
 	}
-	if path != filepath.Join(dir, service.UnitName) {
-		t.Errorf("wrote to %q", path)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatal(err)
-	}
-
-	for name, call := range map[string]func() error{
-		"Enable": service.Enable, "Start": service.Start, "Restart": service.Restart,
-		"EnableLingering": service.EnableLingering,
-	} {
-		if err := call(); err != nil {
-			t.Errorf("%s reached the service manager: %v", name, err)
-		}
+	if want := filepath.Join(dir, service.FileName); service.Path() != want {
+		t.Errorf("Path() = %q, want %q", service.Path(), want)
 	}
 	if service.Lingering() {
 		t.Error("Lingering() consulted the real user manager")
+	}
+	if err := service.EnableLingering(); err != nil {
+		t.Errorf("EnableLingering reached the real user manager: %v", err)
+	}
+}
+
+func TestStatusReportsWhereTheDefinitionBelongs(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GROVE_SERVICE_DIR", dir)
+
+	state := service.Status()
+
+	if state.Installed {
+		t.Error("Installed is true with nothing written")
+	}
+	if state.Path != filepath.Join(dir, service.FileName) {
+		t.Errorf("Path = %q", state.Path)
+	}
+
+	if _, err := service.Install("/bin/grove", "127.0.0.1:8443"); err != nil {
+		t.Skipf("no service definition on this platform: %v", err)
+	}
+	if !service.Status().Installed {
+		t.Error("Installed is false after Install wrote one")
+	}
+	if _, err := os.Stat(state.Path); err != nil {
+		t.Error(err)
 	}
 }

@@ -14,6 +14,18 @@ import (
 	"github.com/grove-sh/cli/internal/daemon"
 )
 
+// socketDir is a short directory, because t.TempDir on macOS returns a
+// /var/folders path long enough on its own to blow the unix socket path limit.
+func socketDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "grove")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
 func startDaemon(t *testing.T) string {
 	t.Helper()
 
@@ -25,7 +37,7 @@ func startDaemon(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, err := daemon.Listen(filepath.Join(dir, "control.sock"))
+	control, err := daemon.Listen(filepath.Join(socketDir(t), "control.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +242,7 @@ func TestExecWithoutADaemon(t *testing.T) {
 	t.Chdir(tempRepo(t, "app1"))
 
 	code, _, stderr := exercise(t, "exec", "--autostart=false",
-		"--socket", filepath.Join(t.TempDir(), "absent.sock"), "--", "true")
+		"--socket", filepath.Join(socketDir(t), "absent.sock"), "--", "true")
 
 	if code != 1 {
 		t.Errorf("exit = %d, want 1", code)
@@ -339,11 +351,12 @@ func TestSyncSaysSoWhenThereIsNothingToDo(t *testing.T) {
 // port, and clean up after itself is the caller's job, not grove's.
 func TestExecStartsADaemonWhenNoneIsRunning(t *testing.T) {
 	state := t.TempDir()
-	socket := filepath.Join(state, "control.sock")
+	socket := filepath.Join(socketDir(t), "control.sock")
 	t.Setenv("GROVE_STATE_DIR", state)
 	t.Setenv("GROVE_SOCKET", socket)
 	t.Setenv("GROVE_LISTEN", "127.0.0.1:0")
 	t.Setenv("GROVE_TEST_RUN_CLI", "1")
+	t.Setenv("GROVE_SERVICE_DIR", filepath.Join(state, "units"))
 	if _, err := ca.OpenOrCreate(state); err != nil {
 		t.Fatal(err)
 	}

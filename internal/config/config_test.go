@@ -105,8 +105,14 @@ func TestFindWalksUp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if cfg.Dir != root {
-		t.Errorf("Dir = %q, want %q", cfg.Dir, root)
+	// Config reports resolved paths, as git does, so the expectation resolves
+	// too. On macOS every temporary directory arrives through a symlink.
+	want, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Dir != want {
+		t.Errorf("Dir = %q, want %q", cfg.Dir, want)
 	}
 }
 
@@ -171,6 +177,14 @@ func TestSelectByDirectory(t *testing.T) {
 	cfg, err := config.Load(root)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	// These have to exist: you can only run a command in a directory that
+	// does, and resolving a path that does not is a different question.
+	for _, dir := range []string{"apps/web/src/app", "apps/admin", "packages/db"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	for dir, want := range map[string]string{
@@ -253,5 +267,44 @@ POSTGRES_URL = "postgresql://postgres@127.0.0.1:5433/myapp"
 	}
 	if _, ok := cfg.Env["SUPABASE_PROJECT_ID"]; !ok {
 		t.Error("the local file replaced [env] instead of merging into it")
+	}
+}
+
+// A path reached through a symlink has to resolve to the same place as the one
+// git reports, or a config path and a worktree path can never be compared.
+// macOS reaches every temporary directory this way, since /var is a symlink.
+func TestPathsResolveThroughSymlinks(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	write(t, real, config.FileName, myappConfig)
+	if err := os.MkdirAll(filepath.Join(real, "apps", "web"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("cannot create a symlink here: %v", err)
+	}
+
+	cfg, err := config.Load(filepath.Join(link, "apps", "web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Dir != resolved {
+		t.Errorf("Dir = %q, want %q", cfg.Dir, resolved)
+	}
+
+	// Selection has to work through the symlink too, since that is the path
+	// the caller is standing in.
+	entry, err := cfg.Select(filepath.Join(link, "apps", "web"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry == nil || entry.Name != "web" {
+		t.Errorf("selected %v, want web", entry)
 	}
 }

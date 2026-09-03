@@ -1,0 +1,98 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  # Use the runner's Go rather than downloading one named in go.mod.
+  GOTOOLCHAIN: local
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      # One platform failing should not hide the state of the others, which is
+      # the whole point of running more than one.
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-latest
+          - os: macos
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Environment
+        run: |
+          go version
+          go env GOOS GOARCH
+          git version
+
+      - name: Formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt would change:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race -count=1 ./...
+
+  # macOS reaches every temporary directory through a symlink, since /var
+  # resolves to /private/var, and git reports resolved paths. Pointing TMPDIR
+  # through a symlink reproduces that on Linux, where the tests are quick.
+  symlinked-tmp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Test with a symlinked TMPDIR
+        run: |
+          mkdir -p /tmp/real-tmp
+          ln -sfn /tmp/real-tmp /tmp/linked-tmp
+          TMPDIR=/tmp/linked-tmp go test -count=1 ./...
+
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin]
+        goarch: [amd64, arm64]
+    runs-on: ubuntu-latest
+    env:
+      # No cgo anywhere, which is what keeps cross-compiling this simple.
+      CGO_ENABLED: '0'
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - run: go build ./...

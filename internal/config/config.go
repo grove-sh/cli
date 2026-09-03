@@ -78,8 +78,11 @@ type entry struct {
 }
 
 // Find walks up from dir looking for grove.toml, the way git looks for .git.
+// The path it reports is resolved, because git resolves the paths it reports
+// too, and on macOS /var is a symlink to /private/var. Resolving at both
+// boundaries is what lets a config path and a worktree path be compared.
 func Find(dir string) (string, error) {
-	abs, err := filepath.Abs(dir)
+	abs, err := resolvePath(dir)
 	if err != nil {
 		return "", err
 	}
@@ -293,7 +296,7 @@ func (c *Config) Select(cwd, named string) (*Entry, error) {
 		return nil, fmt.Errorf("config: no route or port named %q", named)
 	}
 
-	abs, err := filepath.Abs(cwd)
+	abs, err := resolvePath(cwd)
 	if err != nil {
 		return nil, err
 	}
@@ -308,6 +311,30 @@ func (c *Config) Select(cwd, named string) (*Entry, error) {
 		}
 	}
 	return best, nil
+}
+
+// resolvePath reports an absolute path with symlinks followed. EvalSymlinks
+// needs the whole path to exist, so this resolves the deepest part that does
+// and keeps the rest: half-resolving would be worse than not resolving, since
+// a resolved config directory would stop matching an unresolved one below it.
+func resolvePath(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+
+	remainder := ""
+	for current := abs; ; {
+		if resolved, err := filepath.EvalSymlinks(current); err == nil {
+			return filepath.Join(resolved, remainder), nil
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return abs, nil
+		}
+		remainder = filepath.Join(filepath.Base(current), remainder)
+		current = parent
+	}
 }
 
 func within(root, relative, target string) bool {

@@ -245,8 +245,14 @@ func TestBareCloneWithWorktrees(t *testing.T) {
 	if ctx.IsMain {
 		t.Error("IsMain = true, but a bare repository owns no worktree")
 	}
-	if ctx.BareRoot != bare {
-		t.Errorf("BareRoot = %q, want %q", ctx.BareRoot, bare)
+	// git reports resolved paths, and on macOS /var is a symlink to
+	// /private/var, so the expectation has to be resolved too.
+	wantBare, err := filepath.EvalSymlinks(bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.BareRoot != wantBare {
+		t.Errorf("BareRoot = %q, want %q", ctx.BareRoot, wantBare)
 	}
 	if ctx.MainRoot != "" {
 		t.Errorf("MainRoot = %q, want empty for a bare repository", ctx.MainRoot)

@@ -9,9 +9,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
-	"strconv"
-	"strings"
 	"syscall"
 	"text/tabwriter"
 
@@ -19,11 +16,10 @@ import (
 
 	"github.com/grove-sh/cli/internal/ca"
 	"github.com/grove-sh/cli/internal/daemon"
+	"github.com/grove-sh/cli/internal/platform"
 	"github.com/grove-sh/cli/internal/service"
 	"github.com/grove-sh/cli/internal/trust"
 )
-
-const unprivilegedPortsFile = "/proc/sys/net/ipv4/ip_unprivileged_port_start"
 
 func newInstallCommand() *cobra.Command {
 	var stateDir, listen string
@@ -69,7 +65,7 @@ setting you should apply yourself.`,
 			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 			fmt.Fprintf(w, "authority\t%s\n", filepath.Join(stateDir, trust.RootFile))
 			fmt.Fprintf(w, "trust store\t%s\n", state)
-			fmt.Fprintf(w, "system bundle\t%s\n", bundleState(root.Certificate()))
+			fmt.Fprintf(w, "runtime bundle\t%s\n", settleBundle(stateDir, root.Certificate(), root.RootPEM()))
 			w.Flush()
 
 			reportService(out, listen, installService)
@@ -85,31 +81,41 @@ setting you should apply yourself.`,
 	return cmd
 }
 
-// Installing into the OS store rewrites the system bundle on Linux, which is
-// what python's requests and Deno are pointed at.
-func bundleState(root *x509.Certificate) string {
-	switch {
-	case trust.SystemBundle() == "":
-		return "none on this system, so runtimes with their own bundles will not trust grove"
-	case trust.SystemBundleTrusts(root):
-		return trust.SystemBundle() + " carries this root"
-	default:
-		return trust.SystemBundle() + " does not carry this root yet"
+// settleBundle leaves exactly one bundle in play for the runtimes that carry
+// their own roots, deleting grove's copy the moment the system file will do.
+// trust.Bundle explains which is which.
+func settleBundle(stateDir string, root *x509.Certificate, rootPEM []byte) string {
+	system := trust.SystemBundle()
+	if system == "" {
+		return "no bundle on this system, so runtimes carrying their own will not trust grove"
 	}
+
+	if trust.SystemBundleTrusts(root) {
+		if err := trust.RemoveBundle(stateDir); err != nil {
+			return fmt.Sprintf("%s carries this root, but grove's stale copy remains: %v", system, err)
+		}
+		return system + ", which carries this root"
+	}
+
+	merged, err := trust.WriteBundle(stateDir, rootPEM)
+	if err != nil {
+		return fmt.Sprintf("could not merge one: %v", err)
+	}
+	return merged + ", merged because " + system + " does not carry this root"
 }
 
-// reportService installs the user unit when there is a service manager to hand
-// it to, and says why not when there is not.
+// reportService registers the daemon with whatever keeps processes running
+// here, and says why not when there is nothing to register with.
 func reportService(out io.Writer, listen string, wanted bool) {
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	defer w.Flush()
 
-	switch {
-	case !wanted:
+	if !wanted {
 		fmt.Fprintf(w, "service\tskipped by --service=false\n")
 		return
-	case !service.Available():
-		fmt.Fprintf(w, "service\tno systemd here, so run the daemon yourself with grove restart\n")
+	}
+	if supported, reason := service.Supported(); !supported {
+		fmt.Fprintf(w, "service\t%s\n", reason)
 		return
 	}
 
@@ -118,17 +124,17 @@ func reportService(out io.Writer, listen string, wanted bool) {
 		fmt.Fprintf(w, "service\t%v\n", err)
 		return
 	}
-	path, err := service.Write(executable, listen)
+	path, err := service.Install(executable, listen)
 	if err != nil {
 		fmt.Fprintf(w, "service\t%v\n", err)
 		return
 	}
 	fmt.Fprintf(w, "service\t%s\n", path)
 
-	// Redirecting the unit directory means the real service manager is off
-	// limits, so say that rather than claiming work nobody did.
+	// Redirecting the definition means the real service manager is off limits,
+	// so say that rather than claiming work nobody did.
 	if !service.Managed() {
-		fmt.Fprintf(w, "service\twritten only, GROVE_SERVICE_DIR keeps grove away from systemd\n")
+		fmt.Fprintf(w, "service\twritten only, GROVE_SERVICE_DIR keeps grove away from the service manager\n")
 		return
 	}
 
@@ -137,8 +143,8 @@ func reportService(out io.Writer, listen string, wanted bool) {
 		return
 	}
 
-	// Starting a daemon that cannot bind its port leaves systemd waiting for a
-	// readiness notification that never comes, so check the port first.
+	// Starting a daemon that cannot bind its port leaves a Type=notify service
+	// waiting for a readiness notification that never comes.
 	if held := whatHolds(listen); held != "" {
 		fmt.Fprintf(w, "service\tenabled, not started yet: %s\n", held)
 		return
@@ -226,27 +232,13 @@ func makePrivate(dir string, out io.Writer) error {
 }
 
 func reportPrivilegedPorts(out io.Writer) {
-	if runtime.GOOS != "linux" {
-		fmt.Fprintf(out, "\nBinding port 443 on %s needs a root LaunchDaemon, which grove does not install yet.\nUntil then run: grove daemon --listen 127.0.0.1:8443\n", runtime.GOOS)
+	access := platform.PrivilegedPorts()
+	if access.Allowed {
+		fmt.Fprintf(out, "\n%s\n", access.Detail)
 		return
 	}
-
-	start, err := os.ReadFile(unprivilegedPortsFile)
-	if err == nil {
-		if from, convErr := strconv.Atoi(strings.TrimSpace(string(start))); convErr == nil && from <= 443 {
-			fmt.Fprintf(out, "\nThis kernel already lets you bind 443, so 'grove daemon' can take it.\n")
-			return
-		}
+	fmt.Fprintf(out, "\n%s.\n", access.Detail)
+	if access.Advice != "" {
+		fmt.Fprintf(out, "\n%s\n", access.Advice)
 	}
-
-	fmt.Fprint(out, `
-Port 443 still needs privileges grove does not have. Lowering the unprivileged
-port floor is one line, survives every reinstall, and leaves the daemon running
-as you rather than as root:
-
-  echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/60-grove.conf
-  sudo sysctl --system
-
-Until then: grove daemon --listen 127.0.0.1:8443
-`)
 }

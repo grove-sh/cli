@@ -89,6 +89,11 @@ func Listen(socket string) (net.Listener, error) {
 	if err == nil {
 		return ln, nil
 	}
+	// The limit is around 104 bytes on macOS and 108 on Linux, and the kernel
+	// reports it as nothing more helpful than an invalid argument.
+	if len(socket) > 100 {
+		return nil, fmt.Errorf("%w\nthat path is %d bytes, and a unix socket allows about 104; set GROVE_SOCKET to something shorter", err, len(socket))
+	}
 	// Something holds the path. If nothing answers on it, it is a leftover.
 	if probe, dialErr := net.Dial("unix", socket); dialErr == nil {
 		probe.Close()
