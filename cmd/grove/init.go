@@ -116,8 +116,10 @@ func scaffold(root, project string) (string, []string) {
 	stack, stackDir := findSupabase(root)
 	var services []supabaseService
 	var demoted []string
+	var flags supabaseFlags
 	if stack {
-		services, demoted = supabaseServices(filepath.Join(root, stackDir, "config.toml"))
+		flags = readSupabaseFlags(filepath.Join(root, stackDir, "config.toml"))
+		services, demoted = supabaseServices(flags)
 	}
 	routed := func(name string) bool {
 		for _, service := range services {
@@ -160,9 +162,9 @@ func scaffold(root, project string) (string, []string) {
 		b.WriteString("\n[env]\n")
 	}
 	if stack {
-		b.WriteString(`# The supabase CLI reads these on its own, so its config.toml needs no edit.
-# They are its automatic bindings: SUPABASE_ plus the config key path. A key
-# renamed in a later CLI is a one line change here.
+		b.WriteString(`# The supabase CLI reads these on its own. They are its automatic bindings:
+# SUPABASE_ plus the config key path. A key renamed in a later CLI is a one
+# line change here.
 SUPABASE_PROJECT_ID = "{context.slug}"
 
 # The stack brings its own postgres, on the port grove allocated for it. The
@@ -172,6 +174,11 @@ POSTGRES_URL = "postgres://postgres:postgres@localhost:{ports.db}/postgres"
 		notes = append(notes, "a supabase stack in "+stackDir+", whose ports grove will allocate")
 		if len(demoted) > 0 {
 			notes = append(notes, "no hostname for "+strings.Join(demoted, ", ")+", which the stack has turned off")
+		}
+		if url := supabaseAPIURL(routed("api"), flags.apiTLS); url != "" {
+			b.WriteString(url)
+			notes = append(notes, "SUPABASE_API_EXTERNAL_URL, which needs one line in "+
+				filepath.Join(stackDir, "config.toml")+" before bucket seeding honors it")
 		}
 	}
 	for _, name := range sortedKeys(urls) {
@@ -371,7 +378,7 @@ type supabaseService struct {
 // not symmetric. A spare allocation is one number out of a thousand, while a
 // missing one collides with whatever worktree started first. A hostname is the
 // opposite: nothing collides, and one that never answers is only clutter.
-func supabaseServices(stackConfig string) (services []supabaseService, demoted []string) {
+func supabaseServices(flags supabaseFlags) (services []supabaseService, demoted []string) {
 	services = []supabaseService{
 		{name: "api", routed: true, env: `SUPABASE_API_PORT = "{port}"`},
 		{name: "studio", routed: true, env: `SUPABASE_STUDIO_PORT = "{port}"`},
@@ -388,9 +395,8 @@ func supabaseServices(stackConfig string) (services []supabaseService, demoted [
 		{name: "analytics", env: `SUPABASE_ANALYTICS_PORT = "{port}"`},
 	}
 
-	off := disabledSupabase(stackConfig)
 	for i := range services {
-		if services[i].routed && off[services[i].name] {
+		if services[i].routed && flags.off[services[i].name] {
 			services[i].routed = false
 			demoted = append(demoted, services[i].name)
 		}
@@ -398,32 +404,82 @@ func supabaseServices(stackConfig string) (services []supabaseService, demoted [
 	return services, demoted
 }
 
-// disabledSupabase reports which services the stack's config turns off. Only
-// an explicit false counts, so a config this cannot read, or one that says
-// nothing, leaves every service as it was.
-func disabledSupabase(path string) map[string]bool {
+// supabaseFlags is what a stack says about itself: the services it turns off,
+// and whether its API speaks TLS.
+type supabaseFlags struct {
+	off    map[string]bool
+	apiTLS bool
+}
+
+// readSupabaseFlags reads those two answers out of the stack's config. Only an
+// explicit false turns a service off, so a config this cannot read, or one
+// that says nothing, leaves everything as it was.
+func readSupabaseFlags(path string) supabaseFlags {
 	var raw struct {
-		API      struct{ Enabled *bool } `toml:"api"`
+		API struct {
+			Enabled *bool
+			TLS     struct{ Enabled *bool } `toml:"tls"`
+		} `toml:"api"`
 		Studio   struct{ Enabled *bool } `toml:"studio"`
 		Inbucket struct{ Enabled *bool } `toml:"inbucket"`
 		// The section was renamed along with the port key at CLI 2.108.
 		LocalSMTP struct{ Enabled *bool } `toml:"local_smtp"`
 	}
 	if _, err := toml.DecodeFile(path, &raw); err != nil {
-		return nil
+		return supabaseFlags{}
 	}
 
-	off := map[string]bool{}
+	flags := supabaseFlags{
+		off:    map[string]bool{},
+		apiTLS: raw.API.TLS.Enabled != nil && *raw.API.TLS.Enabled,
+	}
 	disabled := func(name string, flag *bool) {
 		if flag != nil && !*flag {
-			off[name] = true
+			flags.off[name] = true
 		}
 	}
 	disabled("api", raw.API.Enabled)
 	disabled("studio", raw.Studio.Enabled)
 	disabled("mail", raw.Inbucket.Enabled)
 	disabled("mail", raw.LocalSMTP.Enabled)
-	return off
+	return flags
+}
+
+// supabaseAPIURL writes the variable that puts bucket seeding on grove's port.
+// The CLI reads the storage gateway's URL out of config.toml rather than the
+// environment, so this takes effect only once that file routes the value back
+// through env(), which the comment explains. It is written either way, since
+// start and status do honor it and resolve it to the URL they would have
+// derived anyway.
+//
+// Nothing is written for a stack serving its API over TLS, where the scheme
+// would be https and this would quietly downgrade it. The host is grove's own
+// assumption rather than a universal one: the CLI takes it from the docker
+// context, and a remote DOCKER_HOST would want a different one.
+func supabaseAPIURL(routed, apiTLS bool) string {
+	if apiTLS {
+		return ""
+	}
+	port := "{ports.api}"
+	if routed {
+		port = "{routes.api.port}"
+	}
+	return fmt.Sprintf(`
+# Bucket seeding is the one thing the CLI will not read from here. It runs at
+# the end of db reset and calls the storage API on the port written in the
+# stack's own config.toml rather than this one, so it dials 54321 and fails:
+# https://github.com/supabase/cli/issues/6452. Until that is fixed, routing the
+# URL back through env() is what gets past it. In config.toml:
+#
+#   [api]
+#   external_url = "env(SUPABASE_API_EXTERNAL_URL)"
+#
+# That literal is what anyone without grove gets, since supabase keeps its own
+# .env out of the repo, so give the command that runs the CLI a default:
+# SUPABASE_API_EXTERNAL_URL=http://127.0.0.1:54321
+SUPABASE_API_EXTERNAL_URL = "http://127.0.0.1:%s"
+
+`, port)
 }
 
 func supabaseEntries(services []supabaseService) string {
@@ -434,8 +490,7 @@ func supabaseEntries(services []supabaseService) string {
 # allocation costs nothing next to a collision between two worktrees. A
 # service the config turns off is listed under [ports], since a hostname
 # nothing answers on is worth less than the line it takes up. The variable
-# names are the supabase CLI's own automatic bindings, so its config.toml
-# needs no edit.
+# names are the supabase CLI's own automatic bindings.
 `)
 	for _, service := range services {
 		section := "ports"
