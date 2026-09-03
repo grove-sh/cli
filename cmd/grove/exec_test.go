@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grove-sh/cli/internal/ca"
 	"github.com/grove-sh/cli/internal/daemon"
 )
 
@@ -17,6 +18,9 @@ func startDaemon(t *testing.T) string {
 	t.Helper()
 
 	dir := t.TempDir()
+	if _, err := ca.OpenOrCreate(dir); err != nil {
+		t.Fatal(err)
+	}
 	server, err := daemon.New(daemon.Config{Domain: defaultDomain, CADir: dir})
 	if err != nil {
 		t.Fatal(err)

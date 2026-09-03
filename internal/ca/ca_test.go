@@ -12,11 +12,11 @@ import (
 func TestOpenGeneratesThenReuses(t *testing.T) {
 	dir := t.TempDir()
 
-	first, err := ca.Open(dir)
+	first, err := ca.OpenOrCreate(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := ca.Open(dir)
+	second, err := ca.OpenOrCreate(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestOpenGeneratesThenReuses(t *testing.T) {
 }
 
 func TestLeafCoversOneLabelOnly(t *testing.T) {
-	root, err := ca.Open(t.TempDir())
+	root, err := ca.OpenOrCreate(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestLeafCoversOneLabelOnly(t *testing.T) {
 }
 
 func TestLeafChainsToRoot(t *testing.T) {
-	root, err := ca.Open(t.TempDir())
+	root, err := ca.OpenOrCreate(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

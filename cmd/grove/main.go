@@ -84,6 +84,9 @@ already reads.`,
 		newContextCommand(),
 		newDaemonCommand(),
 		newExecCommand(),
+		newDoctorCommand(),
+		newInstallCommand(),
+		newUninstallCommand(),
 		newLsCommand(),
 	)
 	return root

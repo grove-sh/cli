@@ -12,6 +12,7 @@ import (
 
 	"github.com/grove-sh/cli/internal/daemon"
 	"github.com/grove-sh/cli/internal/identity"
+	"github.com/grove-sh/cli/internal/trust"
 )
 
 func newExecCommand() *cobra.Command {
@@ -47,7 +48,7 @@ for as long as the command runs. Signals and the exit code pass through.`,
 				return err
 			}
 
-			return runChild(args, grant)
+			return runChild(args, grant, trust.Env(daemon.StateDir()))
 		},
 	}
 
@@ -58,7 +59,7 @@ for as long as the command runs. Signals and the exit code pass through.`,
 	return cmd
 }
 
-func runChild(args []string, grant daemon.Grant) error {
+func runChild(args []string, grant daemon.Grant, caEnv []string) error {
 	port := strconv.Itoa(grant.Port)
 
 	// Inheriting the parent's descriptors keeps the child on the same terminal,
@@ -71,6 +72,7 @@ func runChild(args []string, grant daemon.Grant) error {
 		"GROVE_HOST="+grant.Host,
 		"GROVE_URL="+grant.URL,
 	)
+	child.Env = append(child.Env, caEnv...)
 
 	if err := child.Start(); err != nil {
 		if errors.Is(err, exec.ErrNotFound) {

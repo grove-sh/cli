@@ -31,24 +31,38 @@ type CA struct {
 	key  *ecdsa.PrivateKey
 }
 
-// Open loads the root from dir, generating it on first use.
-func Open(dir string) (*CA, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	certPath := filepath.Join(dir, "root.crt")
-	keyPath := filepath.Join(dir, "root.key")
+// ErrNoAuthority means no CA has been generated yet. Only OpenOrCreate makes
+// one, so every other caller reports this rather than quietly minting a root
+// that nothing on the machine trusts.
+var ErrNoAuthority = errors.New("ca: no certificate authority yet")
 
-	certPEM, certErr := os.ReadFile(certPath)
-	keyPEM, keyErr := os.ReadFile(keyPath)
+// Open loads an existing root.
+func Open(dir string) (*CA, error) {
+	certPEM, certErr := os.ReadFile(filepath.Join(dir, "root.crt"))
+	keyPEM, keyErr := os.ReadFile(filepath.Join(dir, "root.key"))
 	switch {
 	case certErr == nil && keyErr == nil:
 		return parse(certPEM, keyPEM)
-	case errors.Is(certErr, fs.ErrNotExist) && errors.Is(keyErr, fs.ErrNotExist):
-		return generate(certPath, keyPath)
+	case errors.Is(certErr, fs.ErrNotExist) || errors.Is(keyErr, fs.ErrNotExist):
+		return nil, fmt.Errorf("%w in %s", ErrNoAuthority, dir)
 	default:
 		return nil, errors.Join(certErr, keyErr)
 	}
+}
+
+// OpenOrCreate loads the root, generating one on first use.
+func OpenOrCreate(dir string) (*CA, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	root, err := Open(dir)
+	if err == nil {
+		return root, nil
+	}
+	if !errors.Is(err, ErrNoAuthority) {
+		return nil, err
+	}
+	return generate(filepath.Join(dir, "root.crt"), filepath.Join(dir, "root.key"))
 }
 
 func parse(certPEM, keyPEM []byte) (*CA, error) {
@@ -108,6 +122,8 @@ func generate(certPath, keyPath string) (*CA, error) {
 	}
 	return &CA{cert: cert, key: key}, nil
 }
+
+func (c *CA) Certificate() *x509.Certificate { return c.cert }
 
 func (c *CA) RootPEM() []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.cert.Raw})

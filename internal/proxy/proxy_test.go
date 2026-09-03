@@ -31,7 +31,7 @@ func newHarness(t *testing.T, routes []proxy.Route) *harness {
 	t.Helper()
 
 	dir := t.TempDir()
-	root, err := ca.Open(dir)
+	root, err := ca.OpenOrCreate(dir)
 	if err != nil {
 		t.Fatal(err)
 	}

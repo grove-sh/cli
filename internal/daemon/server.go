@@ -43,6 +43,9 @@ func New(cfg Config) (*Server, error) {
 	}
 	root, err := ca.Open(cfg.CADir)
 	if err != nil {
+		if errors.Is(err, ca.ErrNoAuthority) {
+			return nil, fmt.Errorf("%w; run 'grove install' first", err)
+		}
 		return nil, err
 	}
 	cert, err := root.Leaf("*."+cfg.Domain, cfg.Domain)
