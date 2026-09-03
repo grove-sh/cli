@@ -376,3 +376,91 @@ func TestClientNamesAnOlderDaemon(t *testing.T) {
 		t.Errorf("error does not say what to do: %v", err)
 	}
 }
+
+func TestReleaseEndsDetachedLeasesOnly(t *testing.T) {
+	h := start(t)
+	client, err := daemon.Dial(h.socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if _, err := client.Acquire("app1", "/src/app1", []daemon.Entry{
+		{Name: "studio", Label: "studio", Routed: true, Detached: true},
+		{Name: "db", Detached: true},
+		{Name: "web", Label: "", Routed: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	released, err := h.dial(t).Release("app1", "/src/app1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(released) != 2 {
+		t.Errorf("released %v, want the two detached entries", released)
+	}
+	live, err := h.dial(t).List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(live) != 1 || live[0].Service != "web" {
+		t.Errorf("live = %v, want the attached lease to survive", live)
+	}
+}
+
+func TestReleaseByName(t *testing.T) {
+	h := start(t)
+	client := h.dial(t)
+	if _, err := client.Acquire("app1", "/src/app1", []daemon.Entry{
+		{Name: "studio", Detached: true},
+		{Name: "db", Detached: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	released, err := h.dial(t).Release("app1", "/src/app1", []string{"db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(released) != 1 || released[0] != "db" {
+		t.Errorf("released %v, want just db", released)
+	}
+}
+
+func TestStatusDescribesTheDaemon(t *testing.T) {
+	h := start(t)
+
+	status, err := h.dial(t).Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if status.PID != os.Getpid() {
+		t.Errorf("pid = %d, want this process %d", status.PID, os.Getpid())
+	}
+	if !strings.HasPrefix(status.Listen, "127.0.0.1:") {
+		t.Errorf("listen = %q", status.Listen)
+	}
+	if status.Version != daemon.Version {
+		t.Errorf("version = %d", status.Version)
+	}
+}
+
+func TestStopShutsTheDaemonDown(t *testing.T) {
+	h := start(t)
+
+	if err := h.dial(t).Stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	eventually(t, "the socket to stop answering", func() bool {
+		client, err := daemon.Dial(h.socket)
+		if err != nil {
+			return true
+		}
+		client.Close()
+		return false
+	})
+}

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/grove-sh/cli/internal/ca"
 	"github.com/grove-sh/cli/internal/identity"
@@ -31,6 +32,9 @@ type Server struct {
 	proxy    *proxy.Server
 	cert     *tls.Certificate
 	root     []byte
+
+	listen  string
+	started time.Time
 
 	mu      sync.Mutex
 	control net.Listener
@@ -100,13 +104,18 @@ func Listen(socket string) (net.Listener, error) {
 func (s *Server) Serve(control, https net.Listener) error {
 	s.mu.Lock()
 	s.control = control
+	s.listen = https.Addr().String()
+	s.started = time.Now()
 	s.mu.Unlock()
 
 	failed := make(chan error, 2)
 	go func() { failed <- s.serveControl(control) }()
 	go func() { failed <- s.proxy.Serve(https, s.cert) }()
 
+	Ready()
+
 	err := <-failed
+	Stopping()
 	s.Shutdown()
 	if s.isClosing() {
 		return nil
@@ -188,6 +197,13 @@ func (s *Server) handle(conn net.Conn) {
 	switch req.Op {
 	case OpList:
 		enc.Encode(Response{Version: Version, Leases: s.entries()})
+	case OpStatus:
+		enc.Encode(Response{Version: Version, Status: s.status()})
+	case OpRelease:
+		enc.Encode(Response{Version: Version, Released: s.release(req)})
+	case OpStop:
+		enc.Encode(Response{Version: Version})
+		go s.Shutdown()
 	case OpAcquire:
 		s.acquire(conn, enc, req)
 	default:
@@ -251,6 +267,47 @@ func (s *Server) acquire(conn net.Conn, enc *json.Encoder, req Request) {
 	// The attached leases last as long as the connection. The kernel reports
 	// the close whether the client exited, crashed, or was killed outright.
 	io.Copy(io.Discard, conn)
+}
+
+func (s *Server) status() *Status {
+	s.mu.Lock()
+	listen := s.listen
+	s.mu.Unlock()
+
+	return &Status{
+		Version: Version,
+		PID:     os.Getpid(),
+		Listen:  listen,
+		Leases:  len(s.registry.List()),
+	}
+}
+
+// release ends detached leases, which is the only way one goes away short of
+// stopping the daemon.
+func (s *Server) release(req Request) []string {
+	wanted := req.Names
+	if len(wanted) == 0 {
+		for _, live := range s.registry.List() {
+			if live.Slug == req.Slug && live.Detached {
+				wanted = append(wanted, live.Service)
+			}
+		}
+	}
+
+	var released []string
+	for _, name := range wanted {
+		if !s.registry.ReleaseNamed(req.Slug, name) {
+			continue
+		}
+		s.mu.Lock()
+		delete(s.routed, routeKey{slug: req.Slug, service: name})
+		s.mu.Unlock()
+		released = append(released, name)
+	}
+	if len(released) > 0 {
+		s.syncRoutes()
+	}
+	return released
 }
 
 func (s *Server) syncRoutes() {

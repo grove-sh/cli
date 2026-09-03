@@ -58,6 +58,34 @@ func (c *Client) List() ([]Live, error) {
 	return resp.Leases, nil
 }
 
+// Release ends detached leases for a context, all of them when names is empty,
+// and reports which were there to end.
+func (c *Client) Release(slug, worktree string, names []string) ([]string, error) {
+	resp, err := c.roundTrip(Request{Op: OpRelease, Slug: slug, Worktree: worktree, Names: names})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Released, nil
+}
+
+func (c *Client) Status() (Status, error) {
+	resp, err := c.roundTrip(Request{Op: OpStatus})
+	if err != nil {
+		return Status{}, err
+	}
+	if resp.Status == nil {
+		return Status{}, errors.New("daemon: status came back empty")
+	}
+	return *resp.Status, nil
+}
+
+// Stop asks the daemon to shut down. Every attached lease ends with it, and
+// detached ones go too, since nothing survives the process.
+func (c *Client) Stop() error {
+	_, err := c.roundTrip(Request{Op: OpStop})
+	return err
+}
+
 func (c *Client) roundTrip(req Request) (Response, error) {
 	req.Version = Version
 	if err := c.enc.Encode(req); err != nil {

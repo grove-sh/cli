@@ -161,6 +161,21 @@ func (l *Lease) Release() {
 	delete(r.owners, l.Slug)
 }
 
+// ReleaseNamed ends one lease and reports whether it was there to end. Only
+// detached leases are eligible: an attached one belongs to a live connection,
+// and pulling it out from under that process would drop its route while it runs.
+func (r *Registry) ReleaseNamed(slug, service string) bool {
+	r.mu.Lock()
+	held, ok := r.leases[key{slug: slug, service: service}]
+	r.mu.Unlock()
+
+	if !ok || !held.Detached {
+		return false
+	}
+	held.Release()
+	return true
+}
+
 // List reports the live leases, sorted. The copies cannot be released.
 func (r *Registry) List() []Lease {
 	r.mu.Lock()

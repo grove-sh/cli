@@ -161,19 +161,19 @@ func checkDaemon(socket string) finding {
 	if err != nil {
 		f.state = warn
 		f.detail = "not running at " + socket
-		f.advice = "Start one with grove daemon."
+		f.advice = "Start one with grove restart, which puts it in the background."
 		return f
 	}
 	defer client.Close()
 
-	entries, err := client.List()
+	status, err := client.Status()
 	if err != nil {
 		f.state = bad
 		f.detail = err.Error()
 		return f
 	}
 	f.state = ok
-	f.detail = fmt.Sprintf("listening, %d context(s) running", len(entries))
+	f.detail = fmt.Sprintf("on %s, pid %d, %d lease(s)", status.Listen, status.PID, status.Leases)
 	return f
 }
 

@@ -8,6 +8,9 @@ const Version = 1
 const (
 	OpAcquire = "acquire"
 	OpList    = "list"
+	OpRelease = "release"
+	OpStatus  = "status"
+	OpStop    = "stop"
 )
 
 type Request struct {
@@ -16,6 +19,10 @@ type Request struct {
 	Slug     string  `json:"slug,omitempty"`
 	Worktree string  `json:"worktree,omitempty"`
 	Entries  []Entry `json:"entries,omitempty"`
+
+	// Names limits a release to these entries. Empty releases every detached
+	// lease the context holds.
+	Names []string `json:"names,omitempty"`
 }
 
 // An Entry is one thing to allocate. Routed entries get a hostname built from
@@ -28,10 +35,19 @@ type Entry struct {
 }
 
 type Response struct {
-	Version int              `json:"version"`
-	Error   string           `json:"error,omitempty"`
-	Grants  map[string]Grant `json:"grants,omitempty"`
-	Leases  []Live           `json:"leases,omitempty"`
+	Version  int              `json:"version"`
+	Error    string           `json:"error,omitempty"`
+	Grants   map[string]Grant `json:"grants,omitempty"`
+	Leases   []Live           `json:"leases,omitempty"`
+	Released []string         `json:"released,omitempty"`
+	Status   *Status          `json:"status,omitempty"`
+}
+
+type Status struct {
+	Version int    `json:"version"`
+	PID     int    `json:"pid"`
+	Listen  string `json:"listen"`
+	Leases  int    `json:"leases"`
 }
 
 // A Grant is a leased port, and the hostname routed to it when there is one. An
