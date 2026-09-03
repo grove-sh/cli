@@ -279,9 +279,8 @@ func TestLsSeesTheContextWhileExecRuns(t *testing.T) {
 
 	waitForFile(t, ready)
 
-	_, listed, _ := exercise(t, "ls", "--socket", socket)
-	if !strings.Contains(listed, "app1."+defaultDomain) {
-		t.Errorf("ls does not show the running context:\n%s", listed)
+	if _, listed, _ := exercise(t, "ls", "--socket", socket); !strings.Contains(listed, "running") {
+		t.Errorf("ls does not show the route as running:\n%s", listed)
 	}
 
 	if err := os.WriteFile(stop, nil, 0o600); err != nil {
@@ -291,13 +290,13 @@ func TestLsSeesTheContextWhileExecRuns(t *testing.T) {
 		t.Errorf("exec exited %d", code)
 	}
 
-	// The route goes with the command. The detached port does not, since
-	// whatever binds it is still running.
-	_, listed, _ = exercise(t, "ls", "--socket", socket)
-	if strings.Contains(listed, "app1."+defaultDomain) {
+	// The route's lease goes with the command, so it reads idle again. The
+	// detached port does not, since whatever binds it is still running.
+	_, listed, _ := exercise(t, "ls", "--socket", socket)
+	if !strings.Contains(listed, "idle") {
 		t.Errorf("the route outlived the command:\n%s", listed)
 	}
-	if !strings.Contains(listed, "app1:db") {
+	if !strings.Contains(listed, "detached") {
 		t.Errorf("the detached port was released with the command:\n%s", listed)
 	}
 }
@@ -329,12 +328,15 @@ func TestSyncRestoresDetachedEntries(t *testing.T) {
 	}
 
 	_, listed, _ := exercise(t, "ls", "--socket", socket)
-	if !strings.Contains(listed, "app1:db") {
-		t.Errorf("the daemon does not know the context:\n%s", listed)
-	}
-	// The attached route needs a running command to mean anything.
-	if strings.Contains(listed, "app1."+defaultDomain) {
-		t.Errorf("sync restored an attached route:\n%s", listed)
+	for _, line := range strings.Split(listed, "\n") {
+		switch {
+		case strings.HasPrefix(line, "db") && !strings.Contains(line, "detached"):
+			t.Errorf("the daemon does not hold the detached port:\n%s", listed)
+		// An attached route needs a running command to mean anything, so sync
+		// must leave it alone.
+		case strings.HasPrefix(line, "web") && !strings.Contains(line, "idle"):
+			t.Errorf("sync restored an attached route:\n%s", listed)
+		}
 	}
 }
 

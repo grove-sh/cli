@@ -308,3 +308,24 @@ func TestAttachedAndDetachedCannotShareAKey(t *testing.T) {
 		t.Errorf("err = %v, want BusyError", err)
 	}
 }
+
+// Predicting a port is only possible because allocation is arithmetic, and it
+// has to agree with what Acquire actually hands out.
+func TestPredictPortMatchesWhatAcquireGives(t *testing.T) {
+	rng := lease.PortRange{Low: 20000, High: 20999}
+	r := registry(t, lease.Options{Range: rng, Free: allFree})
+
+	held := acquire(t, r, "app1-feat1", "web", "/src/feat1")
+
+	if got := lease.PredictPort(rng, "app1-feat1", "web"); got != held.Port {
+		t.Errorf("PredictPort = %d, Acquire gave %d", got, held.Port)
+	}
+}
+
+func TestPredictPortUsesTheDefaultRangeWhenGivenNone(t *testing.T) {
+	port := lease.PredictPort(lease.PortRange{}, "app1", "web")
+
+	if port < lease.DefaultRange.Low || port > lease.DefaultRange.High {
+		t.Errorf("port = %d, outside %s", port, lease.DefaultRange)
+	}
+}

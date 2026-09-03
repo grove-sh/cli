@@ -193,6 +193,25 @@ func (r *Registry) List() []Lease {
 	return out
 }
 
+// PredictPort reports where a context would land before anything allocates it,
+// which is knowable at all because allocation is a hash rather than a counter.
+// A port already in use sends an attached lease further along the range, so
+// this is where it would go rather than a promise of where it went.
+func PredictPort(rng PortRange, slug, service string) int {
+	if rng == (PortRange{}) {
+		rng = DefaultRange
+	}
+	return rng.Low + hashOffset(rng, slug, service)
+}
+
+func hashOffset(rng PortRange, slug, service string) int {
+	h := fnv.New32a()
+	h.Write([]byte(slug))
+	h.Write([]byte{0})
+	h.Write([]byte(service))
+	return int(h.Sum32() % uint32(rng.size()))
+}
+
 // pick starts from a hash of the context so the same context tends to get the
 // same port on any machine, with no state on disk, then walks the range.
 //
@@ -202,11 +221,7 @@ func (r *Registry) List() []Lease {
 // a restarted daemon re-adopt a running stack instead of allocating beside it.
 func (r *Registry) pick(k key, detached bool) (int, error) {
 	size := r.rng.size()
-	h := fnv.New32a()
-	h.Write([]byte(k.slug))
-	h.Write([]byte{0})
-	h.Write([]byte(k.service))
-	offset := int(h.Sum32() % uint32(size))
+	offset := hashOffset(r.rng, k.slug, k.service)
 
 	if detached {
 		port := r.rng.Low + offset

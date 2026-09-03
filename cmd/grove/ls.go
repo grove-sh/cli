@@ -1,55 +1,146 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
+	"github.com/grove-sh/cli/internal/config"
 	"github.com/grove-sh/cli/internal/daemon"
+	"github.com/grove-sh/cli/internal/identity"
+	"github.com/grove-sh/cli/internal/lease"
 )
 
 func newLsCommand() *cobra.Command {
 	var socket string
+	var all bool
 
 	cmd := &cobra.Command{
 		Use:   "ls",
-		Short: "List the contexts that are running",
-		Long: `List the contexts that are running.
+		Short: "List this context's routes, or every lease on the machine",
+		Long: `List the routes and ports this context declares, live or not.
 
-Only live leases appear. With the daemon down nothing is routed and nothing is
-running, so the list is empty rather than stale.`,
+Every hostname comes from the config rather than from a lease, so a route that
+nothing is serving still has a URL, marked idle. Its port is where allocation
+would put it: that is a prediction, since a port already in use sends an
+attached lease further along the range.
+
+Outside a project, and with --all, this lists every live lease on the machine
+instead.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			client, err := daemon.Dial(socket)
+			dir, err := os.Getwd()
 			if err != nil {
 				return err
 			}
-			defer client.Close()
 
-			entries, err := client.List()
-			if err != nil || len(entries) == 0 {
+			cfg, err := config.Load(dir)
+			switch {
+			case all, errors.Is(err, config.ErrNotFound):
+				return listLeases(cmd, socket)
+			case err != nil:
 				return err
 			}
-
-			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tPORT\tHELD\tWORKTREE")
-			for _, e := range entries {
-				name := e.Host
-				if name == "" {
-					name = e.Slug + ":" + e.Service
-				}
-				held := "command"
-				if e.Detached {
-					held = "detached"
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", name, strconv.Itoa(e.Port), held, e.Worktree)
-			}
-			return w.Flush()
+			return listRoutes(cmd, socket, dir, cfg)
 		},
 	}
 
+	cmd.Flags().BoolVar(&all, "all", false, "list every live lease on the machine instead")
 	cmd.Flags().StringVar(&socket, "socket", daemon.DefaultSocket(), "control socket path")
 	return cmd
+}
+
+func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) error {
+	context, err := resolveContext(dir, cfg)
+	if err != nil {
+		return err
+	}
+
+	live, running, err := liveLeases(socket, context.Slug)
+	if err != nil {
+		return err
+	}
+	if !running {
+		fmt.Fprintln(cmd.ErrOrStderr(), "grove: no daemon is running, so nothing here is being served")
+	}
+
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "ROUTE\tURL\tPORT\tSTATE")
+	for _, entry := range cfg.All() {
+		url := "-"
+		if entry.Kind == config.KindRoute {
+			url = "https://" + identity.ComposeLabel(context.Slug, entry.Label) + "." + defaultDomain
+		}
+
+		port, state := lease.PredictPort(lease.PortRange{}, context.Slug, entry.Name), "idle"
+		if held, ok := live[entry.Name]; ok {
+			port = held.Port
+			state = "running"
+			if held.Detached {
+				state = "detached"
+			}
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", entry.Name, url, strconv.Itoa(port), state)
+	}
+	return w.Flush()
+}
+
+func listLeases(cmd *cobra.Command, socket string) error {
+	client, err := daemon.Dial(socket)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	entries, err := client.List()
+	if err != nil || len(entries) == 0 {
+		return err
+	}
+
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tPORT\tHELD\tWORKTREE")
+	for _, e := range entries {
+		name := e.Host
+		if name == "" {
+			name = e.Slug + ":" + e.Service
+		}
+		held := "command"
+		if e.Detached {
+			held = "detached"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", name, strconv.Itoa(e.Port), held, e.Worktree)
+	}
+	return w.Flush()
+}
+
+// liveLeases reports what one context holds, and whether a daemon answered at
+// all. Nothing running is a true answer rather than a failure, since the routes
+// are worth listing either way.
+func liveLeases(socket, slug string) (map[string]daemon.Live, bool, error) {
+	client, err := daemon.Dial(socket)
+	if err != nil {
+		var down *daemon.NotRunningError
+		if errors.As(err, &down) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	defer client.Close()
+
+	leases, err := client.List()
+	if err != nil {
+		return nil, false, err
+	}
+
+	out := make(map[string]daemon.Live)
+	for _, held := range leases {
+		if held.Slug == slug {
+			out[held.Service] = held
+		}
+	}
+	return out, true, nil
 }

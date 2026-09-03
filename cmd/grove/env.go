@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -71,34 +70,20 @@ being.`,
 	return cmd
 }
 
-// liveBindings reports what this context currently holds. A daemon that is not
-// running holds nothing, which is a true answer rather than a failure.
+// liveBindings turns what the context holds into template values.
 func liveBindings(socket, slug string) (map[string]config.Binding, error) {
-	client, err := daemon.Dial(socket)
-	if err != nil {
-		var down *daemon.NotRunningError
-		if errors.As(err, &down) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	defer client.Close()
-
-	leases, err := client.List()
+	leases, _, err := liveLeases(socket, slug)
 	if err != nil {
 		return nil, err
 	}
 
-	out := make(map[string]config.Binding)
-	for _, lease := range leases {
-		if lease.Slug != slug {
-			continue
+	out := make(map[string]config.Binding, len(leases))
+	for name, held := range leases {
+		binding := config.Binding{Port: held.Port, Host: held.Host}
+		if held.Host != "" {
+			binding.URL = "https://" + held.Host
 		}
-		binding := config.Binding{Port: lease.Port, Host: lease.Host}
-		if lease.Host != "" {
-			binding.URL = "https://" + lease.Host
-		}
-		out[lease.Service] = binding
+		out[name] = binding
 	}
 	return out, nil
 }
