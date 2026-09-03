@@ -98,35 +98,62 @@ func entriesToLease(cfg *config.Config, active *config.Entry) []daemon.Entry {
 	return out
 }
 
-// environment layers what the child runs with, most specific last: the parent's
-// environment, the CA variables for runtimes that ignore the OS trust store,
-// the project's env_files, and finally grove's own resolved values, which win
-// because a hand-copied port in a checked-in .env is the drift grove exists to
-// remove.
-func environment(cfg *config.Config, context identity.Context, active *config.Entry, grants map[string]daemon.Grant) ([]string, error) {
+func valuesFrom(cfg *config.Config, context identity.Context, ports map[string]config.Binding) config.Values {
 	values := config.Values{
 		Context: config.Context{
 			Slug:    context.Slug,
 			Project: context.Project,
 			Variant: context.Variant,
 		},
-		Routes: make(map[string]config.Binding, len(grants)),
-		Ports:  make(map[string]config.Binding, len(grants)),
+		Routes: make(map[string]config.Binding, len(ports)),
+		Ports:  make(map[string]config.Binding, len(ports)),
 	}
-	for name, grant := range grants {
-		binding := config.Binding{Port: grant.Port, Host: grant.Host, URL: grant.URL}
+	for name, binding := range ports {
 		if _, isRoute := cfg.Routes[name]; isRoute {
 			values.Routes[name] = binding
 		} else {
 			values.Ports[name] = binding
 		}
 	}
+	return values
+}
+
+func bindings(grants map[string]daemon.Grant) map[string]config.Binding {
+	out := make(map[string]config.Binding, len(grants))
+	for name, grant := range grants {
+		out[name] = config.Binding{Port: grant.Port, Host: grant.Host, URL: grant.URL}
+	}
+	return out
+}
+
+func environment(cfg *config.Config, context identity.Context, active *config.Entry, grants map[string]daemon.Grant) ([]string, error) {
+	values := valuesFrom(cfg, context, bindings(grants))
 
 	resolved, err := cfg.Environment(active, values)
 	if err != nil {
 		return nil, err
 	}
 
+	layered, err := layer(cfg, resolved, active, grants)
+	if err != nil {
+		return nil, err
+	}
+
+	env := os.Environ()
+	names := make([]string, 0, len(layered))
+	for name := range layered {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		env = append(env, name+"="+layered[name])
+	}
+	return env, nil
+}
+
+// layer puts grove's own values last, because a port hand copied into a
+// checked-in .env is the drift grove exists to remove.
+func layer(cfg *config.Config, resolved map[string]string, active *config.Entry, grants map[string]daemon.Grant) (map[string]string, error) {
 	fromFiles, err := cfg.LoadEnvFiles()
 	if err != nil {
 		return nil, err
@@ -152,17 +179,7 @@ func environment(cfg *config.Config, context identity.Context, active *config.En
 	for name, value := range resolved {
 		layered[name] = value
 	}
-
-	env := os.Environ()
-	names := make([]string, 0, len(layered))
-	for name := range layered {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	for _, name := range names {
-		env = append(env, name+"="+layered[name])
-	}
-	return env, nil
+	return layered, nil
 }
 
 func runChild(args []string, env []string) error {

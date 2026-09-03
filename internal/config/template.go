@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -35,41 +36,75 @@ type Values struct {
 
 // Environment resolves every template into the variables a command should run
 // with: the project's own [env] first, then the entries that are always active,
-// then whichever entry this command binds, so the most specific wins.
+// then whichever entry this command binds, so the most specific wins. A
+// variable that cannot be resolved is an error, since running a command with
+// half its environment is worse than not running it.
 func (c *Config) Environment(active *Entry, values Values) (map[string]string, error) {
-	out := make(map[string]string)
-
-	if err := c.resolveInto(out, nil, c.Env, values); err != nil {
-		return nil, err
-	}
-	for _, entry := range c.Detached() {
-		if err := c.resolveInto(out, entry, entry.Env, values); err != nil {
-			return nil, err
-		}
-	}
-	if active != nil && !active.Detached {
-		if err := c.resolveInto(out, active, active.Env, values); err != nil {
-			return nil, err
-		}
+	out, skipped := c.environment(active, values)
+	if len(skipped) > 0 {
+		return nil, errors.New(skipped[0].Reason)
 	}
 	return out, nil
 }
 
-func (c *Config) resolveInto(out map[string]string, self *Entry, env map[string]string, values Values) error {
+// A Skipped variable is one whose template names something that does not exist
+// yet, usually a port nothing has leased.
+type Skipped struct {
+	Name   string
+	Reason string
+}
+
+// EnvironmentSkipping resolves what it can and reports the rest. Printing an
+// environment is not running a command, so a port nobody holds should cost one
+// variable rather than the whole answer.
+func (c *Config) EnvironmentSkipping(active *Entry, values Values) (map[string]string, []Skipped) {
+	return c.environment(active, values)
+}
+
+func (c *Config) environment(active *Entry, values Values) (map[string]string, []Skipped) {
+	out := make(map[string]string)
+	var skipped []Skipped
+
+	sources := []struct {
+		self *Entry
+		env  map[string]string
+	}{{nil, c.Env}}
+	for _, entry := range c.Detached() {
+		sources = append(sources, struct {
+			self *Entry
+			env  map[string]string
+		}{entry, entry.Env})
+	}
+	if active != nil && !active.Detached {
+		sources = append(sources, struct {
+			self *Entry
+			env  map[string]string
+		}{active, active.Env})
+	}
+
+	for _, source := range sources {
+		skipped = append(skipped, c.resolveInto(out, source.self, source.env, values)...)
+	}
+	return out, skipped
+}
+
+func (c *Config) resolveInto(out map[string]string, self *Entry, env map[string]string, values Values) []Skipped {
 	names := make([]string, 0, len(env))
 	for name := range env {
 		names = append(names, name)
 	}
 	slices.Sort(names)
 
+	var skipped []Skipped
 	for _, name := range names {
 		resolved, err := resolve(env[name], self, values)
 		if err != nil {
-			return fmt.Errorf("%s: %w", where(self, name), err)
+			skipped = append(skipped, Skipped{Name: name, Reason: fmt.Sprintf("%s: %v", where(self, name), err)})
+			continue
 		}
 		out[name] = resolved
 	}
-	return nil
+	return skipped
 }
 
 func resolve(template string, self *Entry, values Values) (string, error) {
