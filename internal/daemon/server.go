@@ -344,15 +344,21 @@ func (s *Server) entries() []Live {
 
 	out := make([]Live, 0, len(live))
 	for _, l := range live {
-		out = append(out, Live{
+		entry := Live{
 			Slug:     l.Slug,
 			Service:  l.Service,
 			Worktree: l.Worktree,
 			Port:     l.Port,
 			Host:     s.routed[routeKey{slug: l.Slug, service: l.Service}],
 			Detached: l.Detached,
-			PID:      l.PID,
-		})
+		}
+		// Only an attached lease has a process holding it. The command that
+		// asserted a detached one has exited by definition, so naming its pid
+		// would point at a process that is not there.
+		if !l.Detached {
+			entry.PID = l.PID
+		}
+		out = append(out, entry)
 	}
 	return out
 }

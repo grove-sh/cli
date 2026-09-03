@@ -366,3 +366,24 @@ func TestBusyErrorWithoutAPIDStaysReadable(t *testing.T) {
 		t.Errorf("message invents a holder: %v", err)
 	}
 }
+
+// A detached lease has no process holding it: the command that asserted it has
+// exited by definition, so a clash points at the way to end it instead.
+func TestBusyErrorForADetachedLeasePointsAtRelease(t *testing.T) {
+	r := registry(t, lease.Options{Free: allFree})
+	if _, err := r.Acquire(lease.Request{Slug: "app1", Service: "studio", Worktree: "/src/app1", Detached: true, PID: 4242}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := r.Acquire(lease.Request{Slug: "app1", Service: "studio", Worktree: "/src/app1", PID: 99})
+
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if strings.Contains(err.Error(), "pid") {
+		t.Errorf("named a process that has exited: %v", err)
+	}
+	if !strings.Contains(err.Error(), "grove release studio") {
+		t.Errorf("does not say how to end it: %v", err)
+	}
+}

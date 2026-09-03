@@ -69,7 +69,7 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 	}
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ROUTE\tURL\tPORT\tSTATE\tHELD BY")
+	fmt.Fprintln(w, "ROUTE\tURL\tPORT\tSTATE\tPID")
 	for _, entry := range cfg.All() {
 		url := "-"
 		if entry.Kind == config.KindRoute {
@@ -84,7 +84,7 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 				state = "detached"
 			}
 			if held.PID != 0 {
-				holder = "pid " + strconv.Itoa(held.PID)
+				holder = strconv.Itoa(held.PID)
 			}
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", entry.Name, url, strconv.Itoa(port), state, holder)

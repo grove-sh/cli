@@ -122,7 +122,13 @@ func (r *Registry) Acquire(req Request) (*Lease, error) {
 		if existing.Detached && req.Detached {
 			return existing, nil
 		}
-		return nil, &BusyError{Slug: req.Slug, Service: req.Service, Port: existing.Port, PID: existing.PID}
+		return nil, &BusyError{
+			Slug:     req.Slug,
+			Service:  req.Service,
+			Port:     existing.Port,
+			PID:      existing.PID,
+			Detached: existing.Detached,
+		}
 	}
 
 	port, err := r.pick(k, req.Detached)
@@ -276,20 +282,26 @@ func (e *CollisionError) Error() string {
 }
 
 type BusyError struct {
-	Slug    string
-	Service string
-	Port    int
-	PID     int
+	Slug     string
+	Service  string
+	Port     int
+	PID      int
+	Detached bool
 }
 
 func (e *BusyError) Error() string {
 	held := fmt.Sprintf("lease: %s is already running on port %d", describe(e.Slug, e.Service), e.Port)
-	if e.PID == 0 {
-		return held
+	switch {
+	case e.Detached:
+		// Nothing holds a detached lease in process terms, so there is no pid
+		// worth naming and no process to kill.
+		return fmt.Sprintf("%s, detached; end it with 'grove release %s'", held, e.Service)
+	case e.PID != 0:
+		// The port alone is no help when the holder has stopped listening but
+		// has not exited, which is exactly when this error shows up.
+		return fmt.Sprintf("%s, held by pid %d", held, e.PID)
 	}
-	// The port alone is no help when the holder has stopped listening but has
-	// not exited, which is exactly when this error shows up.
-	return fmt.Sprintf("%s, held by pid %d", held, e.PID)
+	return held
 }
 
 type ExhaustedError struct {

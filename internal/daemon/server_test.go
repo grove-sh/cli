@@ -476,3 +476,31 @@ func TestStopShutsTheDaemonDown(t *testing.T) {
 		return false
 	})
 }
+
+// The pid answers "what is holding this", so a detached lease reports none:
+// whatever asserted it has exited, and the containers it stood for are not
+// grove's to name.
+func TestDetachedLeasesReportNoHolder(t *testing.T) {
+	h := start(t)
+	client := h.dial(t)
+	if _, err := client.Acquire("app1", "/src/app1", []daemon.Entry{
+		{Name: "studio", Detached: true},
+		{Name: "web", Routed: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	live, err := h.dial(t).List()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, held := range live {
+		switch {
+		case held.Detached && held.PID != 0:
+			t.Errorf("detached %q reports pid %d", held.Service, held.PID)
+		case !held.Detached && held.PID == 0:
+			t.Errorf("attached %q reports no pid, though a command holds it", held.Service)
+		}
+	}
+}
