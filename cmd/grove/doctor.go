@@ -133,7 +133,7 @@ func checkAuthority(stateDir string) finding {
 }
 
 func checkBundle(stateDir string) finding {
-	f := finding{name: "system bundle"}
+	f := finding{name: "runtime bundle"}
 
 	if trust.SystemBundle() == "" {
 		f.state = warn
@@ -147,14 +147,27 @@ func checkBundle(stateDir string) finding {
 		f.detail = "no CA to look for"
 		return f
 	}
-	if !trust.SystemBundleTrusts(root.Certificate()) {
+
+	bundle, merged := trust.Bundle(stateDir)
+	switch {
+	case !merged && !trust.SystemBundleTrusts(root.Certificate()):
 		f.state = warn
-		f.detail = trust.SystemBundle() + " does not carry grove's root"
-		f.advice = "Run grove install; adding the root to the OS store rewrites that bundle."
+		f.detail = bundle + " does not carry grove's root"
+		f.advice = "Run grove install, which adds it to the OS store or merges a bundle, whichever this system needs."
+		return f
+	case merged && trust.BundleStale(stateDir):
+		f.state = warn
+		f.detail = bundle + " is older than the system roots it was merged from"
+		f.advice = "Run grove install to rebuild it."
+		return f
+	case merged:
+		f.state = ok
+		f.detail = bundle + ", merged by grove"
 		return f
 	}
+
 	f.state = ok
-	f.detail = trust.SystemBundle() + " carries grove's root"
+	f.detail = bundle + ", which carries grove's root"
 	return f
 }
 

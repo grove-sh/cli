@@ -65,7 +65,7 @@ setting you should apply yourself.`,
 			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 			fmt.Fprintf(w, "authority\t%s\n", filepath.Join(stateDir, trust.RootFile))
 			fmt.Fprintf(w, "trust store\t%s\n", state)
-			fmt.Fprintf(w, "system bundle\t%s\n", bundleState(root.Certificate()))
+			fmt.Fprintf(w, "runtime bundle\t%s\n", settleBundle(stateDir, root.Certificate(), root.RootPEM()))
 			w.Flush()
 
 			reportService(out, listen, installService)
@@ -81,17 +81,29 @@ setting you should apply yourself.`,
 	return cmd
 }
 
-// Installing into the OS store rewrites the system bundle on Linux, which is
-// what python's requests and Deno are pointed at.
-func bundleState(root *x509.Certificate) string {
-	switch {
-	case trust.SystemBundle() == "":
-		return "none on this system, so runtimes with their own bundles will not trust grove"
-	case trust.SystemBundleTrusts(root):
-		return trust.SystemBundle() + " carries this root"
-	default:
-		return trust.SystemBundle() + " does not carry this root yet"
+// settleBundle decides what python's requests and Deno should be pointed at.
+// Installing into the OS store rewrites the system bundle on Linux, so there
+// the system's own file is the answer and any copy grove made is deleted. The
+// keychain install on macOS leaves that file untouched, so there grove merges
+// its own copy, which is the only way those runtimes can trust it at all.
+func settleBundle(stateDir string, root *x509.Certificate, rootPEM []byte) string {
+	system := trust.SystemBundle()
+	if system == "" {
+		return "no bundle on this system, so runtimes carrying their own will not trust grove"
 	}
+
+	if trust.SystemBundleTrusts(root) {
+		if err := trust.RemoveBundle(stateDir); err != nil {
+			return fmt.Sprintf("%s carries this root, but grove's stale copy remains: %v", system, err)
+		}
+		return system + ", which carries this root"
+	}
+
+	merged, err := trust.WriteBundle(stateDir, rootPEM)
+	if err != nil {
+		return fmt.Sprintf("could not merge one: %v", err)
+	}
+	return merged + ", merged because " + system + " does not carry this root"
 }
 
 // reportService registers the daemon with whatever keeps processes running
