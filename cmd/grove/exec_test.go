@@ -93,6 +93,13 @@ func tempRepo(t *testing.T, name string) string {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// grove records a worktree with symlinks followed, so that two paths to
+	// one tree are one context. A TMPDIR that is itself a symlink would
+	// otherwise leave the fixture holding a path grove never reports.
+	dir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, args := range [][]string{
 		{"init", "-q", "-b", "main"},
 		{"-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"},
