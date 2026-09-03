@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"os/exec"
-	"runtime"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -17,6 +15,7 @@ import (
 
 	"github.com/grove-sh/cli/internal/ca"
 	"github.com/grove-sh/cli/internal/daemon"
+	"github.com/grove-sh/cli/internal/platform"
 	"github.com/grove-sh/cli/internal/service"
 	"github.com/grove-sh/cli/internal/trust"
 )
@@ -46,13 +45,16 @@ Each check reports on its own. A failure exits non-zero so this can gate a
 script; a warning does not.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// The daemon check comes first so the port check can tell grove's
+			// own listener apart from something else holding the address.
+			running, daemonFinding := checkDaemon(socket)
 			findings := []finding{
 				checkDNS(domain),
 				checkAuthority(stateDir),
 				checkBundle(stateDir),
-				checkDaemon(socket),
+				daemonFinding,
 				checkService(),
-				checkPort443(),
+				checkPort443(running),
 			}
 
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
@@ -156,7 +158,9 @@ func checkBundle(stateDir string) finding {
 	return f
 }
 
-func checkDaemon(socket string) finding {
+// checkDaemon reports the daemon's own account of itself, which the port check
+// then uses, so the two cannot disagree about who holds 443.
+func checkDaemon(socket string) (*daemon.Status, finding) {
 	f := finding{name: "daemon"}
 
 	client, err := daemon.Dial(socket)
@@ -164,7 +168,7 @@ func checkDaemon(socket string) finding {
 		f.state = warn
 		f.detail = "not running at " + socket
 		f.advice = "Start one with grove restart, which puts it in the background."
-		return f
+		return nil, f
 	}
 	defer client.Close()
 
@@ -172,25 +176,23 @@ func checkDaemon(socket string) finding {
 	if err != nil {
 		f.state = bad
 		f.detail = err.Error()
-		return f
+		return nil, f
 	}
 	f.state = ok
 	f.detail = fmt.Sprintf("on %s, pid %d, %d lease(s)", status.Listen, status.PID, status.Leases)
-	return f
+	return &status, f
 }
 
 func checkService() finding {
 	f := finding{name: "service"}
 
-	if !service.Available() {
-		f.state = warn
-		f.detail = "no systemd here, so nothing restarts the daemon for you"
-		f.advice = "Start it yourself with grove restart, or leave grove daemon running."
-		return f
-	}
-
 	state := service.Status()
 	switch {
+	case !state.Supported:
+		f.state = warn
+		f.detail = "nothing here restarts the daemon for you"
+		f.advice = state.Reason
+		return f
 	case !state.Installed:
 		f.state = warn
 		f.detail = "not installed, so the daemon will not come back after a reboot"
@@ -199,9 +201,9 @@ func checkService() finding {
 	case !state.Enabled:
 		f.state = warn
 		f.detail = "installed but not enabled"
-		f.advice = "Run: systemctl --user enable --now grove"
+		f.advice = "Run: systemctl --user enable grove"
 		return f
-	case !service.Lingering():
+	case !state.Lingering:
 		f.state = warn
 		f.detail = "enabled, but your user manager does not linger, so it stops at logout"
 		f.advice = "Run: loginctl enable-linger $USER"
@@ -218,10 +220,17 @@ func checkService() finding {
 	return f
 }
 
-func checkPort443() finding {
+func checkPort443(running *daemon.Status) finding {
 	f := finding{name: "port 443"}
 
-	ln, err := net.Listen("tcp", "127.0.0.1:443")
+	const address = "127.0.0.1:443"
+	if running != nil && running.Listen == address {
+		f.state = ok
+		f.detail = fmt.Sprintf("held by grove's own daemon, pid %d", running.PID)
+		return f
+	}
+
+	ln, err := net.Listen("tcp", address)
 	if err == nil {
 		ln.Close()
 		f.state = ok
@@ -233,22 +242,11 @@ func checkPort443() finding {
 	f.detail = err.Error()
 	switch {
 	case strings.Contains(err.Error(), "permission denied"):
-		f.advice = privilegeAdvice()
+		f.advice = platform.PrivilegedPorts().Advice
 	case strings.Contains(err.Error(), "address already in use"):
-		f.advice = "Held by " + whoHolds443() + ". This is expected if grove's own daemon has it."
+		f.advice = "Held by " + whoHolds443() + "."
 	}
 	return f
-}
-
-func privilegeAdvice() string {
-	if runtime.GOOS != "linux" {
-		return "Binding a port below 1024 on " + runtime.GOOS + " needs a root LaunchDaemon, which grove does not install yet. Until then use grove daemon --listen 127.0.0.1:8443."
-	}
-	current := "1024"
-	if raw, err := os.ReadFile(unprivilegedPortsFile); err == nil {
-		current = strings.TrimSpace(string(raw))
-	}
-	return "The unprivileged port floor is " + current + ". Lower it with: echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/60-grove.conf && sudo sysctl --system"
 }
 
 // whoHolds443 asks docker, since ss cannot name a process owned by root and a

@@ -28,6 +28,18 @@ type harness struct {
 	client *http.Client
 }
 
+// socketDir is a short directory, because t.TempDir on macOS returns a
+// /var/folders path long enough on its own to blow the unix socket path limit.
+func socketDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "grove")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
 func start(t *testing.T) *harness {
 	t.Helper()
 
@@ -39,7 +51,7 @@ func start(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, err := daemon.Listen(filepath.Join(dir, "control.sock"))
+	control, err := daemon.Listen(filepath.Join(socketDir(t), "control.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +299,7 @@ func TestUnknownHostGetsThe503Page(t *testing.T) {
 }
 
 func TestListenReplacesAStaleSocket(t *testing.T) {
-	socket := filepath.Join(t.TempDir(), "control.sock")
+	socket := filepath.Join(socketDir(t), "control.sock")
 	if err := os.WriteFile(socket, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +312,7 @@ func TestListenReplacesAStaleSocket(t *testing.T) {
 }
 
 func TestListenRefusesASecondDaemon(t *testing.T) {
-	socket := filepath.Join(t.TempDir(), "control.sock")
+	socket := filepath.Join(socketDir(t), "control.sock")
 	first, err := daemon.Listen(socket)
 	if err != nil {
 		t.Fatal(err)
@@ -344,7 +356,7 @@ func TestServerRejectsAnUnknownProtocolVersion(t *testing.T) {
 // A daemon built before versions existed answers without one. That is the case
 // worth naming, since grove gets rebuilt far more often than it gets restarted.
 func TestClientNamesAnOlderDaemon(t *testing.T) {
-	socket := filepath.Join(t.TempDir(), "old.sock")
+	socket := filepath.Join(socketDir(t), "old.sock")
 	ln, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatal(err)

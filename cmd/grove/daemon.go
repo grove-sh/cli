@@ -64,16 +64,25 @@ func dialOrStart(socket string, autostart bool) (*daemon.Client, error) {
 }
 
 // ensureDaemon prefers the service manager when there is a unit for it to
-// manage, so a daemon grove starts is one systemd knows about.
+// manage, so a daemon grove starts is one the manager knows about. That only
+// works for the standard socket: the registered daemon answers there, and
+// starting it would leave a caller who named its own socket waiting on one
+// nobody is listening to.
 func ensureDaemon(socket string) error {
-	if service.Available() && service.Status().Installed {
-		if err := service.Start(); err == nil {
-			return waitForSocket(socket, 15*time.Second)
+	if usesServiceSocket(socket) {
+		if state := service.Status(); state.Supported && state.Installed {
+			if err := service.Start(); err == nil {
+				return waitForSocket(socket, 15*time.Second)
+			}
 		}
 	}
 	opts := defaultDaemonOptions()
 	opts.socket = socket
 	return spawnDaemon(opts)
+}
+
+func usesServiceSocket(socket string) bool {
+	return os.Getenv("GROVE_SOCKET") == "" && socket == daemon.DefaultSocket()
 }
 
 func (o daemonOptions) args() []string {
