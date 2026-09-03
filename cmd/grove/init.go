@@ -2,15 +2,12 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
-	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
 
 	"github.com/grove-sh/cli/internal/config"
@@ -95,13 +92,17 @@ func scaffold(root, project string) (string, []string) {
 	}
 
 	stack, stackDir := findSupabase(root)
-	if stack != nil {
+	if stack {
 		b.WriteString(`
 # The supabase CLI reads these on its own, so its config.toml needs no edit.
 # They are its automatic bindings: SUPABASE_ plus the config key path. A key
 # renamed in a later CLI is a one line change here.
 [env]
 SUPABASE_PROJECT_ID = "{context.slug}"
+
+# The stack brings its own postgres, on the port grove allocated for it. The
+# password is supabase's local default rather than a secret.
+POSTGRES_URL = "postgres://postgres:postgres@localhost:{ports.db}/postgres"
 `)
 		notes = append(notes, "a supabase stack in "+stackDir+", whose ports grove will allocate")
 	}
@@ -143,8 +144,8 @@ SUPABASE_PROJECT_ID = "{context.slug}"
 		notes = append(notes, "no app, so the route is commented out")
 	}
 
-	if stack != nil {
-		b.WriteString(stack.entries())
+	if stack {
+		b.WriteString(supabaseEntries())
 	}
 	return b.String(), notes
 }
@@ -242,32 +243,9 @@ func hasDevScript(dir string) bool {
 	return ok && parsed.Scripts["dev"] != ""
 }
 
-// supabase is what grove needs from a stack's config: which services are on,
-// since a disabled one publishes no port.
-type supabase struct {
-	API       section `toml:"api"`
-	DB        db      `toml:"db"`
-	Studio    section `toml:"studio"`
-	Analytics section `toml:"analytics"`
-	Inbucket  section `toml:"inbucket"`
-	LocalSMTP section `toml:"local_smtp"`
-}
-
-// A pointer distinguishes "off" from "not mentioned", and supabase's own
-// defaults turn most of these on when the section is absent.
-type section struct {
-	Enabled *bool `toml:"enabled"`
-}
-
-type db struct {
-	Pooler section `toml:"pooler"`
-}
-
-func (s section) on() bool { return s.Enabled == nil || *s.Enabled }
-
-// findSupabase looks for a supabase directory at the root or one level under
-// apps/ and packages/, which is where every layout puts it.
-func findSupabase(root string) (*supabase, string) {
+// findSupabase reports the stack directory, looking at the root and one level
+// under apps/ and packages/, which is where every layout puts it.
+func findSupabase(root string) (found bool, dir string) {
 	candidates := []string{"."}
 	for _, parent := range []string{"apps", "packages"} {
 		entries, err := os.ReadDir(filepath.Join(root, parent))
@@ -282,65 +260,54 @@ func findSupabase(root string) (*supabase, string) {
 	}
 
 	for _, candidate := range candidates {
-		path := filepath.Join(root, candidate, "supabase", "config.toml")
-		var parsed supabase
-		if _, err := toml.DecodeFile(path, &parsed); err != nil {
-			if !errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			continue
+		if _, err := os.Stat(filepath.Join(root, candidate, "supabase", "config.toml")); err == nil {
+			return true, filepath.Join(candidate, "supabase")
 		}
-		return &parsed, filepath.Join(candidate, "supabase")
 	}
-	return nil, ""
+	return false, ""
 }
 
-// entries writes a route for each service that speaks HTTP and a bare port for
-// each that does not, since routing a hostname at postgres would only produce
-// a confusing failure.
-func (s *supabase) entries() string {
-	var b strings.Builder
+// supabaseEntries allocates for every port the stack can publish, without
+// consulting the enabled flags in its config. Kong publishes its port even
+// with "[api] enabled = false", so a flag is not a reliable signal, and the
+// costs are not symmetric: a spare allocation is one number out of a thousand,
+// while a missing one collides with whatever worktree started first.
+func supabaseEntries() string {
+	return `
+# Ports for the supabase stack. Grove allocates all of them, because supabase
+# publishes some regardless of the enabled flags in its config, and an unused
+# allocation costs nothing next to a collision between two worktrees. The
+# variable names are the supabase CLI's own automatic bindings, so its
+# config.toml needs no edit.
 
-	routes := []struct {
-		name    string
-		on      bool
-		envName string
-	}{
-		{"studio", s.Studio.on(), "SUPABASE_STUDIO_PORT"},
-		{"api", s.API.on(), "SUPABASE_API_PORT"},
-		{"mail", s.Inbucket.on() && s.LocalSMTP.on(), "SUPABASE_INBUCKET_PORT"},
-	}
-	for _, route := range routes {
-		if !route.on {
-			continue
-		}
-		fmt.Fprintf(&b, "\n[routes.%s]\ndetached = true\n", route.name)
-		if route.name == "mail" {
-			// The key was renamed at CLI 2.108, and each version binds only
-			// the one it knows, so both spellings are harmless and one works.
-			fmt.Fprintf(&b, "env = { SUPABASE_INBUCKET_PORT = \"{port}\", SUPABASE_LOCAL_SMTP_PORT = \"{port}\" }\n")
-			continue
-		}
-		fmt.Fprintf(&b, "env = { %s = \"{port}\" }\n", route.envName)
-	}
+[routes.api]
+detached = true
+env = { SUPABASE_API_PORT = "{port}" }
 
-	ports := []struct {
-		name    string
-		on      bool
-		envName string
-	}{
-		{"db", true, "SUPABASE_DB_PORT"},
-		{"shadow", true, "SUPABASE_DB_SHADOW_PORT"},
-		// Unlike the rest, supabase ships this one off, so it takes an
-		// explicit enabled = true.
-		{"pooler", s.DB.Pooler.Enabled != nil && *s.DB.Pooler.Enabled, "SUPABASE_DB_POOLER_PORT"},
-		{"analytics", s.Analytics.on(), "SUPABASE_ANALYTICS_PORT"},
-	}
-	for _, port := range ports {
-		if !port.on {
-			continue
-		}
-		fmt.Fprintf(&b, "\n[ports.%s]\ndetached = true\nenv = { %s = \"{port}\" }\n", port.name, port.envName)
-	}
-	return b.String()
+[routes.studio]
+detached = true
+env = { SUPABASE_STUDIO_PORT = "{port}" }
+
+[routes.mail]
+detached = true
+# The key was renamed at CLI 2.108, and each version binds only the one it
+# knows, so both spellings are harmless and one of them lands.
+env = { SUPABASE_INBUCKET_PORT = "{port}", SUPABASE_LOCAL_SMTP_PORT = "{port}" }
+
+[ports.db]
+detached = true
+env = { SUPABASE_DB_PORT = "{port}" }
+
+[ports.shadow]
+detached = true
+env = { SUPABASE_DB_SHADOW_PORT = "{port}" }
+
+[ports.pooler]
+detached = true
+env = { SUPABASE_DB_POOLER_PORT = "{port}" }
+
+[ports.analytics]
+detached = true
+env = { SUPABASE_ANALYTICS_PORT = "{port}" }
+`
 }
