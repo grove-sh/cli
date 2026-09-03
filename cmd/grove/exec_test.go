@@ -4,9 +4,11 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -525,5 +527,55 @@ func TestIfAvailableToleratesAMissingDaemonAnywhere(t *testing.T) {
 
 	if code != 0 {
 		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+}
+
+// Asking twice means it. A child that hangs mid shutdown would otherwise hold
+// its lease for as long as it stays alive, and since grove relays rather than
+// exits, signalling grove could not break that either.
+func TestSecondInterruptKillsAChildThatWillNotStop(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	t.Chdir(repo)
+	t.Setenv("CI", "")
+
+	// Keep the default action from killing the test process if a signal lands
+	// before exec has registered its own handler.
+	guard := make(chan os.Signal, 4)
+	signal.Notify(guard, syscall.SIGINT)
+	defer signal.Stop(guard)
+
+	ready := filepath.Join(repo, "ready")
+	finished := make(chan int, 1)
+	go func() {
+		code, _, _ := exercise(t, "exec", "--socket", socket, "--", "sh", "-c",
+			"trap '' INT TERM; touch "+ready+"; while true; do sleep 0.05; done")
+		finished <- code
+	}()
+	waitForFile(t, ready)
+
+	self, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	self.Signal(syscall.SIGINT)
+	time.Sleep(300 * time.Millisecond)
+	self.Signal(syscall.SIGINT)
+
+	select {
+	case code := <-finished:
+		// 128 plus SIGKILL, since the child had to be taken out.
+		if code != 137 {
+			t.Errorf("exit = %d, want 137", code)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("exec never returned, so the lease is still held")
+	}
+
+	_, listed, _ := exercise(t, "ls", "--socket", socket)
+	for _, line := range strings.Split(listed, "\n") {
+		if strings.HasPrefix(line, "web") && !strings.Contains(line, "idle") {
+			t.Errorf("the lease survived the kill:\n%s", listed)
+		}
 	}
 }

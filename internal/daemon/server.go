@@ -241,6 +241,7 @@ func (s *Server) acquire(conn net.Conn, enc *json.Encoder, req Request) {
 			Service:  entry.Name,
 			Worktree: req.Worktree,
 			Detached: entry.Detached,
+			PID:      req.PID,
 		})
 		if err != nil {
 			releaseAttached()
@@ -350,6 +351,7 @@ func (s *Server) entries() []Live {
 			Port:     l.Port,
 			Host:     s.routed[routeKey{slug: l.Slug, service: l.Service}],
 			Detached: l.Detached,
+			PID:      l.PID,
 		})
 	}
 	return out

@@ -3,7 +3,7 @@ package daemon
 // Version is the control protocol both sides must agree on. A grove binary is
 // rebuilt far more often than its daemon is restarted, so the mismatch has to
 // name itself rather than surface as a missing field.
-const Version = 1
+const Version = 2
 
 const (
 	OpAcquire = "acquire"
@@ -15,6 +15,7 @@ const (
 
 type Request struct {
 	Version  int     `json:"version"`
+	PID      int     `json:"pid,omitempty"`
 	Op       string  `json:"op"`
 	Slug     string  `json:"slug,omitempty"`
 	Worktree string  `json:"worktree,omitempty"`
@@ -65,4 +66,5 @@ type Live struct {
 	Port     int    `json:"port"`
 	Host     string `json:"host,omitempty"`
 	Detached bool   `json:"detached,omitempty"`
+	PID      int    `json:"pid,omitempty"`
 }

@@ -59,6 +59,9 @@ type Lease struct {
 	// that asked for it, so closing that command's connection must not end it.
 	Detached bool
 
+	// PID of whatever asked for it.
+	PID int
+
 	registry *Registry
 	released bool
 }
@@ -68,6 +71,11 @@ type Request struct {
 	Service  string
 	Worktree string
 	Detached bool
+
+	// PID is the process asking, so a clash can name what to look at. A lease
+	// outlives its listener when a command hangs mid shutdown, and then the
+	// port is the one thing that cannot identify the holder.
+	PID int
 }
 
 func New(opts Options) (*Registry, error) {
@@ -114,7 +122,7 @@ func (r *Registry) Acquire(req Request) (*Lease, error) {
 		if existing.Detached && req.Detached {
 			return existing, nil
 		}
-		return nil, &BusyError{Slug: req.Slug, Service: req.Service, Port: existing.Port}
+		return nil, &BusyError{Slug: req.Slug, Service: req.Service, Port: existing.Port, PID: existing.PID}
 	}
 
 	port, err := r.pick(k, req.Detached)
@@ -128,6 +136,7 @@ func (r *Registry) Acquire(req Request) (*Lease, error) {
 		Worktree: req.Worktree,
 		Port:     port,
 		Detached: req.Detached,
+		PID:      req.PID,
 		registry: r,
 	}
 	r.leases[k] = l
@@ -270,10 +279,17 @@ type BusyError struct {
 	Slug    string
 	Service string
 	Port    int
+	PID     int
 }
 
 func (e *BusyError) Error() string {
-	return fmt.Sprintf("lease: %s is already running on port %d", describe(e.Slug, e.Service), e.Port)
+	held := fmt.Sprintf("lease: %s is already running on port %d", describe(e.Slug, e.Service), e.Port)
+	if e.PID == 0 {
+		return held
+	}
+	// The port alone is no help when the holder has stopped listening but has
+	// not exited, which is exactly when this error shows up.
+	return fmt.Sprintf("%s, held by pid %d", held, e.PID)
 }
 
 type ExhaustedError struct {

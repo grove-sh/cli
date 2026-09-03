@@ -233,16 +233,28 @@ func runChild(args []string, env []string) error {
 
 	// The child shares grove's process group, so a terminal delivers Ctrl-C to
 	// both. Relaying anyway covers the case of a signal sent to grove alone.
+	//
+	// Asking twice means it. A child that hangs mid shutdown would otherwise
+	// hold its lease for as long as it stays alive, and since grove relays
+	// rather than exits, signalling grove could not break that either: the
+	// port stays claimed by something no longer listening on it.
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	defer signal.Stop(signals)
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
+		asked := 0
 		for {
 			select {
 			case sig := <-signals:
-				child.Process.Signal(sig)
+				asked++
+				if asked == 1 {
+					child.Process.Signal(sig)
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "\ngrove: %s again, so killing %s and releasing the port\n", sig, args[0])
+				child.Process.Kill()
 			case <-done:
 				return
 			}

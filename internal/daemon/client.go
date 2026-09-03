@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 )
 
 type Client struct {
@@ -88,6 +89,7 @@ func (c *Client) Stop() error {
 
 func (c *Client) roundTrip(req Request) (Response, error) {
 	req.Version = Version
+	req.PID = os.Getpid()
 	if err := c.enc.Encode(req); err != nil {
 		return Response{}, err
 	}

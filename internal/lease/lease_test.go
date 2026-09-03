@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -327,5 +328,41 @@ func TestPredictPortUsesTheDefaultRangeWhenGivenNone(t *testing.T) {
 
 	if port < lease.DefaultRange.Low || port > lease.DefaultRange.High {
 		t.Errorf("port = %d, outside %s", port, lease.DefaultRange)
+	}
+}
+
+// A clash names the process holding the lease, because the port cannot: a
+// command that hangs mid shutdown keeps its lease after it stops listening,
+// which is exactly when this error appears.
+func TestBusyErrorNamesTheHolder(t *testing.T) {
+	r := registry(t, lease.Options{Free: allFree})
+	if _, err := r.Acquire(lease.Request{Slug: "app1", Service: "web", Worktree: "/src/app1", PID: 4242}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := r.Acquire(lease.Request{Slug: "app1", Service: "web", Worktree: "/src/app1", PID: 99})
+
+	var busy *lease.BusyError
+	if !errors.As(err, &busy) {
+		t.Fatalf("err = %v, want BusyError", err)
+	}
+	if busy.PID != 4242 {
+		t.Errorf("BusyError names pid %d, want the holder 4242", busy.PID)
+	}
+	if !strings.Contains(err.Error(), "pid 4242") {
+		t.Errorf("message does not name the holder: %v", err)
+	}
+}
+
+func TestBusyErrorWithoutAPIDStaysReadable(t *testing.T) {
+	r := registry(t, lease.Options{Free: allFree})
+	if _, err := r.Acquire(lease.Request{Slug: "app1", Service: "web", Worktree: "/src/app1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := r.Acquire(lease.Request{Slug: "app1", Service: "web", Worktree: "/src/app1"})
+
+	if strings.Contains(err.Error(), "pid") {
+		t.Errorf("message invents a holder: %v", err)
 	}
 }
