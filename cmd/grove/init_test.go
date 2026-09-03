@@ -111,10 +111,11 @@ func TestInitKeepsTwoAppsApart(t *testing.T) {
 	}
 }
 
-// A disabled service publishes no port, so a port for it would be a lie. This
-// config has the api off and analytics on, and never mentions the pooler,
-// which supabase ships disabled.
-func TestInitReadsWhichSupabaseServicesAreOn(t *testing.T) {
+// The enabled flags are not a signal for whether a port gets published: kong
+// binds its port with "[api] enabled = false", which is how two worktrees
+// collided on 54321. So every port the stack can publish gets an allocation,
+// because a spare one costs a number and a missing one costs a collision.
+func TestInitAllocatesEverySupabasePort(t *testing.T) {
 	repo := tempRepo(t, "app1")
 	os.Remove(filepath.Join(repo, config.FileName))
 	stack := filepath.Join(repo, "packages", "db", "supabase")
@@ -124,17 +125,10 @@ func TestInitReadsWhichSupabaseServicesAreOn(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(stack, "config.toml"), []byte(`
 project_id = "whatever"
 
-[studio]
-port = 54323
-
-[db]
-port = 54322
-
-[analytics]
-enabled = true
-port = 54327
-
 [api]
+enabled = false
+
+[local_smtp]
 enabled = false
 `), 0o644); err != nil {
 		t.Fatal(err)
@@ -147,27 +141,59 @@ enabled = false
 	if err != nil {
 		t.Fatalf("what init wrote does not load: %v\n%s", err, generated(t, repo))
 	}
-	if _, ok := cfg.Routes["studio"]; !ok {
-		t.Error("no route for studio, which is enabled")
-	}
-	if _, ok := cfg.Routes["api"]; ok {
-		t.Error("a route for the api, which is disabled")
-	}
-	for _, want := range []string{"db", "shadow", "analytics"} {
-		if _, ok := cfg.Ports[want]; !ok {
-			t.Errorf("no port for %q", want)
+	for _, name := range []string{"api", "studio", "mail"} {
+		if _, ok := cfg.Routes[name]; !ok {
+			t.Errorf("no route for %q, though supabase may publish its port either way", name)
 		}
 	}
-	if _, ok := cfg.Ports["pooler"]; ok {
-		t.Error("a port for the pooler, which supabase ships disabled")
+	for _, name := range []string{"db", "shadow", "pooler", "analytics"} {
+		if _, ok := cfg.Ports[name]; !ok {
+			t.Errorf("no port for %q", name)
+		}
 	}
 	if cfg.Env["SUPABASE_PROJECT_ID"] == "" {
 		t.Error("nothing varies project_id, so two worktrees would collide on container names")
 	}
-	// Every service grove allocates for outlives the command that starts it.
+	// The database URL has to name the port grove allocated, not the one the
+	// stack's config pins.
+	if url := cfg.Env["POSTGRES_URL"]; !strings.Contains(url, "{ports.db}") {
+		t.Errorf("POSTGRES_URL = %q", url)
+	}
+	// Every one of them outlives the command that starts the stack.
 	for _, entry := range cfg.All() {
 		if !entry.Detached {
 			t.Errorf("%s is attached, but supabase start exits and leaves it running", entry.Ref())
+		}
+	}
+}
+
+// Both mail spellings are emitted, since the key was renamed at CLI 2.108 and
+// each version binds only the one it knows.
+func TestInitEmitsBothMailBindings(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	os.Remove(filepath.Join(repo, config.FileName))
+	stack := filepath.Join(repo, "supabase")
+	if err := os.MkdirAll(stack, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stack, "config.toml"), []byte("project_id = \"x\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+
+	exercise(t, "init")
+
+	cfg, err := config.Load(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mail := cfg.Routes["mail"]
+	if mail == nil {
+		t.Fatal("no mail route")
+	}
+	for _, name := range []string{"SUPABASE_INBUCKET_PORT", "SUPABASE_LOCAL_SMTP_PORT"} {
+		if mail.Env[name] == "" {
+			t.Errorf("mail route does not set %s: %v", name, mail.Env)
 		}
 	}
 }

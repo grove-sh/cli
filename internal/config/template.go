@@ -130,7 +130,7 @@ func lookup(path string, self *Entry, values Values) (string, error) {
 		if self == nil {
 			return "", fmt.Errorf("{%s} names the entry being resolved, and [env] has none; use {routes.<name>.%s}", path, parts[0])
 		}
-		return field(bindingOf(self, values), parts[0], self.Ref())
+		return field(bindingOf(self, values), parts[0], self.Ref(), self.Kind == KindRoute)
 
 	case "context":
 		if len(parts) != 2 {
@@ -154,7 +154,7 @@ func lookup(path string, self *Entry, values Values) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("{%s} names no [ports.%s]", path, parts[1])
 		}
-		return field(binding, "port", "ports."+parts[1])
+		return field(binding, "port", "ports."+parts[1], false)
 
 	case "routes":
 		if len(parts) != 3 {
@@ -164,13 +164,16 @@ func lookup(path string, self *Entry, values Values) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("{%s} names no [routes.%s]", path, parts[1])
 		}
-		return field(binding, parts[2], "routes."+parts[1])
+		return field(binding, parts[2], "routes."+parts[1], true)
 	}
 
 	return "", fmt.Errorf("unknown token {%s}", path)
 }
 
-func field(binding Binding, name, ref string) (string, error) {
+// field reads one value off a binding. An empty URL means two different things
+// and they need different messages: a port can never have one, while a route
+// has none until something leases it.
+func field(binding Binding, name, ref string, routed bool) (string, error) {
 	switch name {
 	case "port":
 		if binding.Port == 0 {
@@ -179,12 +182,18 @@ func field(binding Binding, name, ref string) (string, error) {
 		return strconv.Itoa(binding.Port), nil
 	case "url":
 		if binding.URL == "" {
-			return "", fmt.Errorf("%s has no URL; only routes get a hostname", ref)
+			if !routed {
+				return "", fmt.Errorf("%s has no URL; only routes get a hostname", ref)
+			}
+			return "", fmt.Errorf("%s has no URL yet; a route is only routed while something binds it", ref)
 		}
 		return binding.URL, nil
 	case "host":
 		if binding.Host == "" {
-			return "", fmt.Errorf("%s has no hostname; only routes get one", ref)
+			if !routed {
+				return "", fmt.Errorf("%s has no hostname; only routes get one", ref)
+			}
+			return "", fmt.Errorf("%s has no hostname yet; a route is only routed while something binds it", ref)
 		}
 		return binding.Host, nil
 	}

@@ -186,3 +186,24 @@ func values2() config.Values {
 		"api": {Port: 2, Host: "api.grov.site", URL: "https://api.grov.site"},
 	}}
 }
+
+// An empty URL has two causes and they are not the same mistake: a port can
+// never have one, and a route has none until something leases it.
+func TestUnleasedRouteAndPortGiveDifferentReasons(t *testing.T) {
+	cfg := load(t, `
+[routes.web]
+env = { SITE = "{url}" }
+`)
+
+	_, err := cfg.Environment(cfg.Routes["web"], config.Values{Routes: map[string]config.Binding{}})
+
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if strings.Contains(err.Error(), "only routes get") {
+		t.Errorf("a route was told it cannot have a hostname: %v", err)
+	}
+	if !strings.Contains(err.Error(), "while something binds it") {
+		t.Errorf("error does not explain what is missing: %v", err)
+	}
+}
