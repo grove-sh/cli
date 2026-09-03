@@ -192,6 +192,13 @@ func slugify(s string) string {
 }
 
 func validateExplicit(v string) (string, error) {
+	return ValidateLabel(v)
+}
+
+// ValidateLabel checks a name the user typed, rather than one grove derived.
+// Explicit names are rejected on anything questionable; derived ones go through
+// slugify and are cleaned up quietly.
+func ValidateLabel(v string) (string, error) {
 	if strings.Contains(v, ".") {
 		return "", fmt.Errorf("identity: %q contains a dot, but a grove hostname is one label under the domain", v)
 	}
