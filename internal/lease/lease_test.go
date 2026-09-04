@@ -387,3 +387,122 @@ func TestBusyErrorForADetachedLeasePointsAtRelease(t *testing.T) {
 		t.Errorf("does not say how to end it: %v", err)
 	}
 }
+
+// Two entries whose hashes collide is ordinary at a few dozen worktrees, and
+// used to fail the second one with "no free port" while hundreds were free.
+func TestADetachedCollisionWalksInsteadOfFailing(t *testing.T) {
+	// A range of two ports makes the collision certain rather than lucky.
+	rng := lease.PortRange{Low: 20000, High: 20001}
+	r := registry(t, lease.Options{Range: rng, Free: allFree, Memory: &recorder{}})
+
+	first, err := r.Acquire(lease.Request{Slug: "app1", Service: "db", Worktree: "/src/app1", Detached: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := r.Acquire(lease.Request{Slug: "app2", Service: "db", Worktree: "/src/app2", Detached: true})
+	if err != nil {
+		t.Fatalf("a colliding detached lease still fails: %v", err)
+	}
+
+	if first.Port == second.Port {
+		t.Errorf("both landed on %d", first.Port)
+	}
+	for _, l := range []*lease.Lease{first, second} {
+		if !rng.Holds(l.Port) {
+			t.Errorf("port %d is outside %s", l.Port, rng)
+		}
+	}
+}
+
+// The walk is only safe because it is written down. A daemon that starts again
+// has to hand the same entry the same port, whichever context asks first, or it
+// points one stack at another's containers.
+func TestARememberedPortSurvivesTheDaemon(t *testing.T) {
+	rng := lease.PortRange{Low: 20000, High: 20001}
+	shared := &recorder{}
+
+	before := registry(t, lease.Options{Range: rng, Free: allFree, Memory: shared})
+	if _, err := before.Acquire(lease.Request{Slug: "app1", Service: "db", Worktree: "/src/app1", Detached: true}); err != nil {
+		t.Fatal(err)
+	}
+	walked, err := before.Acquire(lease.Request{Slug: "app2", Service: "db", Worktree: "/src/app2", Detached: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing survives a restart but the record, and this time the entry that
+	// walked asks first, with its hashed port free for the taking.
+	after := registry(t, lease.Options{Range: rng, Free: allFree, Memory: shared})
+	again, err := after.Acquire(lease.Request{Slug: "app2", Service: "db", Worktree: "/src/app2", Detached: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if again.Port != walked.Port {
+		t.Errorf("port %d became %d across a restart, so a stack is now published somewhere grove is not looking", walked.Port, again.Port)
+	}
+}
+
+// A remembered port another entry has taken since is no better than no record,
+// and walking again has to update it rather than leave the old answer.
+func TestARememberedPortGivesWayAndIsWrittenAgain(t *testing.T) {
+	rng := lease.PortRange{Low: 20000, High: 20001}
+	shared := &recorder{ports: map[string]int{"app2\x00db": 20000}}
+
+	r := registry(t, lease.Options{Range: rng, Free: allFree, Memory: shared})
+	first := acquireDetached(t, r, "app1", "db", "/src/app1")
+	second, err := r.Acquire(lease.Request{Slug: "app2", Service: "db", Worktree: "/src/app2", Detached: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if second.Port == first.Port {
+		t.Fatalf("the record handed out a port already held: %d", second.Port)
+	}
+	if got := shared.ports["app2\x00db"]; got != second.Port {
+		t.Errorf("the record still says %d, not the %d it walked to", got, second.Port)
+	}
+}
+
+// A range with nothing left is the one case that really is exhausted, and it
+// still has to say so rather than hand back a port someone holds.
+func TestADetachedLeaseStillReportsAFullRange(t *testing.T) {
+	r := registry(t, lease.Options{Range: lease.PortRange{Low: 20000, High: 20000}, Free: allFree, Memory: &recorder{}})
+	acquireDetached(t, r, "app1", "db", "/src/app1")
+
+	_, err := r.Acquire(lease.Request{Slug: "app2", Service: "db", Worktree: "/src/app2", Detached: true})
+
+	var exhausted *lease.ExhaustedError
+	if !errors.As(err, &exhausted) {
+		t.Fatalf("err = %v, want ExhaustedError", err)
+	}
+}
+
+func acquireDetached(t *testing.T, r *lease.Registry, slug, service, worktree string) *lease.Lease {
+	t.Helper()
+	l, err := r.Acquire(lease.Request{Slug: slug, Service: service, Worktree: worktree, Detached: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(l.Release)
+	return l
+}
+
+// recorder is a Memory with no file behind it, so a test can watch what gets
+// written without one.
+type recorder struct {
+	ports map[string]int
+}
+
+func (m *recorder) Port(slug, service string) (int, bool) {
+	port, ok := m.ports[slug+"\x00"+service]
+	return port, ok
+}
+
+func (m *recorder) Remember(slug, service string, port int) error {
+	if m.ports == nil {
+		m.ports = map[string]int{}
+	}
+	m.ports[slug+"\x00"+service] = port
+	return nil
+}

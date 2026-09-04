@@ -25,6 +25,9 @@ type PortRange struct {
 
 func (r PortRange) size() int { return r.High - r.Low + 1 }
 
+// Holds reports whether a port falls inside the range.
+func (r PortRange) Holds(port int) bool { return port >= r.Low && port <= r.High }
+
 func (r PortRange) String() string { return fmt.Sprintf("%d-%d", r.Low, r.High) }
 
 type Options struct {
@@ -33,12 +36,18 @@ type Options struct {
 
 	// Free reports whether a port can be bound right now. Tests replace it.
 	Free func(port int) bool
+
+	// Memory remembers where a detached lease landed when it could not have
+	// the hashed port. Nil forgets, which resolves every collision again on
+	// each restart. See Memory for why that is not safe on its own.
+	Memory Memory
 }
 
 type Registry struct {
 	mu     sync.Mutex
 	rng    PortRange
 	free   func(int) bool
+	memory Memory
 	leases map[key]*Lease
 	ports  map[int]key
 	owners map[string]string // slug to worktree, while that slug holds a lease
@@ -90,9 +99,14 @@ func New(opts Options) (*Registry, error) {
 	if free == nil {
 		free = freeOnLoopback
 	}
+	memory := opts.Memory
+	if memory == nil {
+		memory = noMemory{}
+	}
 	return &Registry{
 		rng:    rng,
 		free:   free,
+		memory: memory,
 		leases: make(map[key]*Lease),
 		ports:  make(map[int]key),
 		owners: make(map[string]string),
@@ -228,22 +242,41 @@ func hashOffset(rng PortRange, slug, service string) int {
 }
 
 // pick starts from a hash of the context so the same context tends to get the
-// same port on any machine, with no state on disk, then walks the range.
+// same port on any machine, then walks the range.
 //
-// A detached port stops at the hash. Grove's own child is not the one binding
-// it, so a port already in use is the expected case, and walking past it would
-// hand back a number nothing is listening on. Stopping there is also what lets
-// a restarted daemon re-adopt a running stack instead of allocating beside it.
+// A detached port never asks whether it is free. Grove's own child is not the
+// one binding it, so a port already in use is the expected case: usually the
+// stack this entry describes, still running from before. What it does have to
+// avoid is a port another entry holds, and hashes do collide, roughly once in
+// every few hundred entries. Walking past a collision is only safe because
+// where it landed is written down: see Memory for what happens otherwise.
 func (r *Registry) pick(k key, detached bool) (int, error) {
 	size := r.rng.size()
 	offset := hashOffset(r.rng, k.slug, k.service)
 
 	if detached {
-		port := r.rng.Low + offset
-		if _, taken := r.ports[port]; taken {
-			return 0, &ExhaustedError{Range: r.rng}
+		// Where this entry landed before comes first, since a stack is already
+		// published on it. A range that has since changed, or a port another
+		// entry has taken in the meantime, sends this back to the walk.
+		if port, ok := r.memory.Port(k.slug, k.service); ok && r.rng.Holds(port) {
+			if _, taken := r.ports[port]; !taken {
+				return port, nil
+			}
 		}
-		return port, nil
+		for i := 0; i < size; i++ {
+			port := r.rng.Low + (offset+i)%size
+			if _, taken := r.ports[port]; taken {
+				continue
+			}
+			if i > 0 {
+				// An exception, so it has to outlive this daemon. Failing to
+				// write it down costs a reshuffle on the next restart, which
+				// is worth less than the lease this would otherwise refuse.
+				_ = r.memory.Remember(k.slug, k.service, port)
+			}
+			return port, nil
+		}
+		return 0, &ExhaustedError{Range: r.rng}
 	}
 
 	for i := 0; i < size; i++ {

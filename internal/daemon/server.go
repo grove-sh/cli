@@ -22,8 +22,11 @@ import (
 
 type Config struct {
 	Domain string
-	CADir  string
-	Range  lease.PortRange
+
+	// CADir is the directory grove keeps its own files in: the authority, and
+	// the record of where detached ports landed.
+	CADir string
+	Range lease.PortRange
 
 	// Version is what this build calls itself, reported to clients so they can
 	// say when the running daemon is not the grove asking.
@@ -68,7 +71,13 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	registry, err := lease.New(lease.Options{Range: cfg.Range})
+	// The record sits beside the authority, so a daemon pointed at a different
+	// directory keeps its allocations there too.
+	memory, err := lease.OpenMemory(filepath.Join(cfg.CADir, "ports.json"))
+	if err != nil {
+		return nil, err
+	}
+	registry, err := lease.New(lease.Options{Range: cfg.Range, Memory: memory})
 	if err != nil {
 		return nil, err
 	}
