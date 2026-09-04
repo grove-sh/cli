@@ -35,8 +35,9 @@ A route grove has handed a port to reads running when something answers on it
 and claimed when nothing does, which is what a stopped stack looks like: its
 ports stay allocated until grove release hands them back.
 
-A bare port has no URL, so it is listed only while something is serving it.
-Use --all to see every port grove is holding.
+A bare port appears once grove has handed it out, since there is nothing to
+open and the number only means something when something holds it. Until then
+it is left out rather than guessed at.
 
 Outside a project, and with --all, this lists every live lease on the machine
 instead.`,
@@ -99,9 +100,12 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 		}
 
 		// A route is worth listing whatever its state, since its URL is the
-		// thing you would go and open. A bare port is a number grove puts in
-		// an env var for you, so an idle one is noise; --all still shows it.
-		if entry.Kind != config.KindRoute && state != "running" {
+		// thing you would go and open. A bare port has no URL, so an idle one
+		// is only a guess at where allocation would put it, and guesses are
+		// noise. A held one is a fact, and the fact worth seeing: it is how a
+		// stopped stack still holding its ports tells itself apart from a port
+		// nobody has taken.
+		if entry.Kind != config.KindRoute && state == "idle" {
 			continue
 		}
 

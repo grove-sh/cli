@@ -67,9 +67,28 @@ func TestLsTellsAClaimedRouteFromAnIdleOne(t *testing.T) {
 	}
 }
 
-// A bare port is a number grove writes into an env var, so one that nothing is
-// serving is noise in a table about what you can reach.
-func TestLsLeavesOutAPortNothingIsServing(t *testing.T) {
+// Nothing holds an unleased port, so its number is a guess at where allocation
+// would put it. A route in the same state still earns its row, because the URL
+// is knowable either way.
+func TestLsLeavesOutAPortNothingHolds(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	t.Chdir(repo)
+
+	_, stdout, _ := exercise(t, "ls", "--socket", socket)
+
+	if lineFor(stdout, "db", "") {
+		t.Errorf("a port nobody holds was listed:\n%s", stdout)
+	}
+	if !lineFor(stdout, "web", "idle") {
+		t.Errorf("the route went missing with it:\n%s", stdout)
+	}
+}
+
+// A held port nothing answers on is exactly what a stopped stack looks like,
+// and the only way to tell it apart from a port nobody has taken. Hiding it is
+// what made a colliding allocation invisible.
+func TestLsShowsAPortItIsHolding(t *testing.T) {
 	socket := startDaemon(t)
 	repo := tempRepo(t, "app1")
 	t.Chdir(repo)
@@ -79,16 +98,23 @@ func TestLsLeavesOutAPortNothingIsServing(t *testing.T) {
 
 	_, stdout, _ := exercise(t, "ls", "--socket", socket)
 
-	if lineFor(stdout, "db", "") {
-		t.Errorf("a claimed port nothing answers on was listed:\n%s", stdout)
+	if !lineFor(stdout, "db", "claimed") {
+		t.Errorf("the port grove handed out is not listed as claimed:\n%s", stdout)
 	}
-	if !lineFor(stdout, "web", "idle") {
-		t.Errorf("the route went missing with it:\n%s", stdout)
+	// The port it was handed is the one to act on, so it has to be the real
+	// one rather than the prediction.
+	if got := portOf(t, stdout, "db"); got != portOf(t, mustAll(t, socket), "app1:db") {
+		t.Errorf("ls shows %d, not the port the daemon handed out", got)
 	}
-	// It is still held, which is what the machine-wide view is for.
-	if _, all, _ := exercise(t, "ls", "--socket", socket, "--all"); !strings.Contains(all, "app1:db") {
-		t.Errorf("--all does not show the port grove is holding:\n%s", all)
+}
+
+func mustAll(t *testing.T, socket string) string {
+	t.Helper()
+	code, stdout, stderr := exercise(t, "ls", "--socket", socket, "--all")
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
 	}
+	return stdout
 }
 
 // Listing routes is worth doing without a daemon, since the hostnames do not
@@ -157,9 +183,9 @@ func TestLsUsesTheConfiguredLabel(t *testing.T) {
 	}
 }
 
-// Serving something on a held port is what brings it into the table, so the
-// listing follows the stack coming up rather than the lease being taken.
-func TestLsListsAPortOnceSomethingAnswersOnIt(t *testing.T) {
+// Whether anything answers is the difference between a stack that is up and
+// one that was stopped without releasing its ports.
+func TestLsTellsAClaimedPortFromARunningOne(t *testing.T) {
 	socket := startDaemon(t)
 	repo := tempRepo(t, "app1")
 	t.Chdir(repo)
@@ -185,8 +211,9 @@ func TestLsListsAPortOnceSomethingAnswersOnIt(t *testing.T) {
 	if lineFor(serving, "db", "https://") {
 		t.Errorf("a bare port was given a URL:\n%s", serving)
 	}
-	if lineFor(stopped, "db", "") {
-		t.Errorf("db outlived the thing serving it:\n%s", stopped)
+	// The lease outlives whatever was listening, and so does the row.
+	if !lineFor(stopped, "db", "claimed") {
+		t.Errorf("db went quiet and lost its row with it:\n%s", stopped)
 	}
 }
 
