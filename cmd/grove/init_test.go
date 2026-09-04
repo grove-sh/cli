@@ -204,7 +204,7 @@ func TestInitPointsBucketSeedingAtTheAPIPort(t *testing.T) {
 	socket := startDaemon(t)
 	repo := tempRepo(t, "app1")
 	os.Remove(filepath.Join(repo, config.FileName))
-	writeStack(t, filepath.Join(repo, "supabase"), "project_id = \"x\"\n")
+	writeStack(t, filepath.Join(repo, "supabase"), bucketStack)
 	t.Chdir(repo)
 
 	exercise(t, "init")
@@ -248,7 +248,7 @@ func TestInitPointsBucketSeedingAtADemotedAPI(t *testing.T) {
 func TestInitNamesNoAPIURLForATLSStack(t *testing.T) {
 	repo := tempRepo(t, "app1")
 	os.Remove(filepath.Join(repo, config.FileName))
-	writeStack(t, filepath.Join(repo, "supabase"), "project_id = \"x\"\n\n[api.tls]\nenabled = true\n")
+	writeStack(t, filepath.Join(repo, "supabase"), bucketStack+"\n[api.tls]\nenabled = true\n")
 	t.Chdir(repo)
 
 	exercise(t, "init")
@@ -471,6 +471,37 @@ func TestInitNamesNoSupabaseURLWithoutAStack(t *testing.T) {
 	}
 }
 
+// A stack with no buckets never calls the storage API, so the workaround would
+// be a paragraph of explanation about a problem the project cannot have.
+func TestInitNamesNoAPIURLWithoutBuckets(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	os.Remove(filepath.Join(repo, config.FileName))
+	writeStack(t, filepath.Join(repo, "supabase"), "project_id = \"x\"\n")
+	t.Chdir(repo)
+
+	exercise(t, "init")
+
+	cfg, err := config.Load(repo)
+	if err != nil {
+		t.Fatalf("what init wrote does not load: %v\n%s", err, generated(t, repo))
+	}
+	if got := cfg.Env["SUPABASE_API_EXTERNAL_URL"]; got != "" {
+		t.Errorf("SUPABASE_API_EXTERNAL_URL = %q, but the stack declares no buckets", got)
+	}
+	// The rest of the stack is allocated either way.
+	if _, ok := cfg.Ports["db"]; !ok {
+		t.Error("the stack lost its ports with it")
+	}
+}
+
+// bucketStack is the smallest stack that reaches the storage API.
+const bucketStack = `
+project_id = "x"
+
+[storage.buckets.app]
+public = false
+`
+
 // disabledStack is the shape that started all this: kong publishes 54321 with
 // the api turned off, and nothing at all answers for mail.
 const disabledStack = `
@@ -481,6 +512,9 @@ enabled = false
 
 [local_smtp]
 enabled = false
+
+[storage.buckets.app]
+public = false
 `
 
 func writeStack(t *testing.T, dir, body string) {

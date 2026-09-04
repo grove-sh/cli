@@ -175,7 +175,7 @@ POSTGRES_URL = "postgres://postgres:postgres@localhost:{ports.db}/postgres"
 		if len(demoted) > 0 {
 			notes = append(notes, "no hostname for "+strings.Join(demoted, ", ")+", which the stack has turned off")
 		}
-		if url := supabaseAPIURL(routed("api"), flags.apiTLS); url != "" {
+		if url := supabaseAPIURL(routed("api"), flags); url != "" {
 			b.WriteString(url)
 			notes = append(notes, "SUPABASE_API_EXTERNAL_URL, which needs one line in "+
 				filepath.Join(stackDir, "config.toml")+" before bucket seeding honors it")
@@ -407,8 +407,9 @@ func supabaseServices(flags supabaseFlags) (services []supabaseService, demoted 
 // supabaseFlags is what a stack says about itself: the services it turns off,
 // and whether its API speaks TLS.
 type supabaseFlags struct {
-	off    map[string]bool
-	apiTLS bool
+	off     map[string]bool
+	apiTLS  bool
+	buckets bool
 }
 
 // readSupabaseFlags reads those two answers out of the stack's config. Only an
@@ -420,7 +421,12 @@ func readSupabaseFlags(path string) supabaseFlags {
 			Enabled *bool
 			TLS     struct{ Enabled *bool } `toml:"tls"`
 		} `toml:"api"`
-		Studio   struct{ Enabled *bool } `toml:"studio"`
+		Studio struct{ Enabled *bool } `toml:"studio"`
+		// Buckets are what reach the storage API, and the only reason to work
+		// around its port handling.
+		Storage struct {
+			Buckets map[string]any `toml:"buckets"`
+		} `toml:"storage"`
 		Inbucket struct{ Enabled *bool } `toml:"inbucket"`
 		// The section was renamed along with the port key at CLI 2.108.
 		LocalSMTP struct{ Enabled *bool } `toml:"local_smtp"`
@@ -430,8 +436,9 @@ func readSupabaseFlags(path string) supabaseFlags {
 	}
 
 	flags := supabaseFlags{
-		off:    map[string]bool{},
-		apiTLS: raw.API.TLS.Enabled != nil && *raw.API.TLS.Enabled,
+		off:     map[string]bool{},
+		apiTLS:  raw.API.TLS.Enabled != nil && *raw.API.TLS.Enabled,
+		buckets: len(raw.Storage.Buckets) > 0,
 	}
 	disabled := func(name string, flag *bool) {
 		if flag != nil && !*flag {
@@ -456,8 +463,11 @@ func readSupabaseFlags(path string) supabaseFlags {
 // would be https and this would quietly downgrade it. The host is grove's own
 // assumption rather than a universal one: the CLI takes it from the docker
 // context, and a remote DOCKER_HOST would want a different one.
-func supabaseAPIURL(routed, apiTLS bool) string {
-	if apiTLS {
+func supabaseAPIURL(routed bool, flags supabaseFlags) string {
+	// Only bucket seeding reads the URL out of config.toml, so a stack that
+	// declares no buckets never reaches the code that gets this wrong, and the
+	// variable would be a paragraph of explanation about nothing.
+	if !flags.buckets || flags.apiTLS {
 		return ""
 	}
 	port := "{ports.api}"
