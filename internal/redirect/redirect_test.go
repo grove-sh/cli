@@ -176,3 +176,50 @@ func TestPlistEnablesAndLoadsAtBoot(t *testing.T) {
 		t.Error("the job uses -e, which fails when pf is already enabled")
 	}
 }
+
+// A report that says no without saying what would make it yes leaves the
+// caller printing nothing useful. This ran only on macOS once, and only CI
+// found it; it runs everywhere now.
+func TestAccessAlwaysSaysWhatWouldMakeItYes(t *testing.T) {
+	whole := redirect.State{Referenced: true, Anchor: true, Boot: true}
+	for _, state := range []redirect.State{
+		{},
+		{Referenced: true},
+		{Referenced: true, Anchor: true},
+		{Anchor: true, Boot: true},
+		{Referenced: true, Boot: true},
+		whole,
+	} {
+		allowed, detail, advice := redirect.Access(state)
+		if detail == "" {
+			t.Errorf("%+v: no detail", state)
+		}
+		if allowed != (state == whole) {
+			t.Errorf("%+v: allowed = %v", state, allowed)
+		}
+		if !allowed && advice == "" {
+			t.Errorf("%+v: says no without saying what to do", state)
+		}
+		if allowed && advice != "" {
+			t.Errorf("%+v: nothing to advise, but advised anyway: %q", state, advice)
+		}
+	}
+}
+
+// Each missing piece has to name itself, or the report says "something is
+// wrong" and leaves you to find out which.
+func TestAccessNamesThePieceThatIsMissing(t *testing.T) {
+	for _, tc := range []struct {
+		state redirect.State
+		want  string
+	}{
+		{redirect.State{Anchor: true, Boot: true}, "nothing redirects it yet"},
+		{redirect.State{Referenced: true, Boot: true}, redirect.AnchorPath},
+		{redirect.State{Referenced: true, Anchor: true}, "after a reboot"},
+	} {
+		_, detail, _ := redirect.Access(tc.state)
+		if !strings.Contains(detail, tc.want) {
+			t.Errorf("%+v: detail does not mention %q: %s", tc.state, tc.want, detail)
+		}
+	}
+}

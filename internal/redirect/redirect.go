@@ -158,3 +158,40 @@ func Stage(dir, conf string) (Staged, error) {
 	}
 	return staged, nil
 }
+
+// State is which of the three pieces are in place: the reference from the
+// machine's pf.conf, the anchor holding the rule, and the job that puts them
+// back after a reboot.
+type State struct {
+	Referenced bool
+	Anchor     bool
+	Boot       bool
+}
+
+// Advice is what to do when any of them is missing, kept short because grove
+// install prints the whole procedure.
+const Advice = `Grove can send 443 to a port it is allowed to bind, which is what macOS leaves
+open to you. Run grove install: it writes the pf rule, a copy of this machine's
+pf.conf with two lines added, and the launchd job that puts them back after a
+reboot, then prints the one privileged step that installs the three.`
+
+// Access turns that into what to report. Pure, and therefore tested on every
+// platform rather than only on the one it describes: a report that says no
+// without saying what would make it yes is the failure worth guarding, and
+// building it here is what lets a Linux machine catch that.
+func Access(state State) (allowed bool, detail, advice string) {
+	var missing []string
+	if !state.Referenced {
+		missing = append(missing, "nothing redirects it yet")
+	}
+	if !state.Anchor {
+		missing = append(missing, AnchorPath+" is not there")
+	}
+	if !state.Boot {
+		missing = append(missing, "nothing puts the rules back after a reboot")
+	}
+	if len(missing) == 0 {
+		return true, fmt.Sprintf("pf sends 443 to %d, so grove serves it without root", Port), ""
+	}
+	return false, "443 needs root here, and " + strings.Join(missing, ", "), Advice
+}

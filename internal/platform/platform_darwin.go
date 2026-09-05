@@ -13,42 +13,35 @@ import (
 // daemon binds a port it is allowed to bind, and 443 is sent there. Confirmed
 // on macOS 26, 15, and 15 on Intel, hostname and all: grove-sh/cli#2.
 //
-// Three pieces have to be in place. The rule, a reference to it from the
-// machine's own pf.conf, since an anchor nothing refers to loads cleanly and
-// does nothing, and a launchd job to put it all back after a reboot, since
-// macOS loads pf.conf at boot but leaves pf switched off.
+// Reading the machine is all that happens here. What the answer means, and
+// what to say when it is no, lives in redirect.Access, where a Linux machine
+// can test it.
 func PrivilegedPorts() PortAccess {
-	missing, err := missingPieces()
+	state, err := inspect()
 	if err != nil {
-		return PortAccess{Detail: err.Error()}
+		return PortAccess{Detail: err.Error(), Advice: redirect.Advice}
 	}
-	if len(missing) == 0 {
-		return PortAccess{
-			Allowed: true,
-			Detail:  fmt.Sprintf("pf sends 443 to %d, so grove serves it without root", redirect.Port),
-		}
-	}
-	return PortAccess{Detail: "443 needs root here, and " + strings.Join(missing, ", ")}
+	allowed, detail, advice := redirect.Access(state)
+	return PortAccess{Allowed: allowed, Detail: detail, Advice: advice}
 }
 
-// missingPieces names what is not in place yet, in the words the report uses.
-func missingPieces() ([]string, error) {
+// inspect reports which pieces this machine has. An anchor nothing refers to
+// loads cleanly and does nothing, so the reference is as much a piece as the
+// file it names.
+func inspect() (redirect.State, error) {
 	conf, err := os.ReadFile(redirect.ConfPath)
 	if err != nil {
-		return nil, fmt.Errorf("cannot read %s: %w", redirect.ConfPath, err)
+		return redirect.State{}, fmt.Errorf("cannot read %s: %w", redirect.ConfPath, err)
 	}
-
-	var missing []string
-	if !redirect.Configured(string(conf)) {
-		missing = append(missing, "nothing redirects it yet")
+	exists := func(path string) bool {
+		_, err := os.Stat(path)
+		return err == nil
 	}
-	if _, err := os.Stat(redirect.AnchorPath); err != nil {
-		missing = append(missing, redirect.AnchorPath+" is not there")
-	}
-	if _, err := os.Stat(redirect.PlistPath); err != nil {
-		missing = append(missing, "nothing puts the rules back after a reboot")
-	}
-	return missing, nil
+	return redirect.State{
+		Referenced: redirect.Configured(string(conf)),
+		Anchor:     exists(redirect.AnchorPath),
+		Boot:       exists(redirect.PlistPath),
+	}, nil
 }
 
 // PrepareRedirect writes the files the privileged step installs, so that step
@@ -58,11 +51,11 @@ func missingPieces() ([]string, error) {
 // not something to do behind someone's back, and it is the same stance the
 // Linux sysctl gets.
 func PrepareRedirect(dir string) (string, error) {
-	missing, err := missingPieces()
+	state, err := inspect()
 	if err != nil {
 		return "", err
 	}
-	if len(missing) == 0 {
+	if ready, _, _ := redirect.Access(state); ready {
 		return "", nil
 	}
 
