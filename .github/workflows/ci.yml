@@ -20,11 +20,7 @@ jobs:
       # the whole point of running more than one.
       fail-fast: false
       matrix:
-        include:
-          - os: linux
-            runner: ubuntu-latest
-          - os: macos
-            runner: macos-latest
+        runner: [ubuntu-latest, macos-26, macos-15]
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
