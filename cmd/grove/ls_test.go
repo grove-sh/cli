@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/grove-sh/cli/internal/identity"
-	"github.com/grove-sh/cli/internal/lease"
 )
 
 // The URL of a route is knowable without anything running, which is the whole
@@ -30,18 +29,32 @@ func TestLsListsIdleRoutesWithTheirURLs(t *testing.T) {
 	}
 }
 
-// The predicted port has to be the one allocation actually hands out, or it is
-// worse than showing nothing.
-func TestLsPredictsThePortAllocationWouldGive(t *testing.T) {
+// A number in the port column means a lease holds it. An entry with none has
+// nothing to show there, however knowable the hash makes it: a guess printed
+// where an allocation goes is read as an allocation.
+func TestLsShowsNoPortForAnEntryNothingHolds(t *testing.T) {
 	socket := startDaemon(t)
 	repo := tempRepo(t, "app1")
 	t.Chdir(repo)
 
 	_, stdout, _ := exercise(t, "ls", "--socket", socket)
 
-	want := lease.PredictPort(lease.PortRange{}, "app1", "web")
-	if !strings.Contains(stdout, strconv.Itoa(want)) {
-		t.Errorf("ls does not show the port allocation would give (%d):\n%s", want, stdout)
+	var line string
+	for _, row := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(row, "web ") {
+			line = row
+		}
+	}
+	if line == "" {
+		t.Fatalf("no row for the idle route:\n%s", stdout)
+	}
+	for _, field := range strings.Fields(line) {
+		if port, err := strconv.Atoi(field); err == nil {
+			t.Errorf("an unleased route was given port %d: %q", port, line)
+		}
+	}
+	if !strings.Contains(line, "idle") {
+		t.Errorf("the route is not marked idle: %q", line)
 	}
 }
 

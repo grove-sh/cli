@@ -14,7 +14,6 @@ import (
 	"github.com/grove-sh/cli/internal/config"
 	"github.com/grove-sh/cli/internal/daemon"
 	"github.com/grove-sh/cli/internal/identity"
-	"github.com/grove-sh/cli/internal/lease"
 )
 
 func newLsCommand() *cobra.Command {
@@ -27,9 +26,8 @@ func newLsCommand() *cobra.Command {
 		Long: `List the routes this context declares, live or not, and the ports it is serving.
 
 Every hostname comes from the config rather than from a lease, so a route that
-nothing is serving still has a URL, marked idle. Its port is where allocation
-would put it: that is a prediction, since a port already in use sends an
-attached lease further along the range.
+nothing is serving still has a URL, marked idle. It has no port, because a port
+exists only while something holds one.
 
 A route grove has handed a port to reads running when something answers on it
 and claimed when nothing does, which is what a stopped stack looks like: its
@@ -81,9 +79,12 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ROUTE\tURL\tPORT\tSTATE\tPID")
 	for _, entry := range cfg.All() {
-		port, state, holder := lease.PredictPort(lease.PortRange{}, context.Slug, entry.Name), "idle", "-"
+		// A port is a fact about a lease, so an entry without one has no number
+		// to show. Allocation is a hash and could be run ahead of time, but a
+		// guess printed in the same column as an allocation reads as one.
+		port, state, holder := "-", "idle", "-"
 		if held, ok := live[entry.Name]; ok {
-			port = held.Port
+			port = strconv.Itoa(held.Port)
 			// An attached lease is held by a command grove is watching, so it
 			// is running by definition. A detached one stands for something
 			// grove cannot see, and whether anything answers is the question
@@ -113,7 +114,7 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 		if entry.Kind == config.KindRoute {
 			url = "https://" + identity.ComposeLabel(context.Slug, entry.Label) + "." + defaultDomain
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", entry.Name, url, strconv.Itoa(port), state, holder)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", entry.Name, url, port, state, holder)
 	}
 	return w.Flush()
 }
