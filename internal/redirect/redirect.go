@@ -28,6 +28,12 @@ const (
 	// AnchorPath and ConfPath are where macOS keeps them.
 	AnchorPath = "/etc/pf.anchors/grove"
 	ConfPath   = "/etc/pf.conf"
+
+	// PlistLabel and PlistPath name the job that puts the rules back after a
+	// reboot. macOS loads /etc/pf.conf at boot but leaves pf switched off, so
+	// without this the redirect is gone every morning.
+	PlistLabel = "sh.grove.pf"
+	PlistPath  = "/Library/LaunchDaemons/sh.grove.pf.plist"
 )
 
 // appleRDR is where Apple's own translation anchor sits in a stock pf.conf.
@@ -95,21 +101,60 @@ func Configured(conf string) bool {
 	return false
 }
 
-// Stage writes the anchor and the merged pf.conf into a directory grove owns,
-// so the privileged step is a copy of two readable files rather than a shell
-// incantation nobody can check before running it.
-func Stage(dir, conf string) (anchorPath, confPath string, err error) {
+// Plist is the launchd job that reloads and enables pf at boot.
+//
+// pfctl -E rather than -e: it enables pf and tolerates pf already being on,
+// where -e fails and would leave a failed job in the log every boot for no
+// reason. Loading this job runs it, so installing it also applies the rules.
+func Plist() string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>%s</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/sbin/pfctl</string>
+		<string>-E</string>
+		<string>-f</string>
+		<string>%s</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+</dict>
+</plist>
+`, PlistLabel, ConfPath)
+}
+
+// Staged is where grove put the files the privileged step installs.
+type Staged struct {
+	Anchor string
+	Conf   string
+	Plist  string
+}
+
+// Stage writes all three into a directory grove owns, so the privileged step is
+// a copy of readable files rather than a shell incantation nobody can check
+// before running it. Root has to read them, so they are not private.
+func Stage(dir, conf string) (Staged, error) {
 	dir = filepath.Join(dir, "pf")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", "", err
+		return Staged{}, err
 	}
-	anchorPath = filepath.Join(dir, "anchor")
-	confPath = filepath.Join(dir, "pf.conf")
-	if err := os.WriteFile(anchorPath, []byte(Anchor(Port)), 0o644); err != nil {
-		return "", "", err
+	staged := Staged{
+		Anchor: filepath.Join(dir, "anchor"),
+		Conf:   filepath.Join(dir, "pf.conf"),
+		Plist:  filepath.Join(dir, PlistLabel+".plist"),
 	}
-	if err := os.WriteFile(confPath, []byte(conf), 0o644); err != nil {
-		return "", "", err
+	for path, body := range map[string]string{
+		staged.Anchor: Anchor(Port),
+		staged.Conf:   conf,
+		staged.Plist:  Plist(),
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			return Staged{}, err
+		}
 	}
-	return anchorPath, confPath, nil
+	return staged, nil
 }

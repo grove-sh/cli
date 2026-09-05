@@ -124,27 +124,26 @@ func TestStageWritesBothFilesWhereItSaysItDid(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	anchorPath, confPath, err := redirect.Stage(dir, merged)
+	staged, err := redirect.Stage(dir, merged)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	anchor, err := os.ReadFile(anchorPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(anchor) != redirect.Anchor(redirect.Port) {
-		t.Errorf("the anchor on disk is not the rule: %q", anchor)
-	}
-	conf, err := os.ReadFile(confPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(conf) != merged {
-		t.Error("the staged pf.conf is not the merged one")
+	for path, want := range map[string]string{
+		staged.Anchor: redirect.Anchor(redirect.Port),
+		staged.Conf:   merged,
+		staged.Plist:  redirect.Plist(),
+	} {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(body) != want {
+			t.Errorf("%s is not what it should carry:\n%s", path, body)
+		}
 	}
 	// Root reads these, so they cannot be private to the user who wrote them.
-	for _, path := range []string{anchorPath, confPath} {
+	for _, path := range []string{staged.Anchor, staged.Conf, staged.Plist} {
 		info, err := os.Stat(path)
 		if err != nil {
 			t.Fatal(err)
@@ -152,5 +151,28 @@ func TestStageWritesBothFilesWhereItSaysItDid(t *testing.T) {
 		if info.Mode().Perm()&0o044 == 0 {
 			t.Errorf("%s is unreadable to anyone else: %v", path, info.Mode())
 		}
+	}
+}
+
+// launchd is strict about plists, and the job has to both enable pf and put the
+// rules back, since macOS loads pf.conf at boot with pf switched off.
+func TestPlistEnablesAndLoadsAtBoot(t *testing.T) {
+	body := redirect.Plist()
+
+	for _, want := range []string{
+		"<key>Label</key>",
+		"<string>" + redirect.PlistLabel + "</string>",
+		"<string>/sbin/pfctl</string>",
+		"<string>-E</string>",
+		"<string>" + redirect.ConfPath + "</string>",
+		"<key>RunAtLoad</key>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the plist is missing %q:\n%s", want, body)
+		}
+	}
+	// -e fails when pf is already on, which would log a failed job every boot.
+	if strings.Contains(body, "<string>-e</string>") {
+		t.Error("the job uses -e, which fails when pf is already enabled")
 	}
 }

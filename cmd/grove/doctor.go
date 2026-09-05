@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -54,7 +56,7 @@ script; a warning does not.`,
 				checkBundle(stateDir),
 				daemonFinding,
 				checkService(),
-				checkPort443(running),
+				checkPort443(running, stateDir, domain),
 			}
 
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
@@ -253,13 +255,22 @@ func checkService() finding {
 	return f
 }
 
-func checkPort443(running *daemon.Status) finding {
+func checkPort443(running *daemon.Status, stateDir, domain string) finding {
 	f := finding{name: "port 443"}
 
 	const address = "127.0.0.1:443"
 	if running != nil && running.Listen == address {
 		f.state = ok
 		f.detail = fmt.Sprintf("held by grove's own daemon, pid %d", running.PID)
+		return f
+	}
+
+	// A daemon serving somewhere else can still be what 443 reaches, which is
+	// the only way macOS works at all: nothing binds 443 there, pf sends it to
+	// the port the daemon could bind.
+	if running != nil && answersOn443(stateDir, domain) {
+		f.state = ok
+		f.detail = fmt.Sprintf("reaches grove on %s, redirected", running.Listen)
 		return f
 	}
 
@@ -284,6 +295,32 @@ func checkPort443(running *daemon.Status) finding {
 
 // whoHolds443 asks docker, since ss cannot name a process owned by root and a
 // container publishing the port is the usual culprit.
+// answersOn443 reports whether grove is what a connection to 443 reaches.
+//
+// Asking whether grove can bind 443 answers the wrong question on macOS, where
+// nothing binds it and pf does the work. Asking whose certificate comes back
+// answers it everywhere, and cannot be fooled by something else holding the
+// port: only grove's own authority signs for this domain.
+func answersOn443(stateDir, domain string) bool {
+	root, err := ca.Open(stateDir)
+	if err != nil {
+		return false
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(root.Certificate())
+
+	conn, err := tls.DialWithDialer(
+		&net.Dialer{Timeout: 2 * time.Second},
+		"tcp", "127.0.0.1:443",
+		&tls.Config{ServerName: "doctor." + domain, RootCAs: pool},
+	)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 func whoHolds443() string {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return "another process"
