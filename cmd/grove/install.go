@@ -69,7 +69,7 @@ setting you should apply yourself.`,
 			w.Flush()
 
 			reportService(out, listen, installService)
-			reportPrivilegedPorts(out)
+			reportPrivilegedPorts(out, stateDir)
 			return nil
 		},
 	}
@@ -77,7 +77,7 @@ setting you should apply yourself.`,
 	cmd.Flags().StringVar(&stateDir, "state-dir", daemon.StateDir(), "directory holding the CA and bundle")
 	cmd.Flags().BoolVar(&installTrust, "trust", true, "install the root into the system trust stores")
 	cmd.Flags().BoolVar(&installService, "service", true, "install and start the daemon as a systemd user unit")
-	cmd.Flags().StringVar(&listen, "listen", "127.0.0.1:443", "address the installed service serves HTTPS on")
+	cmd.Flags().StringVar(&listen, "listen", platform.DefaultListen(), "address the installed service serves HTTPS on")
 	return cmd
 }
 
@@ -247,13 +247,26 @@ func makePrivate(dir string, out io.Writer) error {
 	return nil
 }
 
-func reportPrivilegedPorts(out io.Writer) {
+func reportPrivilegedPorts(out io.Writer, stateDir string) {
 	access := platform.PrivilegedPorts()
 	if access.Allowed {
 		fmt.Fprintf(out, "\n%s\n", access.Detail)
 		return
 	}
 	fmt.Fprintf(out, "\n%s.\n", access.Detail)
+
+	// A platform with files to stage says what to do with them, and knows more
+	// than the static advice does. Failing to stage them is worth saying out
+	// loud rather than falling back to advice that names nothing.
+	advice, err := platform.PrepareRedirect(stateDir)
+	switch {
+	case err != nil:
+		fmt.Fprintf(out, "\ngrove could not prepare the redirect: %v\n", err)
+		return
+	case advice != "":
+		fmt.Fprintf(out, "\n%s\n", advice)
+		return
+	}
 	if access.Advice != "" {
 		fmt.Fprintf(out, "\n%s\n", access.Advice)
 	}

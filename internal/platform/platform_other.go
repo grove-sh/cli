@@ -12,3 +12,10 @@ func PrivilegedPorts() PortAccess {
 }
 
 func WSL() bool { return false }
+
+// PrepareRedirect has nothing to stage here, since lowering the port floor is
+// a sysctl rather than a pair of files. The static advice stands.
+func PrepareRedirect(string) (string, error) { return "", nil }
+
+// DefaultListen is where the daemon serves. Nothing here knows better, so ask for 443 and report what happens.
+func DefaultListen() string { return "127.0.0.1:443" }

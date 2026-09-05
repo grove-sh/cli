@@ -43,3 +43,10 @@ func WSL() bool {
 	}
 	return strings.Contains(strings.ToLower(string(release)), "microsoft")
 }
+
+// PrepareRedirect has nothing to stage here, since lowering the port floor is
+// a sysctl rather than a pair of files. The static advice stands.
+func PrepareRedirect(string) (string, error) { return "", nil }
+
+// DefaultListen is where the daemon serves. The sysctl lowers the floor, so grove binds 443 itself.
+func DefaultListen() string { return "127.0.0.1:443" }

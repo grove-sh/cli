@@ -13,3 +13,7 @@ type PortAccess struct {
 	// Advice is how to change it, and is empty when nothing needs changing.
 	Advice string
 }
+
+// Loopback is the address the daemon serves on, which is not the same as the
+// address browsers ask for. On macOS 443 arrives through a pf redirect, so the
+// daemon binds the port that redirect targets.

@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/grove-sh/cli/internal/daemon"
+	"github.com/grove-sh/cli/internal/platform"
 	"github.com/grove-sh/cli/internal/service"
 )
 
@@ -27,7 +28,7 @@ type daemonOptions struct {
 func defaultDaemonOptions() daemonOptions {
 	listen := os.Getenv("GROVE_LISTEN")
 	if listen == "" {
-		listen = "127.0.0.1:443"
+		listen = platform.DefaultListen()
 	}
 	return daemonOptions{
 		socket: daemon.DefaultSocket(),
