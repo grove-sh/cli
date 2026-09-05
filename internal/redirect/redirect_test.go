@@ -99,19 +99,24 @@ func TestConfRefusesAFileItDoesNotRecognise(t *testing.T) {
 	}
 }
 
-// The port is the one the daemon can actually bind, and has to stay clear of
-// the range leases come from.
-func TestAnchorSendsPortToTheDaemon(t *testing.T) {
-	rule := redirect.Anchor(redirect.Port)
+// Both ports the daemon can actually bind, and both have to stay clear of the
+// range leases come from, or a redirect target could be handed out as someone's
+// port.
+func TestAnchorSendsBothPortsToTheDaemon(t *testing.T) {
+	rules := redirect.Anchor(redirect.Port, redirect.HTTPPort)
 
-	if !strings.Contains(rule, "port = 443 ->") {
-		t.Errorf("the rule does not redirect 443: %q", rule)
+	for _, want := range []string{
+		"port = 443 -> 127.0.0.1 port 10443",
+		"port = 80 -> 127.0.0.1 port 10080",
+	} {
+		if !strings.Contains(rules, want) {
+			t.Errorf("no rule for %q:\n%s", want, rules)
+		}
 	}
-	if !strings.Contains(rule, "127.0.0.1 port 10443") {
-		t.Errorf("the rule does not name the daemon's port: %q", rule)
-	}
-	if redirect.Port >= 20000 && redirect.Port <= 20999 {
-		t.Errorf("port %d is inside the lease range, so it could be handed out", redirect.Port)
+	for _, port := range []int{redirect.Port, redirect.HTTPPort} {
+		if port >= 20000 && port <= 20999 {
+			t.Errorf("port %d is inside the lease range, so it could be handed out", port)
+		}
 	}
 }
 
@@ -130,7 +135,7 @@ func TestStageWritesBothFilesWhereItSaysItDid(t *testing.T) {
 	}
 
 	for path, want := range map[string]string{
-		staged.Anchor: redirect.Anchor(redirect.Port),
+		staged.Anchor: redirect.Anchor(redirect.Port, redirect.HTTPPort),
 		staged.Conf:   merged,
 		staged.Plist:  redirect.Plist(),
 	} {

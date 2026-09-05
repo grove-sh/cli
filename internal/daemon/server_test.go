@@ -61,7 +61,7 @@ func start(t *testing.T) *harness {
 	}
 
 	served := make(chan error, 1)
-	go func() { served <- server.Serve(control, https) }()
+	go func() { served <- server.Serve(control, https, nil) }()
 	t.Cleanup(func() {
 		server.Shutdown()
 		if err := <-served; err != nil {
@@ -528,7 +528,7 @@ func TestStatusReportsTheDaemonBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	served := make(chan error, 1)
-	go func() { served <- server.Serve(control, https) }()
+	go func() { served <- server.Serve(control, https, nil) }()
 	t.Cleanup(func() {
 		server.Shutdown()
 		<-served

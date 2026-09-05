@@ -49,7 +49,7 @@ func startDaemon(t *testing.T) string {
 	}
 
 	served := make(chan error, 1)
-	go func() { served <- server.Serve(control, https) }()
+	go func() { served <- server.Serve(control, https, nil) }()
 	t.Cleanup(func() {
 		server.Shutdown()
 		if err := <-served; err != nil {

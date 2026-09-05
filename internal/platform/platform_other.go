@@ -19,3 +19,8 @@ func PrepareRedirect(string) (string, error) { return "", nil }
 
 // DefaultListen is where the daemon serves. Nothing here knows better, so ask for 443 and report what happens.
 func DefaultListen() string { return "127.0.0.1:443" }
+
+// DefaultHTTPListen is where the daemon answers plain http, only ever to send
+// the browser to https. Binding it is best effort: 80 is below the floor the
+// sysctl advice lowers to 443, so this usually fails and nothing breaks.
+func DefaultHTTPListen() string { return "127.0.0.1:80" }

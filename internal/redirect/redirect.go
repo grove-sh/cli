@@ -22,6 +22,10 @@ const (
 	// out as someone's port would be a very confusing afternoon.
 	Port = 10443
 
+	// HTTPPort is the same arrangement for port 80, which grove answers only to
+	// send the browser to https. Also outside the lease range.
+	HTTPPort = 10080
+
 	// AnchorName is what the rules are called inside pf.
 	AnchorName = "grove"
 
@@ -49,10 +53,13 @@ var (
 	ErrUnknownConf = errors.New("redirect: no rdr-anchor to add grove's beside")
 )
 
-// Anchor is the rule itself: everything arriving on loopback for 443 goes to
-// the port the daemon could bind.
-func Anchor(port int) string {
-	return fmt.Sprintf("rdr pass on lo0 inet proto tcp from any to any port = 443 -> 127.0.0.1 port %d\n", port)
+// Anchor is the rules themselves: what arrives on loopback for 443 and 80 goes
+// to the ports the daemon could bind.
+func Anchor(https, http int) string {
+	rule := func(from, to int) string {
+		return fmt.Sprintf("rdr pass on lo0 inet proto tcp from any to any port = %d -> 127.0.0.1 port %d\n", from, to)
+	}
+	return rule(443, https) + rule(80, http)
 }
 
 // Conf returns the machine's own pf.conf with two lines added, and reports
@@ -148,7 +155,7 @@ func Stage(dir, conf string) (Staged, error) {
 		Plist:  filepath.Join(dir, PlistLabel+".plist"),
 	}
 	for path, body := range map[string]string{
-		staged.Anchor: Anchor(Port),
+		staged.Anchor: Anchor(Port, HTTPPort),
 		staged.Conf:   conf,
 		staged.Plist:  Plist(),
 	} {

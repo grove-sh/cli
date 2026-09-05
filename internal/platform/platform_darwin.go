@@ -99,3 +99,7 @@ func PrepareRedirect(dir string) (string, error) {
 func DefaultListen() string { return fmt.Sprintf("127.0.0.1:%d", redirect.Port) }
 
 func WSL() bool { return false }
+
+// DefaultHTTPListen is the port pf sends 80 to, which is the same arrangement
+// 443 gets and comes with the same anchor.
+func DefaultHTTPListen() string { return fmt.Sprintf("127.0.0.1:%d", redirect.HTTPPort) }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	nethttp "net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -40,9 +41,10 @@ type Server struct {
 	cert     *tls.Certificate
 	root     []byte
 
-	version string
-	listen  string
-	started time.Time
+	version  string
+	listen   string
+	redirect *nethttp.Server
+	started  time.Time
 
 	mu      sync.Mutex
 	control net.Listener
@@ -121,16 +123,27 @@ func Listen(socket string) (net.Listener, error) {
 }
 
 // Serve runs the control socket and the HTTPS proxy until one of them fails.
-func (s *Server) Serve(control, https net.Listener) error {
+// Serve runs until one of its listeners fails. A nil http listener is the
+// ordinary case rather than an error: port 80 is below the floor grove asks for
+// on Linux, so most machines will not hand it over, and nothing about grove
+// stops working when they do not.
+func (s *Server) Serve(control, https, http net.Listener) error {
 	s.mu.Lock()
 	s.control = control
 	s.listen = https.Addr().String()
 	s.started = time.Now()
+	if http != nil {
+		s.redirect = &nethttp.Server{Handler: nethttp.HandlerFunc(toHTTPS)}
+	}
+	redirect := s.redirect
 	s.mu.Unlock()
 
-	failed := make(chan error, 2)
+	failed := make(chan error, 3)
 	go func() { failed <- s.serveControl(control) }()
 	go func() { failed <- s.proxy.Serve(https, s.cert) }()
+	if redirect != nil {
+		go func() { failed <- redirect.Serve(http) }()
+	}
 
 	Ready()
 
@@ -151,6 +164,7 @@ func (s *Server) Shutdown() {
 	}
 	s.closing = true
 	control := s.control
+	redirect := s.redirect
 	conns := make([]net.Conn, 0, len(s.conns))
 	for conn := range s.conns {
 		conns = append(conns, conn)
@@ -159,6 +173,9 @@ func (s *Server) Shutdown() {
 
 	if control != nil {
 		control.Close()
+	}
+	if redirect != nil {
+		redirect.Close()
 	}
 	// Closing a connection ends the lease it holds.
 	for _, conn := range conns {
@@ -381,4 +398,19 @@ func (s *Server) entries() []Live {
 // composed label, since that is what has to fit in 63 bytes.
 func (s *Server) host(slug, label string) string {
 	return identity.ComposeLabel(slug, label) + "." + s.domain
+}
+
+// toHTTPS sends a plain request to the same URL over TLS, which is the only
+// thing grove answers port 80 for.
+//
+// Found rather than Moved Permanently on purpose: a browser caches a permanent
+// redirect hard and for a long time, and a development machine is exactly where
+// someone will later want plain http on one of these hostnames. A wrong guess
+// here is a bug people cannot clear without digging through browser settings.
+func toHTTPS(w nethttp.ResponseWriter, r *nethttp.Request) {
+	host := r.Host
+	if name, _, err := net.SplitHostPort(host); err == nil {
+		host = name
+	}
+	nethttp.Redirect(w, r, "https://"+host+r.URL.RequestURI(), nethttp.StatusFound)
 }

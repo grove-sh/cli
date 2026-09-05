@@ -10,7 +10,9 @@ type PortAccess struct {
 	// Detail is one line on how things stand, whatever the answer.
 	Detail string
 
-	// Advice is how to change it, and is empty when nothing needs changing.
+	// Advice is how to change it, and is empty when nothing is left to change.
+	// It can be set alongside Allowed: a floor that clears 443 but not 80 is a
+	// yes with the http redirect still out of reach.
 	Advice string
 }
 

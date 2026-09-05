@@ -251,6 +251,11 @@ func reportPrivilegedPorts(out io.Writer, stateDir string) {
 	access := platform.PrivilegedPorts()
 	if access.Allowed {
 		fmt.Fprintf(out, "\n%s\n", access.Detail)
+		// A yes can still leave something worth doing, since a floor that
+		// clears 443 but not 80 costs only the http redirect.
+		if access.Advice != "" {
+			fmt.Fprintf(out, "\n%s\n", access.Advice)
+		}
 		return
 	}
 	fmt.Fprintf(out, "\n%s.\n", access.Detail)

@@ -11,8 +11,11 @@ const unprivilegedPortStart = "/proc/sys/net/ipv4/ip_unprivileged_port_start"
 const sysctlAdvice = `Lowering the unprivileged port floor is one line, survives every reinstall, and
 leaves the daemon running as you rather than as root:
 
-  echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/60-grove.conf
-  sudo sysctl --system`
+  echo 'net.ipv4.ip_unprivileged_port_start=80' | sudo tee /etc/sysctl.d/60-grove.conf
+  sudo sysctl --system
+
+80 rather than 443 so grove can also answer plain http and send it to https.
+Stopping at 443 works for everything except that.`
 
 func PrivilegedPorts() PortAccess {
 	floor, err := os.ReadFile(unprivilegedPortStart)
@@ -25,8 +28,15 @@ func PrivilegedPorts() PortAccess {
 	if err != nil {
 		return PortAccess{Detail: "cannot read the unprivileged port floor", Advice: sysctlAdvice}
 	}
-	if start <= 443 {
-		return PortAccess{Allowed: true, Detail: "the unprivileged port floor is " + value + ", so grove can bind 443"}
+	switch {
+	case start <= 80:
+		return PortAccess{Allowed: true, Detail: "the unprivileged port floor is " + value + ", so grove can bind 443 and 80"}
+	case start <= 443:
+		return PortAccess{
+			Allowed: true,
+			Detail:  "the unprivileged port floor is " + value + ", so grove can bind 443, but not 80 for the http redirect",
+			Advice:  sysctlAdvice,
+		}
 	}
 	return PortAccess{Detail: "the unprivileged port floor is " + value + ", so 443 needs privileges grove does not have", Advice: sysctlAdvice}
 }
@@ -50,3 +60,8 @@ func PrepareRedirect(string) (string, error) { return "", nil }
 
 // DefaultListen is where the daemon serves. The sysctl lowers the floor, so grove binds 443 itself.
 func DefaultListen() string { return "127.0.0.1:443" }
+
+// DefaultHTTPListen is where the daemon answers plain http, only ever to send
+// the browser to https. Binding it is best effort: 80 is below the floor the
+// sysctl advice lowers to 443, so this usually fails and nothing breaks.
+func DefaultHTTPListen() string { return "127.0.0.1:80" }

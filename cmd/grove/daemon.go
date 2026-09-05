@@ -19,10 +19,11 @@ import (
 // daemonOptions are shared by the command that runs a daemon and the one that
 // starts a fresh one.
 type daemonOptions struct {
-	socket string
-	listen string
-	domain string
-	caDir  string
+	socket     string
+	listen     string
+	httpListen string
+	domain     string
+	caDir      string
 }
 
 func defaultDaemonOptions() daemonOptions {
@@ -30,11 +31,16 @@ func defaultDaemonOptions() daemonOptions {
 	if listen == "" {
 		listen = platform.DefaultListen()
 	}
+	httpListen := os.Getenv("GROVE_HTTP_LISTEN")
+	if httpListen == "" {
+		httpListen = platform.DefaultHTTPListen()
+	}
 	return daemonOptions{
-		socket: daemon.DefaultSocket(),
-		listen: listen,
-		domain: defaultDomain,
-		caDir:  daemon.StateDir(),
+		socket:     daemon.DefaultSocket(),
+		listen:     listen,
+		httpListen: httpListen,
+		domain:     defaultDomain,
+		caDir:      daemon.StateDir(),
 	}
 }
 
@@ -42,6 +48,7 @@ func (o *daemonOptions) bind(cmd *cobra.Command) {
 	defaults := defaultDaemonOptions()
 	cmd.Flags().StringVar(&o.socket, "socket", defaults.socket, "control socket path")
 	cmd.Flags().StringVar(&o.listen, "listen", defaults.listen, "address to serve HTTPS on")
+	cmd.Flags().StringVar(&o.httpListen, "http-listen", defaults.httpListen, "address to answer plain HTTP on, redirecting to HTTPS")
 	cmd.Flags().StringVar(&o.domain, "domain", defaults.domain, "domain every context lives under")
 	cmd.Flags().StringVar(&o.caDir, "ca-dir", defaults.caDir, "directory holding the local CA")
 }
@@ -111,7 +118,10 @@ func usesServiceSocket(socket string) bool {
 }
 
 func (o daemonOptions) args() []string {
-	return []string{"--socket", o.socket, "--listen", o.listen, "--domain", o.domain, "--ca-dir", o.caDir}
+	return []string{
+		"--socket", o.socket, "--listen", o.listen, "--http-listen", o.httpListen,
+		"--domain", o.domain, "--ca-dir", o.caDir,
+	}
 }
 
 func newDaemonCommand() *cobra.Command {
@@ -143,6 +153,15 @@ port it leased, and holds the leases. A lease lasts exactly as long as the
 				return bindHint(opts.listen, err)
 			}
 
+			// Port 80 is best effort. It only ever answers with a redirect to
+			// https, so a machine that will not hand it over costs a
+			// convenience rather than a feature, and saying so beats failing to
+			// start over it.
+			http, err := net.Listen("tcp", opts.httpListen)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "grove: no plain http redirect on %s: %v\n", opts.httpListen, err)
+			}
+
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			go func() {
@@ -151,7 +170,7 @@ port it leased, and holds the leases. A lease lasts exactly as long as the
 			}()
 
 			fmt.Fprintf(cmd.OutOrStdout(), "grove daemon on %s, control socket %s\n", opts.listen, opts.socket)
-			return server.Serve(control, https)
+			return server.Serve(control, https, http)
 		},
 	}
 
@@ -195,6 +214,48 @@ survives the process. Stopping a daemon that is not running is not an error.`,
 	return cmd
 }
 
+// restartDaemon puts the daemon back the way this machine keeps it.
+//
+// A daemon the service manager owns has to come back through the service
+// manager. Stopping it and spawning a replacement works, right up until the
+// next reboot: the unit is left dead, so nothing starts grove at login, and
+// the machine looks fine until the morning it does not.
+func restartDaemon(opts daemonOptions) error {
+	// Whatever is listening goes first, whoever started it. A daemon spawned
+	// outside the service still holds the port the service's own would want,
+	// and systemd would report a start failure that is really a collision with
+	// grove itself.
+	if client, err := daemon.Dial(opts.socket); err == nil {
+		client.Stop()
+		client.Close()
+		waitForSocketGone(opts.socket, 5*time.Second)
+	}
+
+	if serviceOwnsDaemon(opts) {
+		if err := service.Restart(); err != nil {
+			return err
+		}
+		return waitForSocket(opts.socket, 15*time.Second)
+	}
+	return spawnDaemon(opts)
+}
+
+// serviceOwnsDaemon reports whether the service manager is running the daemon
+// this command is about.
+//
+// Every clause is a way it might not be. Options that differ from the defaults
+// are asking for a daemon the unit does not describe, so restarting the unit
+// would quietly ignore them. An unmanaged service directory means grove is
+// staying away from the real service manager, which is what keeps a test from
+// reaching this machine's systemd.
+func serviceOwnsDaemon(opts daemonOptions) bool {
+	if !usesServiceSocket(opts.socket) || opts != defaultDaemonOptions() || !service.Managed() {
+		return false
+	}
+	state := service.Status()
+	return state.Supported && state.Installed
+}
+
 func newRestartCommand() *cobra.Command {
 	var opts daemonOptions
 
@@ -208,13 +269,7 @@ protocol it was built with. Its output goes to daemon.log in the state
 directory.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if client, err := daemon.Dial(opts.socket); err == nil {
-				client.Stop()
-				client.Close()
-				waitForSocketGone(opts.socket, 5*time.Second)
-			}
-
-			if err := spawnDaemon(opts); err != nil {
+			if err := restartDaemon(opts); err != nil {
 				return err
 			}
 
