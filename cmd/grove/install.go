@@ -2,14 +2,11 @@ package main
 
 import (
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
 	"os"
 	"path/filepath"
-	"syscall"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -17,13 +14,12 @@ import (
 	"github.com/grove-sh/cli/internal/ca"
 	"github.com/grove-sh/cli/internal/daemon"
 	"github.com/grove-sh/cli/internal/platform"
-	"github.com/grove-sh/cli/internal/service"
 	"github.com/grove-sh/cli/internal/trust"
 )
 
 func newInstallCommand() *cobra.Command {
-	var stateDir, listen string
-	var installTrust, installService bool
+	var stateDir string
+	var installTrust bool
 
 	cmd := &cobra.Command{
 		Use:   "install",
@@ -36,7 +32,11 @@ directory. Re-running is safe: an existing CA is reused, and an already trusted
 root is left alone.
 
 Binding port 443 is reported rather than changed, since that is a machine wide
-setting you should apply yourself.`,
+setting you should apply yourself.
+
+Nothing here starts a daemon or arranges for one to start later. Grove runs
+while you are using it: any grove exec starts one, and grove start does it on
+its own.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
@@ -68,7 +68,6 @@ setting you should apply yourself.`,
 			fmt.Fprintf(w, "runtime bundle\t%s\n", settleBundle(stateDir, root.Certificate(), root.RootPEM()))
 			w.Flush()
 
-			reportService(out, listen, installService)
 			reportPrivilegedPorts(out, stateDir)
 			return nil
 		},
@@ -76,8 +75,6 @@ setting you should apply yourself.`,
 
 	cmd.Flags().StringVar(&stateDir, "state-dir", daemon.StateDir(), "directory holding the CA and bundle")
 	cmd.Flags().BoolVar(&installTrust, "trust", true, "install the root into the system trust stores")
-	cmd.Flags().BoolVar(&installService, "service", true, "install and start the daemon as a systemd user unit")
-	cmd.Flags().StringVar(&listen, "listen", platform.DefaultListen(), "address the installed service serves HTTPS on")
 	return cmd
 }
 
@@ -102,101 +99,6 @@ func settleBundle(stateDir string, root *x509.Certificate, rootPEM []byte) strin
 		return fmt.Sprintf("could not merge one: %v", err)
 	}
 	return merged + ", merged because " + system + " does not carry this root"
-}
-
-// reportService registers the daemon with whatever keeps processes running
-// here, and says why not when there is nothing to register with.
-func reportService(out io.Writer, listen string, wanted bool) {
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	defer w.Flush()
-
-	if !wanted {
-		fmt.Fprintf(w, "service\tskipped by --service=false\n")
-		return
-	}
-	if supported, reason := service.Supported(); !supported {
-		fmt.Fprintf(w, "service\t%s\n", reason)
-		return
-	}
-
-	executable, err := os.Executable()
-	if err != nil {
-		fmt.Fprintf(w, "service\t%v\n", err)
-		return
-	}
-
-	// The unit names a copy grove keeps, since the binary running right now
-	// may sit in a package tree that the next upgrade moves and a clean script
-	// deletes. Redirecting the unit somewhere means no service manager will
-	// ever read it, so there is nothing to protect and the copy is skipped:
-	// that also keeps a test from ever writing to a real install path.
-	target := executable
-	if service.Managed() {
-		target, err = service.Anchor(executable, filepath.Join(daemon.DataDir(), "bin"))
-		if err != nil {
-			fmt.Fprintf(w, "service\tcould not keep a copy of grove: %v\n", err)
-			return
-		}
-	}
-
-	path, err := service.Install(target, listen)
-	if err != nil {
-		fmt.Fprintf(w, "service\t%v\n", err)
-		return
-	}
-	fmt.Fprintf(w, "service\t%s\n", path)
-
-	// Redirecting the definition means the real service manager is off limits,
-	// so say that rather than claiming work nobody did.
-	if !service.Managed() {
-		fmt.Fprintf(w, "service\twritten only, GROVE_SERVICE_DIR keeps grove away from the service manager\n")
-		return
-	}
-	fmt.Fprintf(w, "grove\t%s, the copy the unit runs\n", target)
-
-	if err := service.Enable(); err != nil {
-		fmt.Fprintf(w, "service\tcould not enable it: %v\n", err)
-		return
-	}
-
-	// Starting a daemon that cannot bind its port leaves a Type=notify service
-	// waiting for a readiness notification that never comes.
-	if held := whatHolds(listen); held != "" {
-		fmt.Fprintf(w, "service\tenabled, not started yet: %s\n", held)
-		return
-	}
-	if err := service.Start(); err != nil {
-		fmt.Fprintf(w, "service\tenabled, but it did not start: %v\n", err)
-		return
-	}
-	fmt.Fprintf(w, "service\tenabled and running\n")
-
-	if service.Lingering() {
-		fmt.Fprintf(w, "lingering\talready on, so it survives logout\n")
-		return
-	}
-	if err := service.EnableLingering(); err != nil {
-		fmt.Fprintf(w, "lingering\toff, and grove could not turn it on: %v\n", err)
-		fmt.Fprintf(w, "lingering\trun: loginctl enable-linger $USER\n")
-		return
-	}
-	fmt.Fprintf(w, "lingering\tturned on, so it survives logout\n")
-}
-
-// whatHolds reports why an address cannot be bound, or nothing when it can.
-func whatHolds(address string) string {
-	ln, err := net.Listen("tcp", address)
-	if err == nil {
-		ln.Close()
-		return ""
-	}
-	switch {
-	case errors.Is(err, syscall.EACCES):
-		return address + " needs privileges grove does not have yet"
-	case errors.Is(err, syscall.EADDRINUSE):
-		return address + " is already in use"
-	}
-	return err.Error()
 }
 
 func newUninstallCommand() *cobra.Command {
@@ -246,7 +148,6 @@ func makePrivate(dir string, out io.Writer) error {
 	}
 	return nil
 }
-
 func reportPrivilegedPorts(out io.Writer, stateDir string) {
 	access := platform.PrivilegedPorts()
 	if access.Allowed {

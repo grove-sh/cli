@@ -18,7 +18,6 @@ import (
 	"github.com/grove-sh/cli/internal/ca"
 	"github.com/grove-sh/cli/internal/daemon"
 	"github.com/grove-sh/cli/internal/platform"
-	"github.com/grove-sh/cli/internal/service"
 	"github.com/grove-sh/cli/internal/trust"
 )
 
@@ -55,7 +54,6 @@ script; a warning does not.`,
 				checkAuthority(stateDir),
 				checkBundle(stateDir),
 				daemonFinding,
-				checkService(),
 				checkPort443(running, stateDir, domain),
 			}
 
@@ -198,7 +196,7 @@ func checkDaemon(socket string) (*daemon.Status, finding) {
 	if stale := staleDaemon(status.Grove, resolveVersion()); stale != "" {
 		f.state = warn
 		f.detail += ", " + stale
-		f.advice = "Refresh the copy the service runs with grove install, then grove restart. Detached ports need a grove hold afterwards, since a restart drops them."
+		f.advice = "Run grove restart to pick up the build you have installed. Attached ports need their commands run again, since a restart drops them."
 	}
 	return &status, f
 }
@@ -216,43 +214,6 @@ func staleDaemon(daemonBuild, cliBuild string) string {
 		return "built before it could report its version"
 	}
 	return "built from " + daemonBuild + ", not " + cliBuild
-}
-
-func checkService() finding {
-	f := finding{name: "service"}
-
-	state := service.Status()
-	switch {
-	case !state.Supported:
-		f.state = warn
-		f.detail = "nothing here restarts the daemon for you"
-		f.advice = state.Reason
-		return f
-	case !state.Installed:
-		f.state = warn
-		f.detail = "not installed, so the daemon will not come back after a reboot"
-		f.advice = "Run grove install."
-		return f
-	case !state.Enabled:
-		f.state = warn
-		f.detail = "installed but not enabled"
-		f.advice = "Run: systemctl --user enable grove"
-		return f
-	case state.LingerApplies && !state.Lingering:
-		f.state = warn
-		f.detail = "enabled, but your user manager does not linger, so it stops at logout"
-		f.advice = "Run: loginctl enable-linger $USER"
-		return f
-	case !state.Active:
-		f.state = bad
-		f.detail = "enabled but not running"
-		f.advice = "Look at why with: systemctl --user status grove"
-		return f
-	}
-
-	f.state = ok
-	f.detail = "enabled, running, and lingering"
-	return f
 }
 
 func checkPort443(running *daemon.Status, stateDir, domain string) finding {
@@ -294,8 +255,7 @@ func checkPort443(running *daemon.Status, stateDir, domain string) finding {
 }
 
 // whoHolds443 asks docker, since ss cannot name a process owned by root and a
-// container publishing the port is the usual culprit.
-// answersOn443 reports whether grove is what a connection to 443 reaches.
+// container publishing the port is the usual culprit.// answersOn443 reports whether grove is what a connection to 443 reaches.
 //
 // Asking whether grove can bind 443 answers the wrong question on macOS, where
 // nothing binds it and pf does the work. Asking whose certificate comes back

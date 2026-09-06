@@ -16,7 +16,6 @@ import (
 
 	"github.com/grove-sh/cli/internal/daemon"
 	"github.com/grove-sh/cli/internal/platform"
-	"github.com/grove-sh/cli/internal/service"
 )
 
 // daemonOptions are shared by the command that runs a daemon and the one that
@@ -104,20 +103,9 @@ func underCI() bool {
 // starting it would leave a caller who named its own socket waiting on one
 // nobody is listening to.
 func ensureDaemon(socket string) error {
-	if usesServiceSocket(socket) {
-		if state := service.Status(); state.Supported && state.Installed {
-			if err := service.Start(); err == nil {
-				return waitForSocket(socket, 15*time.Second)
-			}
-		}
-	}
 	opts := defaultDaemonOptions()
 	opts.socket = socket
 	return spawnDaemon(opts)
-}
-
-func usesServiceSocket(socket string) bool {
-	return os.Getenv("GROVE_SOCKET") == "" && socket == daemon.DefaultSocket()
 }
 
 func (o daemonOptions) args() []string {
@@ -277,46 +265,15 @@ survives the process. Stopping a daemon that is not running is not an error.`,
 	return cmd
 }
 
-// restartDaemon puts the daemon back the way this machine keeps it.
-//
-// A daemon the service manager owns has to come back through the service
-// manager. Stopping it and spawning a replacement works, right up until the
-// next reboot: the unit is left dead, so nothing starts grove at login, and
-// the machine looks fine until the morning it does not.
+// restartDaemon stops whatever is listening and puts a fresh one in its place.
+// Nothing supervises the daemon, so this is the whole of it.
 func restartDaemon(opts daemonOptions) error {
-	// Whatever is listening goes first, whoever started it. A daemon spawned
-	// outside the service still holds the port the service's own would want,
-	// and systemd would report a start failure that is really a collision with
-	// grove itself.
 	if client, err := daemon.Dial(opts.socket); err == nil {
 		client.Stop()
 		client.Close()
 		waitForSocketGone(opts.socket, 5*time.Second)
 	}
-
-	if serviceOwnsDaemon(opts) {
-		if err := service.Restart(); err != nil {
-			return err
-		}
-		return waitForSocket(opts.socket, 15*time.Second)
-	}
 	return spawnDaemon(opts)
-}
-
-// serviceOwnsDaemon reports whether the service manager is running the daemon
-// this command is about.
-//
-// Every clause is a way it might not be. Options that differ from the defaults
-// are asking for a daemon the unit does not describe, so restarting the unit
-// would quietly ignore them. An unmanaged service directory means grove is
-// staying away from the real service manager, which is what keeps a test from
-// reaching this machine's systemd.
-func serviceOwnsDaemon(opts daemonOptions) bool {
-	if !usesServiceSocket(opts.socket) || opts != defaultDaemonOptions() || !service.Managed() {
-		return false
-	}
-	state := service.Status()
-	return state.Supported && state.Installed
 }
 
 func count(n int, word string) string {
@@ -394,7 +351,6 @@ func summarize(held []daemon.Live) string {
 	return fmt.Sprintf("; %s across %s released, and anything still running is unrouted until it holds again",
 		count(len(held), "lease"), count(len(contexts), "context"))
 }
-
 func newRestartCommand() *cobra.Command {
 	var opts daemonOptions
 

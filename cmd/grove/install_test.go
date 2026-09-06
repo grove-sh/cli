@@ -14,7 +14,6 @@ import (
 // anything with a service manager.
 func TestInstallCreatesTheAuthority(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
-	t.Setenv("GROVE_SERVICE_DIR", filepath.Join(dir, "units"))
 
 	code, stdout, stderr := exercise(t, "install", "--state-dir", dir, "--trust=false")
 	if code != 0 {
@@ -42,7 +41,6 @@ func TestInstallCreatesTheAuthority(t *testing.T) {
 
 func TestInstallTightensALooseStateDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
-	t.Setenv("GROVE_SERVICE_DIR", filepath.Join(dir, "units"))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +66,6 @@ func TestInstallTightensALooseStateDir(t *testing.T) {
 // authorities.
 func TestInstallReusesTheRoot(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
-	t.Setenv("GROVE_SERVICE_DIR", filepath.Join(dir, "units"))
 
 	exercise(t, "install", "--state-dir", dir, "--trust=false")
 	first, err := os.ReadFile(filepath.Join(dir, "root.crt"))
@@ -88,7 +85,6 @@ func TestInstallReusesTheRoot(t *testing.T) {
 
 func TestExecPassesTheCAEnvironmentToTheChild(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "state")
-	t.Setenv("GROVE_SERVICE_DIR", filepath.Join(state, "units"))
 	if _, _, stderr := exercise(t, "install", "--state-dir", state, "--trust=false"); stderr != "" {
 		t.Fatal(stderr)
 	}
@@ -139,14 +135,13 @@ func TestExecPassesTheCAEnvironmentToTheChild(t *testing.T) {
 // runtimes never trust it.
 func TestInstallMergesABundleWhenTheSystemFileWillNotDo(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
-	t.Setenv("GROVE_SERVICE_DIR", filepath.Join(dir, "units"))
 	system := filepath.Join(t.TempDir(), "system-roots.pem")
 	if err := os.WriteFile(system, []byte("-----BEGIN CERTIFICATE-----\nsystem\n-----END CERTIFICATE-----\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("GROVE_SYSTEM_BUNDLE", system)
 
-	code, stdout, stderr := exercise(t, "install", "--state-dir", dir, "--trust=false", "--service=false")
+	code, stdout, stderr := exercise(t, "install", "--state-dir", dir, "--trust=false")
 	if code != 0 {
 		t.Fatalf("exit = %d: %s", code, stderr)
 	}
@@ -167,7 +162,6 @@ func TestInstallMergesABundleWhenTheSystemFileWillNotDo(t *testing.T) {
 // grove made before is deleted rather than left to rot.
 func TestInstallDropsItsCopyOnceTheSystemFileCarriesTheRoot(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
-	t.Setenv("GROVE_SERVICE_DIR", filepath.Join(dir, "units"))
 	system := filepath.Join(t.TempDir(), "system-roots.pem")
 	if err := os.WriteFile(system, []byte("placeholder\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -175,7 +169,7 @@ func TestInstallDropsItsCopyOnceTheSystemFileCarriesTheRoot(t *testing.T) {
 	t.Setenv("GROVE_SYSTEM_BUNDLE", system)
 
 	// First install has nothing to work with, so it merges a copy.
-	exercise(t, "install", "--state-dir", dir, "--trust=false", "--service=false")
+	exercise(t, "install", "--state-dir", dir, "--trust=false")
 	merged := filepath.Join(dir, trust.BundleFile)
 	if _, err := os.Stat(merged); err != nil {
 		t.Fatalf("expected a merged bundle first: %v", err)
@@ -190,7 +184,7 @@ func TestInstallDropsItsCopyOnceTheSystemFileCarriesTheRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code, stdout, stderr := exercise(t, "install", "--state-dir", dir, "--trust=false", "--service=false")
+	code, stdout, stderr := exercise(t, "install", "--state-dir", dir, "--trust=false")
 	if code != 0 {
 		t.Fatalf("exit = %d: %s", code, stderr)
 	}

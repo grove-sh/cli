@@ -25,7 +25,9 @@ Once per machine:
 grove install
 ```
 
-That generates a local certificate authority, adds it to your trust stores, registers the daemon so it comes back after a reboot, and prints the one privileged step your platform needs. On Linux that is a sysctl lowering the port floor; on macOS it is a pf redirect, since nothing there can bind 443 as you. Grove prints those commands rather than running them, because they change the machine rather than your project.
+That generates a local certificate authority, adds it to your trust stores, and prints the one privileged step your platform needs. On Linux that is a sysctl lowering the port floor; on macOS it is a pf redirect, since nothing there can bind 443 as you. Grove prints those commands rather than running them, because they change the machine rather than your project.
+
+It does not arrange for anything to run at boot. Grove is up while you are using it: `grove exec` starts a daemon when none is answering, and `grove start` does it on its own. Nothing lingers afterwards, which is what lets `grove stop` hand port 443 back to lando or anything else that wants it.
 
 Then check it:
 
@@ -123,6 +125,8 @@ A context is a worktree. Its name comes from the directory, or from `name` in `g
 Ports come from a hash of the context and the entry, so they are stable without being stored, and two contexts that collide on one are resolved by walking to the next free port and writing that down.
 
 Leases live in the daemon's memory. An attached lease lasts as long as the command that took it; a detached one outlives it, because `supabase start` returns in seconds and holds its ports for hours. Nothing survives a daemon restart: the ports are derived from the context so they come back the same, but the hostnames have nowhere to route until something says the context exists. `grove hold` is that something. `grove restart` does it for you, since it reads the table a moment before dropping it and then asks each of those projects what it wants, so a planned restart costs nothing. `hold` is for the times nothing had the chance: a crash, a reboot, or a stop and a later start.
+
+On macOS the pf rules are the one thing that does need to survive a reboot, so `grove install` stages a small root-owned launchd job whose only work is reloading them. That is the firewall rule coming back, not grove.
 
 Under CI, with no daemon answering, `grove exec` runs your command untouched. A build service is the authority on its own environment.
 
