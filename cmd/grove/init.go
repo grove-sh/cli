@@ -198,16 +198,17 @@ POSTGRES_URL = "postgres://postgres:postgres@localhost:{db.port}/postgres"
 		}
 		switch {
 		case found.siteURLVar() == "":
-			fmt.Fprintf(&b, "env = { PORT = \"{port}\" }\n")
+			b.WriteString("env.PORT = \"{port}\"\n")
 			fmt.Fprintf(&b, "# Add the variable this app reads its own URL from, if it has one:\n")
 			fmt.Fprintf(&b, "# %s = \"{%s.url}\" under [env] above\n", "PUBLIC_SITE_URL", found.name)
 		case shared[found.siteURLVar()]:
 			// Two apps naming the same variable cannot both put it in [env].
-			fmt.Fprintf(&b, "env = { PORT = \"{port}\", %s = \"{url}\" }\n", found.siteURLVar())
 			fmt.Fprintf(&b, "# %s is shared with another app, so it stays here rather than\n", found.siteURLVar())
 			fmt.Fprintf(&b, "# in [env], and only applies while this route is the one bound.\n")
+			b.WriteString("env.PORT = \"{port}\"\n")
+			fmt.Fprintf(&b, "env.%s = \"{url}\"\n", found.siteURLVar())
 		default:
-			fmt.Fprintf(&b, "env = { PORT = \"{port}\" }\n")
+			b.WriteString("env.PORT = \"{port}\"\n")
 		}
 		notes = append(notes, "an app in "+found.dir+", as route "+found.name)
 	}
@@ -215,7 +216,7 @@ POSTGRES_URL = "postgres://postgres:postgres@localhost:{db.port}/postgres"
 	for _, dir := range unsure {
 		fmt.Fprintf(&b, "\n# %s has a dev script, but nothing grove recognises as a server.\n", dir)
 		fmt.Fprintf(&b, "# Give it a route if it listens on a port:\n")
-		fmt.Fprintf(&b, "# [routes.%s]\n# dir = %q\n# env = { PORT = \"{port}\" }\n", filepath.Base(dir), dir)
+		fmt.Fprintf(&b, "# [routes.%s]\n# dir = %q\n# env.PORT = \"{port}\"\n", filepath.Base(dir), dir)
 		notes = append(notes, dir+", which grove could not identify, left commented out")
 	}
 
@@ -225,7 +226,7 @@ POSTGRES_URL = "postgres://postgres:postgres@localhost:{db.port}/postgres"
 # [routes.web]
 # dir = "."
 # label = ""
-# env = { PORT = "{port}" }
+# env.PORT = "{port}"
 `)
 		notes = append(notes, "no app, so the route is commented out")
 	}
@@ -368,7 +369,7 @@ type supabaseService struct {
 	name   string
 	routed bool
 	note   string
-	env    string
+	env    []string
 }
 
 // supabaseServices reports what to allocate for a stack, reading the enabled
@@ -380,19 +381,22 @@ type supabaseService struct {
 // opposite: nothing collides, and one that never answers is only clutter.
 func supabaseServices(flags supabaseFlags) (services []supabaseService, demoted []string) {
 	services = []supabaseService{
-		{name: "api", routed: true, env: `SUPABASE_API_PORT = "{port}"`},
-		{name: "studio", routed: true, env: `SUPABASE_STUDIO_PORT = "{port}"`},
+		{name: "api", routed: true, env: []string{`SUPABASE_API_PORT = "{port}"`}},
+		{name: "studio", routed: true, env: []string{`SUPABASE_STUDIO_PORT = "{port}"`}},
 		{
 			name:   "mail",
 			routed: true,
 			note: `# The key was renamed at CLI 2.108, and each version binds only the one it
 # knows, so both spellings are harmless and one of them lands.`,
-			env: `SUPABASE_INBUCKET_PORT = "{port}", SUPABASE_LOCAL_SMTP_PORT = "{port}"`,
+			env: []string{
+				`SUPABASE_INBUCKET_PORT = "{port}"`,
+				`SUPABASE_LOCAL_SMTP_PORT = "{port}"`,
+			},
 		},
-		{name: "db", env: `SUPABASE_DB_PORT = "{port}"`},
-		{name: "shadow", env: `SUPABASE_DB_SHADOW_PORT = "{port}"`},
-		{name: "pooler", env: `SUPABASE_DB_POOLER_PORT = "{port}"`},
-		{name: "analytics", env: `SUPABASE_ANALYTICS_PORT = "{port}"`},
+		{name: "db", env: []string{`SUPABASE_DB_PORT = "{port}"`}},
+		{name: "shadow", env: []string{`SUPABASE_DB_SHADOW_PORT = "{port}"`}},
+		{name: "pooler", env: []string{`SUPABASE_DB_POOLER_PORT = "{port}"`}},
+		{name: "analytics", env: []string{`SUPABASE_ANALYTICS_PORT = "{port}"`}},
 	}
 
 	for i := range services {
@@ -507,7 +511,9 @@ func supabaseEntries(services []supabaseService) string {
 		if service.note != "" {
 			fmt.Fprintln(b, service.note)
 		}
-		fmt.Fprintf(b, "env = { %s }\n", service.env)
+		for _, line := range service.env {
+			fmt.Fprintf(b, "env.%s\n", line)
+		}
 	}
 	return b.String()
 }
