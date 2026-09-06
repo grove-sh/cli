@@ -23,7 +23,7 @@ var errNotWritten = errors.New("service: no service manager grove knows about")
 // Nothing here knows how to keep the daemon running, so that is the operator's
 // job.
 func Supported() (bool, string) {
-	return false, "grove knows no service manager here, so start the daemon yourself with grove daemon start"
+	return false, "grove knows no service manager here, so start the daemon yourself with grove start"
 }
 
 func Install(executable, listen string) (string, error) { return "", errNotWritten }

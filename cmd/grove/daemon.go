@@ -132,18 +132,19 @@ func newDaemonCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "daemon",
-		Short: "Start, stop, or inspect the machine's grove daemon",
-		Long: `Start, stop, or inspect the machine's grove daemon.
+		Short: "Run the grove proxy and lease registry in the foreground",
+		Long: `Run the grove daemon in the foreground.
+
+This is what the service manager invokes, and it is hidden from the command
+list because it is not how anyone starts a daemon for themselves: grove start
+does that, in the background, where the service manager keeps it.
 
 One daemon serves every context on the machine. It terminates TLS for each
 context's hostname, routes it to the port that context leased, and holds the
 leases. A lease lasts exactly as long as the 'grove exec' connection that asked
-for it, so stopping the daemon drops all of them at once.
-
-With no subcommand this runs the daemon in the foreground, which is what the
-service manager invokes. To start one for yourself, use 'grove daemon start',
-which puts it in the background where the service manager keeps it.`,
-		Args: usageArgs(cobra.NoArgs),
+for it, so stopping the daemon drops all of them at once.`,
+		Hidden: true,
+		Args:   usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			server, err := daemon.New(daemon.Config{Domain: opts.domain, CADir: opts.caDir, Version: resolveVersion()})
 			if err != nil {
@@ -183,7 +184,6 @@ which puts it in the background where the service manager keeps it.`,
 	}
 
 	opts.bind(cmd)
-	cmd.AddCommand(newStartCommand(), newStopCommand(), newRestartCommand(), newStatusCommand())
 	return cmd
 }
 
@@ -219,46 +219,6 @@ answers again without touching the project it belongs to.`,
 	}
 
 	opts.bind(cmd)
-	return cmd
-}
-
-// newStatusCommand answers one question, where doctor answers six.
-func newStatusCommand() *cobra.Command {
-	var socket string
-
-	cmd := &cobra.Command{
-		Use:   "status",
-		Short: "Report whether the daemon is running, and what it is holding",
-		Long: `Report whether the daemon is running, and what it is holding.
-
-Exits non-zero when nothing answers, so a script can ask without parsing.`,
-		Args: usageArgs(cobra.NoArgs),
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			client, err := daemon.Dial(socket)
-			if err != nil {
-				var down *daemon.NotRunningError
-				if errors.As(err, &down) {
-					return fmt.Errorf("no daemon is running at %s", socket)
-				}
-				return err
-			}
-			defer client.Close()
-
-			status, err := client.Status()
-			if err != nil {
-				return err
-			}
-			build := status.Grove
-			if build == "" {
-				build = "unknown"
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "running on %s, pid %d, %s held, built from %s\n",
-				status.Listen, status.PID, count(status.Leases, "lease"), build)
-			return nil
-		},
-	}
-
-	cmd.Flags().StringVar(&socket, "socket", daemon.DefaultSocket(), "control socket path")
 	return cmd
 }
 

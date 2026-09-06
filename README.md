@@ -110,13 +110,11 @@ grove hold                       take this context's detached ports
 grove release [name...]          let them go
 grove context [--json]           how this directory resolves
 grove doctor                     DNS, trust, the daemon, and port 443
-grove daemon start|stop|restart  the machine's process, not your project's
-grove daemon status              pid, address, leases, build
+grove start | stop | restart     the daemon, which is one process for the machine
 ```
 
-One daemon serves every context on the machine, which is why its commands sit
-behind a noun: `grove daemon stop` drops every context's leases, not just this
-project's, and says so when it does.
+One daemon serves every context, so `grove stop` drops every context's leases
+rather than just this project's. It says so when it does.
 
 ## How it decides things
 
@@ -124,7 +122,7 @@ A context is a worktree. Its name comes from the directory, or from `name` in `g
 
 Ports come from a hash of the context and the entry, so they are stable without being stored, and two contexts that collide on one are resolved by walking to the next free port and writing that down.
 
-Leases live in the daemon's memory. An attached lease lasts as long as the command that took it; a detached one outlives it, because `supabase start` returns in seconds and holds its ports for hours. Nothing survives a daemon restart: the ports are derived from the context so they come back the same, but the hostnames have nowhere to route until something says the context exists. `grove hold` is that something. `grove daemon restart` does it for you, since it reads the table a moment before dropping it and then asks each of those projects what it wants, so a planned restart costs nothing. `hold` is for the times nothing had the chance: a crash, a reboot, or a stop and a later start.
+Leases live in the daemon's memory. An attached lease lasts as long as the command that took it; a detached one outlives it, because `supabase start` returns in seconds and holds its ports for hours. Nothing survives a daemon restart: the ports are derived from the context so they come back the same, but the hostnames have nowhere to route until something says the context exists. `grove hold` is that something. `grove restart` does it for you, since it reads the table a moment before dropping it and then asks each of those projects what it wants, so a planned restart costs nothing. `hold` is for the times nothing had the chance: a crash, a reboot, or a stop and a later start.
 
 Under CI, with no daemon answering, `grove exec` runs your command untouched. A build service is the authority on its own environment.
 

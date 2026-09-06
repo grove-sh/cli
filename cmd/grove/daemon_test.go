@@ -54,7 +54,7 @@ func TestStopReportsWhatItDropped(t *testing.T) {
 		t.Fatal(stderr)
 	}
 
-	code, stdout, stderr := exercise(t, "daemon", "stop", "--socket", socket)
+	code, stdout, stderr := exercise(t, "stop", "--socket", socket)
 
 	if code != 0 {
 		t.Fatalf("exit = %d: %s", code, stderr)
@@ -71,30 +71,10 @@ func TestStopReportsWhatItDropped(t *testing.T) {
 func TestStopIsQuietWhenNothingIsHeld(t *testing.T) {
 	socket := startDaemon(t)
 
-	_, stdout, _ := exercise(t, "daemon", "stop", "--socket", socket)
+	_, stdout, _ := exercise(t, "stop", "--socket", socket)
 
 	if strings.Contains(stdout, "released") {
 		t.Errorf("stop reported losses it did not cause: %q", stdout)
-	}
-}
-
-// One question, where doctor answers six, and a non-zero exit when nothing
-// answers so a script can ask without parsing.
-func TestDaemonStatusAnswersOneQuestion(t *testing.T) {
-	socket := startDaemon(t)
-
-	code, stdout, _ := exercise(t, "daemon", "status", "--socket", socket)
-	if code != 0 {
-		t.Fatalf("exit = %d", code)
-	}
-	for _, want := range []string{"running on", "pid", "held"} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("status said %q, which does not mention %q", stdout, want)
-		}
-	}
-
-	if code, _, _ := exercise(t, "daemon", "status", "--socket", "/nonexistent/grove.sock"); code == 0 {
-		t.Error("status exited zero with no daemon running")
 	}
 }
 

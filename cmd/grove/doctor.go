@@ -182,7 +182,7 @@ func checkDaemon(socket string) (*daemon.Status, finding) {
 	if err != nil {
 		f.state = warn
 		f.detail = "not running at " + socket
-		f.advice = "Start one with grove daemon start, which puts it in the background."
+		f.advice = "Start one with grove start, which puts it in the background."
 		return nil, f
 	}
 	defer client.Close()
@@ -198,7 +198,7 @@ func checkDaemon(socket string) (*daemon.Status, finding) {
 	if stale := staleDaemon(status.Grove, resolveVersion()); stale != "" {
 		f.state = warn
 		f.detail += ", " + stale
-		f.advice = "Refresh the copy the service runs with grove install, then grove daemon restart. Detached ports need a grove hold afterwards, since a restart drops them."
+		f.advice = "Refresh the copy the service runs with grove install, then grove restart. Detached ports need a grove hold afterwards, since a restart drops them."
 	}
 	return &status, f
 }

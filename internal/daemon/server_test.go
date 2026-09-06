@@ -384,7 +384,7 @@ func TestClientNamesAnOlderDaemon(t *testing.T) {
 	if !errors.As(err, &mismatch) {
 		t.Fatalf("err = %v, want VersionError", err)
 	}
-	for _, want := range []string{"grove daemon restart", "grove hold"} {
+	for _, want := range []string{"grove restart", "grove hold"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not name %q, so it says a problem without a way out: %v", want, err)
 		}
