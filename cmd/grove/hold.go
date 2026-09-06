@@ -49,12 +49,23 @@ func syncContext(out io.Writer, socket string, report bool) error {
 	if err != nil {
 		return err
 	}
+	// A directory with no grove.toml is not a failure here: restart runs this
+	// for wherever you happen to be standing. Every other caller passes a
+	// worktree a lease came from, where a missing file is worth saying.
+	err = holdContext(out, socket, dir, report)
+	if errors.Is(err, config.ErrNotFound) && !report {
+		return nil
+	}
+	return err
+}
 
+// holdContext asserts one project's detached entries, reading what it wants
+// from the project rather than from anything grove remembered. That is what
+// makes it safe to run for a context this process was never in: the worktree
+// path is the only thing the caller has to know.
+func holdContext(out io.Writer, socket, dir string, report bool) error {
 	cfg, err := config.Load(dir)
 	if err != nil {
-		if errors.Is(err, config.ErrNotFound) && !report {
-			return nil
-		}
 		return err
 	}
 

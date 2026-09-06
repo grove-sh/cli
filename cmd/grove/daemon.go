@@ -3,9 +3,12 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
+	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -363,6 +366,44 @@ func count(n int, word string) string {
 	return fmt.Sprintf("%d %ss", n, word)
 }
 
+// restoreContexts puts back what the daemon was holding, asking each project
+// rather than replaying the table. The snapshot says which worktrees to ask;
+// their grove.toml files say what to hold, so a project that has changed since
+// gets what it asks for now rather than what it wanted before.
+//
+// Attached leases are left out on purpose. One belongs to a command that is
+// still running and no longer connected, and there is nothing to reconnect it
+// to: that command has to be run again.
+func restoreContexts(cmd *cobra.Command, socket string, before []daemon.Live) {
+	worktrees := map[string]string{}
+	for _, lease := range before {
+		if lease.Detached && lease.Worktree != "" {
+			worktrees[lease.Worktree] = lease.Slug
+		}
+	}
+	if len(worktrees) == 0 {
+		return
+	}
+
+	dirs := make([]string, 0, len(worktrees))
+	for dir := range worktrees {
+		dirs = append(dirs, dir)
+	}
+	slices.Sort(dirs)
+
+	var restored []string
+	for _, dir := range dirs {
+		if err := holdContext(io.Discard, socket, dir, false); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "grove: %s did not come back: %v\n", worktrees[dir], err)
+			continue
+		}
+		restored = append(restored, worktrees[dir])
+	}
+	if len(restored) > 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "held again: %s\n", strings.Join(restored, ", "))
+	}
+}
+
 // whatItHolds reads the lease table on a connection of its own, since the one
 // about to carry the stop has room for exactly one request.
 func whatItHolds(socket string) []daemon.Live {
@@ -407,6 +448,11 @@ protocol it was built with. Its output goes to daemon.log in the state
 directory.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Whatever it holds now, read a moment before it stops holding it.
+			// A snapshot this fresh cannot describe a stack that has since gone
+			// away, which is the objection to writing leases down at all.
+			before := whatItHolds(opts.socket)
+
 			if err := restartDaemon(opts); err != nil {
 				return err
 			}
@@ -423,9 +469,10 @@ directory.`,
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "grove daemon on %s, pid %d\n", status.Listen, status.PID)
 
-			// A fresh daemon knows nothing. Restore this context at least,
-			// since restarting from inside the project you are working on is
-			// the usual case. Other contexts need their own grove hold.
+			restoreContexts(cmd, opts.socket, before)
+
+			// And this one, which may have been holding nothing yet: restarting
+			// from inside the project you are working on is the usual case.
 			if err := syncContext(cmd.OutOrStdout(), opts.socket, false); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "grove: could not restore this context: %v\n", err)
 			}

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"github.com/grove-sh/cli/internal/daemon"
+	"github.com/spf13/cobra"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -92,5 +95,76 @@ func TestDaemonStatusAnswersOneQuestion(t *testing.T) {
 
 	if code, _, _ := exercise(t, "daemon", "status", "--socket", "/nonexistent/grove.sock"); code == 0 {
 		t.Error("status exited zero with no daemon running")
+	}
+}
+
+// Restarting used to leave every other project's hostnames unrouted until
+// someone visited each one. The table is read a moment before it is dropped,
+// and each worktree is then asked what it wants, so a project that changed in
+// the meantime gets what it asks for now.
+func TestRestoreHoldsEveryContextTheDaemonWasHolding(t *testing.T) {
+	socket := startDaemon(t)
+	first, second := tempRepo(t, "app1"), tempRepo(t, "app2")
+
+	out, errs := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(out)
+	cmd.SetErr(errs)
+
+	restoreContexts(cmd, socket, []daemon.Live{
+		{Slug: "app1", Service: "db", Worktree: first, Detached: true},
+		{Slug: "app2", Service: "db", Worktree: second, Detached: true},
+		// An attached lease belongs to a command that is no longer connected,
+		// and there is nothing to reconnect it to.
+		{Slug: "app1", Service: "web", Worktree: first},
+	})
+
+	client, err := daemon.Dial(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	held, err := client.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	holding := map[string]bool{}
+	for _, lease := range held {
+		holding[lease.Slug+":"+lease.Service] = true
+	}
+	for _, want := range []string{"app1:db", "app2:db"} {
+		if !holding[want] {
+			t.Errorf("%s did not come back:\n%s%s", want, out, errs)
+		}
+	}
+	if holding["app1:web"] {
+		t.Error("an attached lease was restored, but its command is gone")
+	}
+	if !strings.Contains(out.String(), "app1") || !strings.Contains(out.String(), "app2") {
+		t.Errorf("nothing said which contexts came back: %q", out)
+	}
+}
+
+// A worktree that has been deleted since is not a reason to abandon the rest.
+func TestRestoreCarriesOnPastAWorktreeThatIsGone(t *testing.T) {
+	socket := startDaemon(t)
+	alive := tempRepo(t, "app1")
+
+	out, errs := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(out)
+	cmd.SetErr(errs)
+
+	restoreContexts(cmd, socket, []daemon.Live{
+		{Slug: "gone", Service: "db", Worktree: filepath.Join(t.TempDir(), "deleted"), Detached: true},
+		{Slug: "app1", Service: "db", Worktree: alive, Detached: true},
+	})
+
+	if !strings.Contains(out.String(), "app1") {
+		t.Errorf("the live context did not come back: %q", out)
+	}
+	if !strings.Contains(errs.String(), "gone") {
+		t.Errorf("nothing said which context could not: %q", errs)
 	}
 }

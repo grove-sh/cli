@@ -124,7 +124,7 @@ A context is a worktree. Its name comes from the directory, or from `name` in `g
 
 Ports come from a hash of the context and the entry, so they are stable without being stored, and two contexts that collide on one are resolved by walking to the next free port and writing that down.
 
-Leases live in the daemon's memory. An attached lease lasts as long as the command that took it; a detached one outlives it, because `supabase start` returns in seconds and holds its ports for hours. Nothing survives a daemon restart: the ports are derived from the context so they come back the same, but the hostnames have nowhere to route until something says the context exists. `grove hold` is that something, and it is what to run in each project whose stack is up after upgrading grove.
+Leases live in the daemon's memory. An attached lease lasts as long as the command that took it; a detached one outlives it, because `supabase start` returns in seconds and holds its ports for hours. Nothing survives a daemon restart: the ports are derived from the context so they come back the same, but the hostnames have nowhere to route until something says the context exists. `grove hold` is that something. `grove daemon restart` does it for you, since it reads the table a moment before dropping it and then asks each of those projects what it wants, so a planned restart costs nothing. `hold` is for the times nothing had the chance: a crash, a reboot, or a stop and a later start.
 
 Under CI, with no daemon answering, `grove exec` runs your command untouched. A build service is the authority on its own environment.
 
