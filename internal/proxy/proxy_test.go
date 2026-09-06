@@ -287,3 +287,37 @@ func TestRealCurlAcceptsTheChain(t *testing.T) {
 	}
 	t.Logf("curl negotiated HTTP/%s", version)
 }
+
+// Vite binds [::1] and nothing else by default, so a lease dialed only on
+// 127.0.0.1 reports nothing listening for a dev server that is running. The
+// port is the lease; the address family is the server's business.
+func TestReachesAnUpstreamOnIPv6Loopback(t *testing.T) {
+	ln, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skipf("no IPv6 loopback here: %v", err)
+	}
+	defer ln.Close()
+
+	go http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "from the v6 side")
+	}))
+
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := proxy.New()
+	// What the daemon writes: the v4 spelling of the port it leased.
+	server.SetRoutes([]proxy.Route{{Host: "app1.grov.site", Upstream: "127.0.0.1:" + port}})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest("GET", "http://app1.grov.site/", nil)
+	server.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", recorder.Code, recorder.Body)
+	}
+	if got := recorder.Body.String(); got != "from the v6 side" {
+		t.Errorf("body = %q", got)
+	}
+}

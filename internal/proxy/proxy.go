@@ -69,9 +69,38 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rp.ServeHTTP(w, r)
 }
 
+// loopbackTransport reaches a dev server on either loopback address.
+//
+// A lease is a port, not an address family, and servers pick a family without
+// asking: vite binds [::1] alone by default, so dialing 127.0.0.1 gets a
+// refused connection and grove reports nothing listening for a server that is
+// running perfectly well. The v4 address is still tried first, since almost
+// everything is there, and the original error is what surfaces if neither
+// answers.
+var loopbackTransport = func() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	var dialer net.Dialer
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := dialer.DialContext(ctx, network, address)
+		if err == nil {
+			return conn, nil
+		}
+		host, port, split := net.SplitHostPort(address)
+		if split != nil || host != "127.0.0.1" {
+			return nil, err
+		}
+		if six, sixErr := dialer.DialContext(ctx, network, net.JoinHostPort("::1", port)); sixErr == nil {
+			return six, nil
+		}
+		return nil, err
+	}
+	return transport
+}()
+
 func newReverseProxy(upstream string) *httputil.ReverseProxy {
 	target := &url.URL{Scheme: "http", Host: upstream}
 	return &httputil.ReverseProxy{
+		Transport: loopbackTransport,
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(target)
 			// Dev servers check Host against an allowlist, Vite's allowedHosts
