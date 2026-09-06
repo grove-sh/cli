@@ -49,7 +49,7 @@ asks for the same tolerance anywhere.`,
 				return err
 			}
 			if client == nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "grove: no daemon, so running %s with the environment as it stands\n", args[0])
+				fmt.Fprintf(cmd.ErrOrStderr(), "grove: not running, so %s runs with the environment as it stands\n", args[0])
 				return runChild(args, os.Environ())
 			}
 			defer client.Close()
@@ -95,7 +95,7 @@ asks for the same tolerance anywhere.`,
 	cmd.Flags().StringVarP(&service, "service", "s", "", "route or port to bind, overriding the directory")
 	cmd.Flags().StringVar(&socket, "socket", daemon.DefaultSocket(), "control socket path")
 	cmd.Flags().BoolVar(&autostart, "autostart", true, "start a daemon if none is running")
-	cmd.Flags().BoolVar(&optional, "if-available", false, "run the command unchanged when no daemon is running, rather than failing")
+	cmd.Flags().BoolVar(&optional, "if-available", false, "run the command unchanged when grove is not running, rather than failing")
 	return cmd
 }
 

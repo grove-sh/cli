@@ -166,7 +166,7 @@ for it, so stopping the daemon drops all of them at once.`,
 				server.Shutdown()
 			}()
 
-			fmt.Fprintf(cmd.OutOrStdout(), "grove daemon on %s, control socket %s\n", opts.listen, opts.socket)
+			fmt.Fprintf(cmd.OutOrStdout(), "grove on %s, control socket %s\n", opts.listen, opts.socket)
 			return server.Serve(control, https, http)
 		},
 	}
@@ -221,7 +221,7 @@ func reportStatus(cmd *cobra.Command, socket string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "grove daemon on %s, pid %d\n", status.Listen, status.PID)
+	fmt.Fprintf(cmd.OutOrStdout(), "grove on %s, pid %d\n", status.Listen, status.PID)
 	return nil
 }
 
@@ -241,7 +241,7 @@ survives the process. Stopping a daemon that is not running is not an error.`,
 			if err != nil {
 				var down *daemon.NotRunningError
 				if errors.As(err, &down) {
-					fmt.Fprintln(cmd.OutOrStdout(), "no daemon is running")
+					fmt.Fprintln(cmd.OutOrStdout(), "grove is not running")
 					return nil
 				}
 				return err
@@ -383,7 +383,7 @@ directory.`,
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "grove daemon on %s, pid %d\n", status.Listen, status.PID)
+			fmt.Fprintf(cmd.OutOrStdout(), "grove on %s, pid %d\n", status.Listen, status.PID)
 
 			restoreContexts(cmd, opts.socket, before)
 

@@ -114,7 +114,7 @@ func Listen(socket string) (net.Listener, error) {
 	// Something holds the path. If nothing answers on it, it is a leftover.
 	if probe, dialErr := net.Dial("unix", socket); dialErr == nil {
 		probe.Close()
-		return nil, fmt.Errorf("daemon: another grove daemon is already listening at %s", socket)
+		return nil, fmt.Errorf("daemon: grove is already listening at %s", socket)
 	}
 	if rmErr := os.Remove(socket); rmErr != nil {
 		return nil, err

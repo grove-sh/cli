@@ -268,8 +268,8 @@ func TestExecWithoutADaemon(t *testing.T) {
 	if code != 1 {
 		t.Errorf("exit = %d, want 1", code)
 	}
-	if !strings.Contains(stderr, "grove daemon") {
-		t.Errorf("stderr does not say how to start one: %q", stderr)
+	if !strings.Contains(stderr, "grove start") {
+		t.Errorf("stderr does not say how to start it: %q", stderr)
 	}
 }
 

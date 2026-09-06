@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -39,7 +40,7 @@ func newDoctorCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "Check DNS, trust, the daemon, and port 443",
+		Short: "Check DNS, trust, grove itself, and port 443",
 		Long: `Check the things that have to be true before grove can serve a hostname.
 
 Each check reports on its own. A failure exits non-zero so this can gate a
@@ -55,6 +56,7 @@ script; a warning does not.`,
 				checkBundle(stateDir),
 				daemonFinding,
 				checkPort443(running, stateDir, domain),
+				checkHTTPRedirect(running, domain),
 			}
 
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
@@ -174,7 +176,7 @@ func checkBundle(stateDir string) finding {
 // checkDaemon returns the daemon's own account of itself, or nil when nothing
 // answers.
 func checkDaemon(socket string) (*daemon.Status, finding) {
-	f := finding{name: "daemon"}
+	f := finding{name: "grove"}
 
 	client, err := daemon.Dial(socket)
 	if err != nil {
@@ -201,7 +203,7 @@ func checkDaemon(socket string) (*daemon.Status, finding) {
 	return &status, f
 }
 
-// staleDaemon describes the running daemon's build when it is worth mentioning,
+// staleDaemon describes the running grove's build when it is worth mentioning,
 // which is only when it is not this one: the service runs a copy taken at
 // install time, so upgrading the package leaves the old one serving. An empty
 // version comes from a daemon built before it could report one, which says the
@@ -213,7 +215,7 @@ func staleDaemon(daemonBuild, cliBuild string) string {
 	case daemonBuild == "":
 		return "built before it could report its version"
 	}
-	return "built from " + daemonBuild + ", not " + cliBuild
+	return "the one running was built from " + daemonBuild + ", and this one from " + cliBuild
 }
 
 func checkPort443(running *daemon.Status, stateDir, domain string) finding {
@@ -222,7 +224,7 @@ func checkPort443(running *daemon.Status, stateDir, domain string) finding {
 	const address = "127.0.0.1:443"
 	if running != nil && running.Listen == address {
 		f.state = ok
-		f.detail = fmt.Sprintf("held by grove's own daemon, pid %d", running.PID)
+		f.detail = fmt.Sprintf("held by grove itself, pid %d", running.PID)
 		return f
 	}
 
@@ -249,13 +251,70 @@ func checkPort443(running *daemon.Status, stateDir, domain string) finding {
 	case strings.Contains(err.Error(), "permission denied"):
 		f.advice = platform.PrivilegedPorts().Advice
 	case strings.Contains(err.Error(), "address already in use"):
-		f.advice = "Held by " + whoHolds443() + "."
+		f.advice = "Held by " + whoHolds(443) + "."
 	}
 	return f
 }
 
 // whoHolds443 asks docker, since ss cannot name a process owned by root and a
-// container publishing the port is the usual culprit.// answersOn443 reports whether grove is what a connection to 443 reaches.
+// container publishing the port is the usual culprit.// checkHTTPRedirect reports whether plain http reaches grove, which it only
+// does if grove could bind port 80. That is allowed to fail, so the only sign
+// is a line in the daemon's own log, which nobody reads. Hence this.
+func checkHTTPRedirect(running *daemon.Status, domain string) finding {
+	f := finding{name: "http redirect"}
+
+	if running == nil {
+		f.state = warn
+		f.detail = "cannot tell while grove is not running"
+		return f
+	}
+	if to, answered := redirectFrom80(domain); answered {
+		f.state = ok
+		f.detail = "80 sends " + to + " to https"
+		return f
+	}
+
+	f.state = warn
+	f.detail = "80 does not reach grove, so http:// will not either"
+	f.advice = platform.PrivilegedPorts().Advice
+	if f.advice == "" {
+		f.advice = "Held by " + whoHolds(80) + ", or grove could not bind it."
+	}
+	return f
+}
+
+// redirectFrom80 asks port 80 for a hostname only grove would answer for, and
+// reports where it was sent. Something else on the port cannot pass this by
+// accident, and a grove one build behind still answers it, which is what a
+// field in the status could not manage.
+func redirectFrom80(domain string) (string, bool) {
+	host := "doctor." + domain
+	request, err := http.NewRequest("GET", "http://127.0.0.1:80/", nil)
+	if err != nil {
+		return "", false
+	}
+	request.Host = host
+
+	client := &http.Client{
+		Timeout:       2 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Do(request)
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusFound {
+		return "", false
+	}
+	if !strings.HasPrefix(resp.Header.Get("Location"), "https://"+host) {
+		return "", false
+	}
+	return host, true
+}
+
+// answersOn443 reports whether grove is what a connection to 443 reaches.
 //
 // Asking whether grove can bind 443 answers the wrong question on macOS, where
 // nothing binds it and pf does the work. Asking whose certificate comes back
@@ -281,7 +340,7 @@ func answersOn443(stateDir, domain string) bool {
 	return true
 }
 
-func whoHolds443() string {
+func whoHolds(port int) string {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return "another process"
 	}
@@ -294,7 +353,7 @@ func whoHolds443() string {
 	}
 	for line := range strings.SplitSeq(string(out), "\n") {
 		name, ports, found := strings.Cut(line, "\t")
-		if found && strings.Contains(ports, ":"+strconv.Itoa(443)+"->") {
+		if found && strings.Contains(ports, ":"+strconv.Itoa(port)+"->") {
 			return "the container " + name
 		}
 	}

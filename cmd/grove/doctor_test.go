@@ -21,3 +21,16 @@ func TestStaleDaemonSpeaksUpOnlyOnADifferentBuild(t *testing.T) {
 		t.Error("a daemon that reports no build should still be called out")
 	}
 }
+
+// Port 80 is bound best effort, so failing to get it is ordinary and silent:
+// the attempt is logged where only the daemon's own log carries it. Doctor is
+// the only place anyone would find out.
+func TestHTTPRedirectIsCheckedByAsking(t *testing.T) {
+	// Nothing running is not the same as nothing answering, and saying "not
+	// answering" would send someone looking for a port conflict.
+	if got := checkHTTPRedirect(nil, "grov.site"); got.state != warn {
+		t.Errorf("state = %v with grove not running", got.state)
+	} else if !strings.Contains(got.detail, "not running") {
+		t.Errorf("detail = %q, want it to name the reason", got.detail)
+	}
+}

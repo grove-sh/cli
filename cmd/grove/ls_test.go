@@ -144,7 +144,7 @@ func TestLsWithoutADaemonStillListsRoutes(t *testing.T) {
 	if !strings.Contains(stdout, "https://app1."+defaultDomain) {
 		t.Errorf("no routes listed:\n%s", stdout)
 	}
-	if !strings.Contains(stderr, "no daemon") {
+	if !strings.Contains(stderr, "not running") {
 		t.Errorf("stderr does not mention it: %q", stderr)
 	}
 }

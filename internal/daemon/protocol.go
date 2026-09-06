@@ -46,14 +46,15 @@ type Response struct {
 
 type Status struct {
 	Version int `json:"version"`
-	// Grove is the daemon's build version, which the protocol version does not
-	// track: the wire shape can sit still across many releases. A client reads
-	// it to tell when the copy the service runs is older than the one asking.
-	// Empty from a daemon built before this field, which says the same thing.
+	// Grove is the build version, which the protocol version does not track:
+	// the wire shape can sit still across many releases. A client reads it to
+	// tell when the grove that is running is not the one asking. Empty from one
+	// built before this field, which says the same thing.
 	Grove  string `json:"grove,omitempty"`
 	PID    int    `json:"pid"`
 	Listen string `json:"listen"`
-	Leases int    `json:"leases"`
+
+	Leases int `json:"leases"`
 }
 
 // A Grant is a leased port, and the hostname routed to it when there is one. An

@@ -73,7 +73,7 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 		return err
 	}
 	if !running {
-		fmt.Fprintln(cmd.ErrOrStderr(), "grove: no daemon is running, so nothing here is being served")
+		fmt.Fprintln(cmd.ErrOrStderr(), "grove: not running, so nothing here is being served")
 	}
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
