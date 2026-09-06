@@ -610,3 +610,27 @@ func TestExecRunsWithNothingToLease(t *testing.T) {
 		t.Errorf("the command ran without its environment: %q", said)
 	}
 }
+
+// Every project has ended up naming its own context for something, so grove
+// says it once. It is there whether or not an entry is bound, since a command
+// that needs no port still runs somewhere.
+func TestExecAlwaysNamesTheContext(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	writeConfig(t, repo, "[routes.web]\ndir = \"apps/web\"\n")
+	t.Chdir(repo)
+
+	code, _, stderr := exercise(t, "exec", "--socket", socket, "--",
+		"sh", "-c", "printf '%s' \"$GROVE_CONTEXT\" > context.txt")
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+
+	said, err := os.ReadFile(filepath.Join(repo, "context.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(said) != "app1" {
+		t.Errorf("GROVE_CONTEXT = %q, want the context slug", said)
+	}
+}

@@ -176,7 +176,7 @@ func TestLongSlugIsTruncatedWithAHash(t *testing.T) {
 func TestOverrideWins(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "app1")
 	gitRepo(t, repo)
-	t.Setenv("GROVE_CONTEXT", "Custom_Name")
+	t.Setenv("GROVE_CONTEXT_OVERRIDE", "Custom_Name")
 
 	ctx := resolve(t, repo)
 
@@ -194,7 +194,7 @@ func TestExplicitNamesAreRejectedNotSlugified(t *testing.T) {
 
 	for _, override := range []string{"app.one", "app one", "-app", strings.Repeat("a", 64)} {
 		t.Run(override, func(t *testing.T) {
-			t.Setenv("GROVE_CONTEXT", override)
+			t.Setenv("GROVE_CONTEXT_OVERRIDE", override)
 			if _, err := identity.Resolve(repo); err == nil {
 				t.Errorf("%q was accepted", override)
 			}
@@ -314,7 +314,7 @@ func TestWithProjectRenamesTheContext(t *testing.T) {
 func TestWithProjectYieldsToTheEnvironmentOverride(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "myapp-repo")
 	gitRepo(t, repo)
-	t.Setenv("GROVE_CONTEXT", "pinned")
+	t.Setenv("GROVE_CONTEXT_OVERRIDE", "pinned")
 
 	renamed, err := resolve(t, repo).WithProject("myapp")
 	if err != nil {
@@ -322,7 +322,7 @@ func TestWithProjectYieldsToTheEnvironmentOverride(t *testing.T) {
 	}
 
 	if renamed.Slug != "pinned" {
-		t.Errorf("slug = %q, want GROVE_CONTEXT to keep winning", renamed.Slug)
+		t.Errorf("slug = %q, want GROVE_CONTEXT_OVERRIDE to keep winning", renamed.Slug)
 	}
 }
 
@@ -332,5 +332,24 @@ func TestWithProjectRejectsAnUnusableName(t *testing.T) {
 
 	if _, err := resolve(t, repo).WithProject("my.app"); err == nil {
 		t.Error("a dotted name was accepted")
+	}
+}
+
+// Grove exports GROVE_CONTEXT into every command it runs, so identity must not
+// read it back. Otherwise a command that steps into another worktree and calls
+// grove again would answer for the context it came from, and grove would have
+// no way to tell that was an accident.
+func TestTheExportedContextNameIsNotAnOverride(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "app1")
+	gitRepo(t, repo)
+	t.Setenv("GROVE_CONTEXT", "somewhere-else")
+
+	ctx := resolve(t, repo)
+
+	if ctx.Slug != "app1" {
+		t.Errorf("slug = %q, want the repository's own name", ctx.Slug)
+	}
+	if ctx.Source == identity.FromOverride {
+		t.Error("GROVE_CONTEXT was treated as an override")
 	}
 }

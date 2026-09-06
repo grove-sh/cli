@@ -245,7 +245,7 @@ func TestCollisionReachesTheClient(t *testing.T) {
 	if err == nil {
 		t.Fatal("second worktree acquired the same context")
 	}
-	for _, want := range []string{"/src/feat.1", "/src/feat-1", "GROVE_CONTEXT"} {
+	for _, want := range []string{"/src/feat.1", "/src/feat-1", "GROVE_CONTEXT_OVERRIDE"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %q: %v", want, err)
 		}

@@ -310,7 +310,7 @@ type CollisionError struct {
 }
 
 func (e *CollisionError) Error() string {
-	return fmt.Sprintf("lease: context %q is already held by %s, and %s resolves to the same name; rename one worktree directory, or give one of them a distinct GROVE_CONTEXT",
+	return fmt.Sprintf("lease: context %q is already held by %s, and %s resolves to the same name; rename one worktree directory, or give one of them a distinct GROVE_CONTEXT_OVERRIDE",
 		e.Slug, e.Held, e.Wanted)
 }
 

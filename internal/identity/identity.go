@@ -44,7 +44,7 @@ func (c Context) Host(domain string) string {
 
 // WithProject renames the project, keeping whichever worktree this is. A name
 // in grove.toml wins over the directory the repository happens to sit in, but
-// not over GROVE_CONTEXT, which replaces the whole context.
+// not over GROVE_CONTEXT_OVERRIDE, which replaces the whole context.
 func (c Context) WithProject(name string) (Context, error) {
 	if name == "" || c.Source == FromOverride {
 		return c, nil
@@ -65,14 +65,17 @@ func composeSlug(project, variant string) string {
 	return cap63(project + "-" + variant)
 }
 
-// Resolve reports the context for dir. GROVE_CONTEXT overrides everything.
+// Resolve reports the context for dir. GROVE_CONTEXT_OVERRIDE replaces it
+// outright, and is named for what it does: the plain GROVE_CONTEXT is a value
+// grove exports into every command, so an override sharing that name would
+// follow a process tree into other worktrees and quietly answer for them.
 func Resolve(dir string) (Context, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return Context{}, err
 	}
 
-	if override := os.Getenv("GROVE_CONTEXT"); override != "" {
+	if override := os.Getenv("GROVE_CONTEXT_OVERRIDE"); override != "" {
 		slug, err := validateExplicit(override)
 		if err != nil {
 			return Context{}, err

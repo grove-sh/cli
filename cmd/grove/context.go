@@ -36,7 +36,7 @@ func newContextCommand() *cobra.Command {
 		Long: `Print the grove context resolved for the current directory.
 
 The context is derived from the git worktree you are standing in, and names the
-hostname, database, and ports grove allocates. GROVE_CONTEXT overrides it.
+hostname, database, and ports grove allocates. GROVE_CONTEXT_OVERRIDE replaces it.
 
 --json is the stable contract other tools should read.`,
 		Args: usageArgs(cobra.NoArgs),

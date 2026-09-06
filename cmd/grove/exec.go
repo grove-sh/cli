@@ -138,6 +138,12 @@ func valuesFrom(cfg *config.Config, context identity.Context, allocated map[stri
 		host := identity.ComposeLabel(context.Slug, route.Label) + "." + defaultDomain
 		values.Routes[name] = config.Binding{Host: host, URL: "https://" + host}
 	}
+	// Every configured port, bound or not. Leaving the unbound ones out makes a
+	// reference to one read as a typo, when the entry is right there in the
+	// file and simply has nothing to give yet.
+	for name := range cfg.Ports {
+		values.Ports[name] = config.Binding{}
+	}
 
 	for name, binding := range allocated {
 		if _, isRoute := cfg.Routes[name]; isRoute {
@@ -167,7 +173,7 @@ func environment(cfg *config.Config, context identity.Context, active *config.En
 		return nil, err
 	}
 
-	layered, err := layer(cfg, resolved, active, grants)
+	layered, err := layer(cfg, context, resolved, active, grants)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +192,7 @@ func environment(cfg *config.Config, context identity.Context, active *config.En
 
 // layer puts grove's own values last, because a port hand copied into a
 // checked-in .env is the drift grove exists to remove.
-func layer(cfg *config.Config, resolved map[string]string, active *config.Entry, grants map[string]daemon.Grant) (map[string]string, error) {
+func layer(cfg *config.Config, context identity.Context, resolved map[string]string, active *config.Entry, grants map[string]daemon.Grant) (map[string]string, error) {
 	fromFiles, err := cfg.LoadEnvFiles()
 	if err != nil {
 		return nil, err
@@ -208,6 +214,11 @@ func layer(cfg *config.Config, resolved map[string]string, active *config.Entry,
 		}
 		layered[name] = value
 	}
+	// Which context this is, whether or not anything is bound. Every project so
+	// far has ended up naming it for itself, as SUPABASE_PROJECT_ID or a
+	// scratch database, so grove says it once rather than each file repeating
+	// {context.slug}.
+	layered["GROVE_CONTEXT"] = context.Slug
 	if active != nil {
 		if grant, ok := grants[active.Name]; ok {
 			layered["GROVE_PORT"] = strconv.Itoa(grant.Port)

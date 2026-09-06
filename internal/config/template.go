@@ -52,6 +52,24 @@ func (c *Config) Environment(active *Entry, values Values) (map[string]string, e
 type Skipped struct {
 	Name   string
 	Reason string
+
+	// Ref names the entry this was waiting on, when that is why it was
+	// skipped. Empty for anything else, since a reference to an entry that
+	// does not exist is a mistake rather than a wait.
+	Ref string
+}
+
+// UnboundError says an entry exists and has nothing to give yet, which is a
+// state that ends the moment something holds it, rather than a mistake in the
+// file. The caller groups by Ref, since one unheld entry is usually several
+// unset variables.
+type UnboundError struct {
+	Ref   string
+	Field string
+}
+
+func (e *UnboundError) Error() string {
+	return e.Ref + " has no " + e.Field + " yet; it is only allocated while something binds it"
 }
 
 // EnvironmentSkipping resolves what it can and reports the rest. Printing an
@@ -99,7 +117,12 @@ func (c *Config) resolveInto(out map[string]string, self *Entry, env map[string]
 	for _, name := range names {
 		resolved, err := resolve(env[name], self, values)
 		if err != nil {
-			skipped = append(skipped, Skipped{Name: name, Reason: fmt.Sprintf("%s: %v", where(self, name), err)})
+			miss := Skipped{Name: name, Reason: fmt.Sprintf("%s: %v", where(self, name), err)}
+			var unbound *UnboundError
+			if errors.As(err, &unbound) {
+				miss.Ref = unbound.Ref
+			}
+			skipped = append(skipped, miss)
 			continue
 		}
 		out[name] = resolved
@@ -169,7 +192,7 @@ func field(binding Binding, name, ref string, routed bool) (string, error) {
 	switch name {
 	case "port":
 		if binding.Port == 0 {
-			return "", fmt.Errorf("%s has no port yet; it is only allocated while something binds it", ref)
+			return "", &UnboundError{Ref: ref, Field: "port"}
 		}
 		return strconv.Itoa(binding.Port), nil
 	case "url":
@@ -177,7 +200,7 @@ func field(binding Binding, name, ref string, routed bool) (string, error) {
 			if !routed {
 				return "", fmt.Errorf("%s has no URL; only routes get a hostname", ref)
 			}
-			return "", fmt.Errorf("%s has no URL yet; a route is only routed while something binds it", ref)
+			return "", &UnboundError{Ref: ref, Field: "URL"}
 		}
 		return binding.URL, nil
 	case "host":
@@ -185,7 +208,7 @@ func field(binding Binding, name, ref string, routed bool) (string, error) {
 			if !routed {
 				return "", fmt.Errorf("%s has no hostname; only routes get one", ref)
 			}
-			return "", fmt.Errorf("%s has no hostname yet; a route is only routed while something binds it", ref)
+			return "", &UnboundError{Ref: ref, Field: "hostname"}
 		}
 		return binding.Host, nil
 	}

@@ -52,22 +52,85 @@ being.`,
 			}
 
 			resolved, skipped := cfg.EnvironmentSkipping(active, valuesFrom(cfg, context, live))
-			layered, err := layer(cfg, resolved, active, grantsFrom(live))
+			layered, err := layer(cfg, context, resolved, active, grantsFrom(live))
 			if err != nil {
 				return err
 			}
 
-			for _, miss := range skipped {
-				fmt.Fprintf(cmd.ErrOrStderr(), "grove: %s is not set, %s\n", miss.Name, miss.Reason)
-			}
+			reportSkipped(cmd.ErrOrStderr(), append(skipped, unbound(active, layered)...))
 			return writeEnv(cmd.OutOrStdout(), format, layered)
 		},
 	}
 
 	cmd.Flags().StringVarP(&service, "service", "s", "", "route or port to report on, overriding the directory")
-	cmd.Flags().StringVar(&format, "format", "shell", "shell, dotenv, or json")
+	cmd.Flags().StringVar(&format, "format", "shell", "shell or json")
 	cmd.Flags().StringVar(&socket, "socket", daemon.DefaultSocket(), "control socket path")
 	return cmd
+}
+
+// reportSkipped says what is not set and why, once.
+//
+// One unheld entry is usually several unset variables, and printing the same
+// sentence for each buries the one line that is different: a reference to an
+// entry that does not exist is a mistake, while a port nobody holds is a state
+// that ends when something holds it. So the waits are grouped under the entry
+// they wait on, and everything else gets its own line.
+func reportSkipped(out io.Writer, skipped []config.Skipped) {
+	if len(skipped) == 0 {
+		return
+	}
+	name, detail := styles(out)
+
+	waiting := map[string][]string{}
+	var refs []string
+	for _, miss := range skipped {
+		if miss.Ref == "" {
+			fmt.Fprintf(out, "grove: %s is not set, %s\n", name(miss.Name), detail(miss.Reason))
+			continue
+		}
+		if _, seen := waiting[miss.Ref]; !seen {
+			refs = append(refs, miss.Ref)
+		}
+		waiting[miss.Ref] = append(waiting[miss.Ref], miss.Name)
+	}
+	if len(refs) == 0 {
+		return
+	}
+
+	slices.Sort(refs)
+	width := 0
+	for _, ref := range refs {
+		if len(ref) > width {
+			width = len(ref)
+		}
+	}
+	fmt.Fprintf(out, "grove: %s\n", detail("waiting on ports nothing holds yet"))
+	for _, ref := range refs {
+		names := waiting[ref]
+		slices.Sort(names)
+		fmt.Fprintf(out, "  %-*s  %s\n", width, detail(ref), name(strings.Join(names, ", ")))
+	}
+}
+
+// unbound reports the variables grove would have set itself, had anything been
+// holding the entry they describe.
+func unbound(active *config.Entry, env map[string]string) []config.Skipped {
+	if active == nil {
+		return nil
+	}
+	if _, bound := env["GROVE_PORT"]; bound {
+		return nil
+	}
+
+	ref := active.Ref()
+	missing := []config.Skipped{{Name: "GROVE_PORT", Ref: ref}}
+	if active.Kind == config.KindRoute {
+		missing = append(missing,
+			config.Skipped{Name: "GROVE_HOST", Ref: ref},
+			config.Skipped{Name: "GROVE_URL", Ref: ref},
+		)
+	}
+	return missing
 }
 
 // liveBindings turns what the context holds into template values.
@@ -108,16 +171,12 @@ func writeEnv(out io.Writer, format string, env map[string]string) error {
 		for _, name := range names {
 			fmt.Fprintf(out, "export %s=%s\n", name, shellQuote(env[name]))
 		}
-	case "dotenv":
-		for _, name := range names {
-			fmt.Fprintf(out, "%s=%s\n", name, env[name])
-		}
 	case "json":
 		encoder := json.NewEncoder(out)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(env)
 	default:
-		return usageErrorf("unknown format %q; use shell, dotenv, or json", format)
+		return usageErrorf("unknown format %q; use shell or json", format)
 	}
 	return nil
 }
