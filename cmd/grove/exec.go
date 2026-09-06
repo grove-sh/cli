@@ -71,9 +71,15 @@ asks for the same tolerance anywhere.`,
 				return err
 			}
 
-			grants, err := client.Acquire(context.Slug, context.Root, entriesToLease(cfg, active))
-			if err != nil {
-				return err
+			// Nothing to lease is an ordinary answer, not a failure: a project
+			// whose entries are all scoped elsewhere still has an environment,
+			// and a command that needs no port should just run.
+			var grants map[string]daemon.Grant
+			if entries := entriesToLease(cfg, active); len(entries) > 0 {
+				grants, err = client.Acquire(context.Slug, context.Root, entries)
+				if err != nil {
+					return err
+				}
 			}
 
 			env, err := environment(cfg, context, active, grants)

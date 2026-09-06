@@ -340,8 +340,19 @@ func (c *Config) Select(cwd, named string) (*Entry, error) {
 		return nil, err
 	}
 	var best *Entry
+	var unscoped []*Entry
 	for _, entry := range c.All() {
-		if entry.Detached || entry.Dir == "" || !within(c.Dir, entry.Dir, abs) {
+		if entry.Detached {
+			continue
+		}
+		// An entry with no dir is not scoped to part of the tree, so it stands
+		// for the whole project: a single app whose directory is the repository
+		// has nothing to name. It only ever applies where nothing scoped does.
+		if entry.Dir == "" {
+			unscoped = append(unscoped, entry)
+			continue
+		}
+		if !within(c.Dir, entry.Dir, abs) {
 			continue
 		}
 		// The deepest dir wins, so a nested app beats its parent.
@@ -349,7 +360,22 @@ func (c *Config) Select(cwd, named string) (*Entry, error) {
 			best = entry
 		}
 	}
-	return best, nil
+	if best != nil {
+		return best, nil
+	}
+	switch len(unscoped) {
+	case 0:
+		return nil, nil
+	case 1:
+		return unscoped[0], nil
+	}
+	// Two entries claiming the whole project is a question grove cannot answer
+	// for itself, and picking one would be picking at random.
+	names := make([]string, 0, len(unscoped))
+	for _, entry := range unscoped {
+		names = append(names, entry.Name)
+	}
+	return nil, fmt.Errorf("config: %s all have no dir, so each claims this whole project; name one with -s", strings.Join(names, ", "))
 }
 
 // resolvePath reports an absolute path with symlinks followed. EvalSymlinks

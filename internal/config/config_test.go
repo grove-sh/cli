@@ -332,3 +332,68 @@ func TestAFileWithNoSchemaStillLoads(t *testing.T) {
 		t.Error("a file with no schema key did not load")
 	}
 }
+
+// A single app whose directory is the repository has no dir to name, and init
+// omits the key for exactly that shape. Before, such a route could never be
+// selected by directory, so grove exec asked for nothing and failed.
+func TestAnEntryWithNoDirCoversTheWholeProject(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, config.FileName, "[routes.web]\nlabel = \"\"\nenv.PORT = \"{port}\"\n")
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, cwd := range []string{dir, filepath.Join(dir, "src", "deep")} {
+		entry, err := cfg.Select(cwd, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if entry == nil || entry.Name != "web" {
+			t.Errorf("from %s: selected %v, want web", cwd, entry)
+		}
+	}
+}
+
+// Scoped beats unscoped, or adding a second app would silently move what a
+// command in the first one binds.
+func TestAScopedEntryBeatsOneCoveringTheProject(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, config.FileName, "[routes.web]\nlabel = \"\"\n\n[routes.admin]\ndir = \"apps/admin\"\n")
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inside, err := cfg.Select(filepath.Join(dir, "apps", "admin"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inside == nil || inside.Name != "admin" {
+		t.Errorf("inside apps/admin, selected %v, want admin", inside)
+	}
+	outside, err := cfg.Select(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outside == nil || outside.Name != "web" {
+		t.Errorf("at the root, selected %v, want web", outside)
+	}
+}
+
+// Two entries claiming everything is a question grove cannot answer, and
+// picking one would be picking at random.
+func TestTwoEntriesCoveringTheProjectIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, config.FileName, "[routes.web]\nlabel = \"\"\n\n[routes.admin]\nlabel = \"admin\"\n")
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = cfg.Select(dir, "")
+
+	if err == nil || !strings.Contains(err.Error(), "-s") {
+		t.Errorf("err = %v, want one naming the way out", err)
+	}
+}

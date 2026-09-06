@@ -586,3 +586,27 @@ func TestSecondInterruptKillsAChildThatWillNotStop(t *testing.T) {
 		}
 	}
 }
+
+// A project whose entries are all scoped elsewhere still has an environment,
+// and a command needing no port should run rather than fail. This used to
+// surface as "daemon: acquire returned no grants", which named nothing useful.
+func TestExecRunsWithNothingToLease(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	writeConfig(t, repo, "[env]\nGREETING = \"hello\"\n\n[routes.web]\ndir = \"apps/web\"\n")
+	t.Chdir(repo)
+
+	code, _, stderr := exercise(t, "exec", "--socket", socket, "--",
+		"sh", "-c", "printf '%s' \"$GREETING\" > said.txt")
+
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+	said, err := os.ReadFile(filepath.Join(repo, "said.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(said) != "hello" {
+		t.Errorf("the command ran without its environment: %q", said)
+	}
+}
