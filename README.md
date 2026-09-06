@@ -103,7 +103,7 @@ A 503 says which half is wrong. "No grove context is bound to this hostname" mea
 
 ```
 grove init                       write a grove.toml for this project
-grove install                    set this machine up: authority, trust, service
+grove install                    set this machine up: authority, trust, port 443
 grove uninstall                  remove grove's root from the trust stores
 grove exec [-s <name>] -- <cmd>  run a command in this context
 grove env [--format shell|json]  print that environment instead of running

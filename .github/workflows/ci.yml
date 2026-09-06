@@ -90,10 +90,13 @@ jobs:
       - name: Build
         run: go build -o grove ./cmd/grove
 
-      # No trust store and no agent: this is about the port, and the keychain
-      # and launchd are their own questions.
+      # No trust store: this is about the port, and the keychain is its own
+      # question. pipefail, because tee's exit code would otherwise hide an
+      # install that failed and leave the next step reading an empty file.
       - name: Install, which stages the pf files and asks for one sudo
-        run: ./grove install --trust=false --service=false | tee install.txt
+        run: |
+          set -euo pipefail
+          ./grove install --trust=false | tee install.txt
 
       # Running what it printed, rather than paths this file guessed at. The
       # instructions are the thing being tested: they are what a person will
@@ -111,7 +114,7 @@ jobs:
       - name: Grove now reports it can serve 443
         run: |
           set -euo pipefail
-          ./grove install --trust=false --service=false | tee after.txt
+          ./grove install --trust=false | tee after.txt
           grep -q "pf sends 443 to" after.txt
 
       - name: The daemon serves, and 443 arrives at it
