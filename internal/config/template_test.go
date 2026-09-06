@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -108,7 +109,7 @@ func TestSelfTokenInProjectEnv(t *testing.T) {
 [env]
 SITE = "{url}"
 `)
-	if !strings.Contains(err.Error(), "routes.<name>") {
+	if !strings.Contains(err.Error(), "{<name>.url}") {
 		t.Errorf("error does not suggest the cross reference form: %v", err)
 	}
 }
@@ -127,9 +128,13 @@ func TestUnknownTokensFailAtLoad(t *testing.T) {
 	for _, body := range []string{
 		"[env]\nA = \"{prot}\"\n",
 		"[env]\nA = \"{context.branch}\"\n",
-		"[env]\nA = \"{ports.nope}\"\n",
-		"[env]\nA = \"{routes.nope.url}\"\n",
-		"[env]\nA = \"{routes.web}\"\n\n[routes.web]\n",
+		"[env]\nA = \"{nope.port}\"\n",
+		"[env]\nA = \"{web.wat}\"\n\n[routes.web]\n",
+		"[env]\nA = \"{web}\"\n\n[routes.web]\n",
+		// The spelling every file used before, which has to fail loudly
+		// rather than resolve to something.
+		"[env]\nA = \"{ports.db}\"\n\n[ports.db]\n",
+		"[env]\nA = \"{routes.web.url}\"\n\n[routes.web]\n",
 	} {
 		t.Run(strings.TrimSpace(body), func(t *testing.T) {
 			if err := loadErr(t, body); err == nil {
@@ -167,7 +172,7 @@ func TestCrossRouteReference(t *testing.T) {
 env = { PORT = "{port}" }
 
 [routes.api]
-env = { PORT = "{port}", WEB_ORIGIN = "{routes.web.url}", WEB_HOST = "{routes.web.host}" }
+env = { PORT = "{port}", WEB_ORIGIN = "{web.url}", WEB_HOST = "{web.host}" }
 `)
 
 	env, err := cfg.Environment(cfg.Routes["api"], values2())
@@ -205,5 +210,45 @@ env = { SITE = "{url}" }
 	}
 	if !strings.Contains(err.Error(), "while something binds it") {
 		t.Errorf("error does not explain what is missing: %v", err)
+	}
+}
+
+// The section an entry lives in is not part of naming it, which is what lets a
+// service move between [routes] and [ports] without touching every line that
+// mentions it. That move is exactly what disabling a supabase service does.
+func TestAReferenceSurvivesTheEntryChangingSection(t *testing.T) {
+	const template = `
+[env]
+API_URL = "http://127.0.0.1:{api.port}"
+
+%s
+detached = true
+env = { SUPABASE_API_PORT = "{port}" }
+`
+	for _, section := range []string{"[routes.api]", "[ports.api]"} {
+		t.Run(section, func(t *testing.T) {
+			cfg := load(t, fmt.Sprintf(template, section))
+			if _, ok := cfg.Env["API_URL"]; !ok {
+				t.Errorf("the reference did not survive the move to %s", section)
+			}
+		})
+	}
+}
+
+// One namespace means one name, or a template naming it could mean either.
+func TestANameCannotBeBothARouteAndAPort(t *testing.T) {
+	err := loadErr(t, "[routes.api]\n\n[ports.api]\n")
+
+	if err == nil || !strings.Contains(err.Error(), "both a route and a port") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// An entry called context would make {context.slug} ambiguous.
+func TestContextIsNotAnEntryName(t *testing.T) {
+	err := loadErr(t, "[routes.context]\n")
+
+	if err == nil || !strings.Contains(err.Error(), "context") {
+		t.Errorf("err = %v", err)
 	}
 }

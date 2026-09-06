@@ -128,7 +128,7 @@ func lookup(path string, self *Entry, values Values) (string, error) {
 			return "", fmt.Errorf("unknown token {%s}", path)
 		}
 		if self == nil {
-			return "", fmt.Errorf("{%s} names the entry being resolved, and [env] has none; use {routes.<name>.%s}", path, parts[0])
+			return "", fmt.Errorf("{%s} names the entry being resolved, and [env] has none; use {<name>.%s}", path, parts[0])
 		}
 		return field(bindingOf(self, values), parts[0], self.Ref(), self.Kind == KindRoute)
 
@@ -145,29 +145,21 @@ func lookup(path string, self *Entry, values Values) (string, error) {
 			return values.Context.Variant, nil
 		}
 		return "", fmt.Errorf("unknown token {%s}", path)
-
-	case "ports":
-		if len(parts) != 2 {
-			return "", fmt.Errorf("unknown token {%s}; a port has no fields, write {ports.%s}", path, parts[1])
-		}
-		binding, ok := values.Ports[parts[1]]
-		if !ok {
-			return "", fmt.Errorf("{%s} names no [ports.%s]", path, parts[1])
-		}
-		return field(binding, "port", "ports."+parts[1], false)
-
-	case "routes":
-		if len(parts) != 3 {
-			return "", fmt.Errorf("unknown token {%s}; write {routes.<name>.port}, .url or .host", path)
-		}
-		binding, ok := values.Routes[parts[1]]
-		if !ok {
-			return "", fmt.Errorf("{%s} names no [routes.%s]", path, parts[1])
-		}
-		return field(binding, parts[2], "routes."+parts[1], true)
 	}
 
-	return "", fmt.Errorf("unknown token {%s}", path)
+	// Anything else names an entry. Which section it lives in is not part of
+	// the reference: an entry that moves between [routes] and [ports] would
+	// otherwise take every line that mentions it along with it.
+	if len(parts) != 2 {
+		return "", fmt.Errorf("unknown token {%s}; a reference is {<name>.port}, .url or .host", path)
+	}
+	if binding, ok := values.Routes[parts[0]]; ok {
+		return field(binding, parts[1], "routes."+parts[0], true)
+	}
+	if binding, ok := values.Ports[parts[0]]; ok {
+		return field(binding, parts[1], "ports."+parts[0], false)
+	}
+	return "", fmt.Errorf("{%s} names no entry called %q", path, parts[0])
 }
 
 // field reads one value off a binding. An empty URL means two different things

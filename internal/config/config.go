@@ -62,7 +62,14 @@ type Entry struct {
 
 func (e *Entry) Ref() string { return string(e.Kind) + "s." + e.Name }
 
+// Schema is the shape this grove understands. A file may declare its own, and
+// one from the future is worth saying so about: unknown keys are an error, so
+// without this a newer file reads as a pile of typos rather than as a newer
+// file.
+const Schema = 1
+
 type file struct {
+	Schema   int               `toml:"schema"`
 	Name     string            `toml:"name"`
 	EnvFiles []string          `toml:"env_files"`
 	Routes   map[string]*entry `toml:"routes"`
@@ -129,6 +136,13 @@ func decode(path string) (*file, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Before the unknown keys, since a file from a later grove is expected to
+	// have keys this one has never heard of, and saying which grove to run
+	// beats listing them.
+	if decoded.Schema > Schema {
+		return nil, fmt.Errorf("%s: declares schema %d, and this grove understands %d; upgrade grove",
+			filepath.Base(path), decoded.Schema, Schema)
+	}
 	if undecoded := md.Undecoded(); len(undecoded) > 0 {
 		keys := make([]string, 0, len(undecoded))
 		for _, key := range undecoded {
@@ -189,6 +203,9 @@ func build(dir string, f *file) (*Config, error) {
 
 	labels := map[string]string{}
 	for name, raw := range f.Routes {
+		if err := usableName(name); err != nil {
+			return nil, err
+		}
 		built, err := buildEntry(name, KindRoute, raw)
 		if err != nil {
 			return nil, err
@@ -200,6 +217,12 @@ func build(dir string, f *file) (*Config, error) {
 		cfg.Routes[name] = built
 	}
 	for name, raw := range f.Ports {
+		if err := usableName(name); err != nil {
+			return nil, err
+		}
+		if _, clash := cfg.Routes[name]; clash {
+			return nil, fmt.Errorf("config: %q is both a route and a port, and a template naming it could mean either", name)
+		}
 		built, err := buildEntry(name, KindPort, raw)
 		if err != nil {
 			return nil, err
@@ -211,6 +234,16 @@ func build(dir string, f *file) (*Config, error) {
 	}
 
 	return cfg, validate(cfg)
+}
+
+// usableName keeps entry names out of the way of the tokens that are not
+// entries. A template says {<name>.<field>}, so an entry called context would
+// make {context.slug} mean two things.
+func usableName(name string) error {
+	if name == "context" {
+		return fmt.Errorf("config: %q cannot be an entry name, since {context.slug} already means something", name)
+	}
+	return nil
 }
 
 func buildEntry(name string, kind Kind, raw *entry) (*Entry, error) {

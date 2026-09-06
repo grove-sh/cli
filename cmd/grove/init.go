@@ -96,14 +96,18 @@ func scaffold(root, project string) (string, []string) {
 	var notes []string
 	var b strings.Builder
 
-	b.WriteString(`# grove.toml
+	fmt.Fprintf(&b, `# grove.toml
 # Every route below gets its own hostname, one per worktree:
 #   <context>.grov.site, or <context>-<label>.grov.site
 #
 # The project name comes from this directory. Uncomment to override it, which
 # is worth doing when the directory and the project disagree.
 # name = "example"
-`)
+
+# The shape of this file, so a grove too old to read it says so rather than
+# listing keys it has never heard of.
+schema = %d
+`, config.Schema)
 
 	if _, err := os.Stat(filepath.Join(root, ".env")); err == nil {
 		b.WriteString("\nenv_files = [\".env\"]\n")
@@ -149,12 +153,12 @@ func scaffold(root, project string) (string, []string) {
 		urls[name] = template
 	}
 	for _, found := range apps {
-		claim(found.siteURLVar(), "{routes."+found.name+".url}")
+		claim(found.siteURLVar(), "{"+found.name+".url}")
 		// Every app in a project talks to the same stack, so they agree on
 		// this one and it does not count as a clash. A disabled api has no
 		// hostname to point at, and naming one would not load.
 		if routed("api") {
-			claim(found.supabaseURLVar(), "{routes.api.url}")
+			claim(found.supabaseURLVar(), "{api.url}")
 		}
 	}
 
@@ -169,13 +173,13 @@ SUPABASE_PROJECT_ID = "{context.slug}"
 
 # The stack brings its own postgres, on the port grove allocated for it. The
 # password is supabase's local default rather than a secret.
-POSTGRES_URL = "postgres://postgres:postgres@localhost:{ports.db}/postgres"
+POSTGRES_URL = "postgres://postgres:postgres@localhost:{db.port}/postgres"
 `)
 		notes = append(notes, "a supabase stack in "+stackDir+", whose ports grove will allocate")
 		if len(demoted) > 0 {
 			notes = append(notes, "no hostname for "+strings.Join(demoted, ", ")+", which the stack has turned off")
 		}
-		if url := supabaseAPIURL(routed("api"), flags); url != "" {
+		if url := supabaseAPIURL(flags); url != "" {
 			b.WriteString(url)
 			notes = append(notes, "SUPABASE_API_EXTERNAL_URL, which needs one line in "+
 				filepath.Join(stackDir, "config.toml")+" before bucket seeding honors it")
@@ -200,7 +204,7 @@ POSTGRES_URL = "postgres://postgres:postgres@localhost:{ports.db}/postgres"
 		case found.siteURLVar() == "":
 			fmt.Fprintf(&b, "env = { PORT = \"{port}\" }\n")
 			fmt.Fprintf(&b, "# Add the variable this app reads its own URL from, if it has one:\n")
-			fmt.Fprintf(&b, "# %s = \"{routes.%s.url}\" under [env] above\n", "PUBLIC_SITE_URL", found.name)
+			fmt.Fprintf(&b, "# %s = \"{%s.url}\" under [env] above\n", "PUBLIC_SITE_URL", found.name)
 		case shared[found.siteURLVar()]:
 			// Two apps naming the same variable cannot both put it in [env].
 			fmt.Fprintf(&b, "env = { PORT = \"{port}\", %s = \"{url}\" }\n", found.siteURLVar())
@@ -463,16 +467,12 @@ func readSupabaseFlags(path string) supabaseFlags {
 // would be https and this would quietly downgrade it. The host is grove's own
 // assumption rather than a universal one: the CLI takes it from the docker
 // context, and a remote DOCKER_HOST would want a different one.
-func supabaseAPIURL(routed bool, flags supabaseFlags) string {
+func supabaseAPIURL(flags supabaseFlags) string {
 	// Only bucket seeding reads the URL out of config.toml, so a stack that
 	// declares no buckets never reaches the code that gets this wrong, and the
 	// variable would be a paragraph of explanation about nothing.
 	if !flags.buckets || flags.apiTLS {
 		return ""
-	}
-	port := "{ports.api}"
-	if routed {
-		port = "{routes.api.port}"
 	}
 	return fmt.Sprintf(`
 # Bucket seeding is the one thing the CLI will not read from here. It runs at
@@ -487,9 +487,9 @@ func supabaseAPIURL(routed bool, flags supabaseFlags) string {
 # That literal is what anyone without grove gets, since supabase keeps its own
 # .env out of the repo, so give the command that runs the CLI a default:
 # SUPABASE_API_EXTERNAL_URL=http://127.0.0.1:54321
-SUPABASE_API_EXTERNAL_URL = "http://127.0.0.1:%s"
+SUPABASE_API_EXTERNAL_URL = "http://127.0.0.1:{api.port}"
 
-`, port)
+`)
 }
 
 func supabaseEntries(services []supabaseService) string {

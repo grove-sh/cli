@@ -35,7 +35,7 @@ env = { SUPABASE_DB_PORT = "{port}" }
 
 [env]
 SUPABASE_PROJECT_ID = "{context.slug}"
-POSTGRES_URL = "postgresql://postgres:postgres@127.0.0.1:{ports.db}/postgres"
+POSTGRES_URL = "postgresql://postgres:postgres@127.0.0.1:{db.port}/postgres"
 `
 
 func write(t *testing.T, dir, name, body string) string {
@@ -306,5 +306,29 @@ func TestPathsResolveThroughSymlinks(t *testing.T) {
 	}
 	if entry == nil || entry.Name != "web" {
 		t.Errorf("selected %v, want web", entry)
+	}
+}
+
+// A file from a later grove is expected to use keys this one has never heard
+// of, so the schema is checked before they are held against it. Otherwise the
+// message is a list of typos that are not typos.
+func TestAFileFromTheFutureSaysSoRatherThanListingKeys(t *testing.T) {
+	err := loadErr(t, "schema = 99\n\n[routes.web]\nsomething_new = true\n")
+
+	if !strings.Contains(err.Error(), "upgrade grove") {
+		t.Errorf("error does not say what to do: %v", err)
+	}
+	if strings.Contains(err.Error(), "something_new") {
+		t.Errorf("error blames a key that is only unknown because grove is old: %v", err)
+	}
+}
+
+// A file that declares nothing is a file from before the key existed, and
+// those are the four that already exist.
+func TestAFileWithNoSchemaStillLoads(t *testing.T) {
+	cfg := load(t, "[routes.web]\nenv = { PORT = \"{port}\" }\n")
+
+	if _, ok := cfg.Routes["web"]; !ok {
+		t.Error("a file with no schema key did not load")
 	}
 }

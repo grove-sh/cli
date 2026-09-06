@@ -71,7 +71,7 @@ func TestInitWritesLoadableConfig(t *testing.T) {
 	}
 	// The URL goes in [env], not on the route: a build binds nothing, and a
 	// route's own variables apply only while that route is bound.
-	if got := cfg.Env["NEXT_PUBLIC_SITE_URL"]; got != "{routes.web.url}" {
+	if got := cfg.Env["NEXT_PUBLIC_SITE_URL"]; got != "{web.url}" {
 		t.Errorf("[env] NEXT_PUBLIC_SITE_URL = %q", got)
 	}
 	if route.Env["NEXT_PUBLIC_SITE_URL"] != "" {
@@ -158,7 +158,7 @@ func TestInitAllocatesEverySupabasePort(t *testing.T) {
 	}
 	// The database URL has to name the port grove allocated, not the one the
 	// stack's config pins.
-	if url := cfg.Env["POSTGRES_URL"]; !strings.Contains(url, "{ports.db}") {
+	if url := cfg.Env["POSTGRES_URL"]; !strings.Contains(url, "{db.port}") {
 		t.Errorf("POSTGRES_URL = %q", url)
 	}
 	// Every one of them outlives the command that starts the stack.
@@ -220,7 +220,7 @@ func TestInitPointsBucketSeedingAtTheAPIPort(t *testing.T) {
 }
 
 // A disabled api is a bare port rather than a route, and the reference has to
-// follow it there: {routes.api.port} would name a section init never wrote.
+// follow it there: {api.port} would name a section init never wrote.
 func TestInitPointsBucketSeedingAtADemotedAPI(t *testing.T) {
 	socket := startDaemon(t)
 	repo := tempRepo(t, "app1")
@@ -234,7 +234,7 @@ func TestInitPointsBucketSeedingAtADemotedAPI(t *testing.T) {
 	}
 	_, stdout, _ := exercise(t, "env", "--socket", socket)
 
-	if got := generated(t, repo); !strings.Contains(got, `"http://127.0.0.1:{ports.api}"`) {
+	if got := generated(t, repo); !strings.Contains(got, `"http://127.0.0.1:{api.port}"`) {
 		t.Errorf("the reference does not follow the demoted api:\n%s", got)
 	}
 	env := exported(stdout)
@@ -280,7 +280,7 @@ func TestInitNamesNoSupabaseURLForADisabledAPI(t *testing.T) {
 	if got := cfg.Env["NEXT_PUBLIC_SUPABASE_URL"]; got != "" {
 		t.Errorf("NEXT_PUBLIC_SUPABASE_URL = %q, but the api has no hostname", got)
 	}
-	if got := cfg.Env["NEXT_PUBLIC_SITE_URL"]; got != "{routes.web.url}" {
+	if got := cfg.Env["NEXT_PUBLIC_SITE_URL"]; got != "{web.url}" {
 		t.Errorf("the app lost its own URL with it: %q", got)
 	}
 }
@@ -444,11 +444,11 @@ func TestInitNamesTheSupabaseAPIForTheApp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("what init wrote does not load: %v\n%s", err, generated(t, repo))
 	}
-	if got := cfg.Env["NEXT_PUBLIC_SUPABASE_URL"]; got != "{routes.api.url}" {
+	if got := cfg.Env["NEXT_PUBLIC_SUPABASE_URL"]; got != "{api.url}" {
 		t.Errorf("NEXT_PUBLIC_SUPABASE_URL = %q", got)
 	}
 	// Both names come from one prefix, so they cannot drift apart.
-	if got := cfg.Env["NEXT_PUBLIC_SITE_URL"]; got != "{routes.web.url}" {
+	if got := cfg.Env["NEXT_PUBLIC_SITE_URL"]; got != "{web.url}" {
 		t.Errorf("NEXT_PUBLIC_SITE_URL = %q", got)
 	}
 }

@@ -111,8 +111,8 @@ label = ""
 env = { PORT = "{port}" }
 
 [env]
-SITE_URL = "{routes.web.url}"
-SITE_HOST = "{routes.web.host}"
+SITE_URL = "{web.url}"
+SITE_HOST = "{web.host}"
 `)
 	t.Chdir(repo)
 

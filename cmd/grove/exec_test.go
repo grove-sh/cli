@@ -74,7 +74,7 @@ detached = true
 env = { DB_PORT = "{port}" }
 
 [env]
-DATABASE_URL = "postgres://127.0.0.1:{ports.db}/app"
+DATABASE_URL = "postgres://127.0.0.1:{db.port}/app"
 `
 
 // writeConfig replaces the repository's grove.toml, for a test that cares
@@ -492,7 +492,7 @@ func TestUnderCIWithNoDaemonTheEnvironmentIsUntouched(t *testing.T) {
 		t.Errorf("POSTGRES_URL = %q, want the value CI set", lines[0])
 	}
 	// Nothing at all from grove, rather than half an answer: an injected
-	// {ports.db} would name a port that does not exist on a build server.
+	// {db.port} would name a port that does not exist on a build server.
 	if lines[1] != "unset" {
 		t.Errorf("DB_PORT = %q, want nothing", lines[1])
 	}
