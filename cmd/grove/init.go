@@ -162,13 +162,7 @@ func scaffold(root, project string) (string, []string) {
 		b.WriteString("\n[env]\n")
 	}
 	if stack {
-		b.WriteString(`# The supabase CLI reads these on its own. They are its automatic bindings:
-# SUPABASE_ plus the config key path. A key renamed in a later CLI is a one
-# line change here.
-SUPABASE_PROJECT_ID = "{context.slug}"
-
-# The stack brings its own postgres, on the port grove allocated for it. The
-# password is supabase's local default rather than a secret.
+		b.WriteString(`SUPABASE_PROJECT_ID = "{context.slug}"
 POSTGRES_URL = "postgres://postgres:postgres@localhost:{db.port}/postgres"
 `)
 		notes = append(notes, "a supabase stack in "+stackDir+", whose ports grove will allocate")
@@ -199,12 +193,10 @@ POSTGRES_URL = "postgres://postgres:postgres@localhost:{db.port}/postgres"
 		switch {
 		case found.siteURLVar() == "":
 			b.WriteString("env.PORT = \"{port}\"\n")
-			fmt.Fprintf(&b, "# Add the variable this app reads its own URL from, if it has one:\n")
-			fmt.Fprintf(&b, "# %s = \"{%s.url}\" under [env] above\n", "PUBLIC_SITE_URL", found.name)
+			fmt.Fprintf(&b, "# This app's own URL, if it reads one: PUBLIC_SITE_URL = \"{%s.url}\" under [env]\n", found.name)
 		case shared[found.siteURLVar()]:
 			// Two apps naming the same variable cannot both put it in [env].
-			fmt.Fprintf(&b, "# %s is shared with another app, so it stays here rather than\n", found.siteURLVar())
-			fmt.Fprintf(&b, "# in [env], and only applies while this route is the one bound.\n")
+			fmt.Fprintf(&b, "# %s is shared with another app, so it stays here: it applies only while this route is bound.\n", found.siteURLVar())
 			b.WriteString("env.PORT = \"{port}\"\n")
 			fmt.Fprintf(&b, "env.%s = \"{url}\"\n", found.siteURLVar())
 		default:
@@ -214,8 +206,7 @@ POSTGRES_URL = "postgres://postgres:postgres@localhost:{db.port}/postgres"
 	}
 
 	for _, dir := range unsure {
-		fmt.Fprintf(&b, "\n# %s has a dev script, but nothing grove recognises as a server.\n", dir)
-		fmt.Fprintf(&b, "# Give it a route if it listens on a port:\n")
+		fmt.Fprintf(&b, "\n# %s has a dev script, but nothing grove recognises as a server. If it listens:\n", dir)
 		fmt.Fprintf(&b, "# [routes.%s]\n# dir = %q\n# env.PORT = \"{port}\"\n", filepath.Base(dir), dir)
 		notes = append(notes, dir+", which grove could not identify, left commented out")
 	}
@@ -386,8 +377,7 @@ func supabaseServices(flags supabaseFlags) (services []supabaseService, demoted 
 		{
 			name:   "mail",
 			routed: true,
-			note: `# The key was renamed at CLI 2.108, and each version binds only the one it
-# knows, so both spellings are harmless and one of them lands.`,
+			note:   `# Renamed at CLI 2.108. Each version binds only the one it knows.`,
 			env: []string{
 				`SUPABASE_INBUCKET_PORT = "{port}"`,
 				`SUPABASE_LOCAL_SMTP_PORT = "{port}"`,
@@ -474,33 +464,16 @@ func supabaseAPIURL(flags supabaseFlags) string {
 	if !flags.buckets || flags.apiTLS {
 		return ""
 	}
-	return fmt.Sprintf(`
-# Bucket seeding is the one thing the CLI will not read from here. It runs at
-# the end of db reset and calls the storage API on the port written in the
-# stack's own config.toml rather than this one, so it dials 54321 and fails:
-# https://github.com/supabase/cli/issues/6452. Until that is fixed, routing the
-# URL back through env() is what gets past it. In config.toml:
-#
-#   [api]
-#   external_url = "env(SUPABASE_API_EXTERNAL_URL)"
-#
-# That literal is what anyone without grove gets, since supabase keeps its own
-# .env out of the repo, so give the command that runs the CLI a default:
-# SUPABASE_API_EXTERNAL_URL=http://127.0.0.1:54321
+	return `# Read by bucket seeding only through env() in config.toml: supabase/cli#6452
 SUPABASE_API_EXTERNAL_URL = "http://127.0.0.1:{api.port}"
-
-`)
+`
 }
 
 func supabaseEntries(services []supabaseService) string {
 	b := &strings.Builder{}
 	b.WriteString(`
-# Ports for the supabase stack. Grove allocates all of them, because supabase
-# publishes some regardless of the enabled flags in its config, and an unused
-# allocation costs nothing next to a collision between two worktrees. A
-# service the config turns off is listed under [ports], since a hostname
-# nothing answers on is worth less than the line it takes up. The variable
-# names are the supabase CLI's own automatic bindings.
+# Every port the stack can publish, including services its config disables:
+# supabase publishes some of those anyway, and a spare port beats a collision.
 `)
 	for _, service := range services {
 		section := "ports"
