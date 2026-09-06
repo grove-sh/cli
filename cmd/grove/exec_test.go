@@ -331,7 +331,7 @@ func TestSyncRestoresDetachedEntries(t *testing.T) {
 	socket := startDaemon(t)
 	t.Chdir(tempRepo(t, "app1"))
 
-	code, stdout, stderr := exercise(t, "sync", "--socket", socket)
+	code, stdout, stderr := exercise(t, "hold", "--socket", socket)
 	if code != 0 {
 		t.Fatalf("exit = %d: %s", code, stderr)
 	}
@@ -360,7 +360,7 @@ func TestSyncSaysSoWhenThereIsNothingToDo(t *testing.T) {
 	}
 	t.Chdir(repo)
 
-	code, stdout, _ := exercise(t, "sync", "--socket", socket)
+	code, stdout, _ := exercise(t, "hold", "--socket", socket)
 
 	if code != 0 {
 		t.Errorf("exit = %d, want 0", code)

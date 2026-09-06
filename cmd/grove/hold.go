@@ -16,11 +16,11 @@ import (
 	"github.com/grove-sh/cli/internal/daemon"
 )
 
-func newSyncCommand() *cobra.Command {
+func newHoldCommand() *cobra.Command {
 	var socket string
 
 	cmd := &cobra.Command{
-		Use:   "sync",
+		Use:   "hold",
 		Short: "Re-register this context's detached ports and hostnames",
 		Long: `Re-register this context's detached ports and hostnames.
 

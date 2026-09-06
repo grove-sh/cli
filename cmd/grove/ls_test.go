@@ -66,7 +66,7 @@ func TestLsTellsAClaimedRouteFromAnIdleOne(t *testing.T) {
 	repo := tempRepo(t, "app1")
 	writeConfig(t, repo, "[routes.web]\n\n[routes.admin]\ndetached = true\n")
 	t.Chdir(repo)
-	if code, _, stderr := exercise(t, "sync", "--socket", socket); code != 0 {
+	if code, _, stderr := exercise(t, "hold", "--socket", socket); code != 0 {
 		t.Fatal(stderr)
 	}
 
@@ -105,7 +105,7 @@ func TestLsShowsAPortItIsHolding(t *testing.T) {
 	socket := startDaemon(t)
 	repo := tempRepo(t, "app1")
 	t.Chdir(repo)
-	if code, _, stderr := exercise(t, "sync", "--socket", socket); code != 0 {
+	if code, _, stderr := exercise(t, "hold", "--socket", socket); code != 0 {
 		t.Fatal(stderr)
 	}
 
@@ -153,7 +153,7 @@ func TestLsAllReportsEveryContext(t *testing.T) {
 	socket := startDaemon(t)
 	repo := tempRepo(t, "app1")
 	t.Chdir(repo)
-	exercise(t, "sync", "--socket", socket)
+	exercise(t, "hold", "--socket", socket)
 
 	_, stdout, _ := exercise(t, "ls", "--socket", socket, "--all")
 
@@ -202,7 +202,7 @@ func TestLsTellsAClaimedPortFromARunningOne(t *testing.T) {
 	socket := startDaemon(t)
 	repo := tempRepo(t, "app1")
 	t.Chdir(repo)
-	if code, _, stderr := exercise(t, "sync", "--socket", socket); code != 0 {
+	if code, _, stderr := exercise(t, "hold", "--socket", socket); code != 0 {
 		t.Fatal(stderr)
 	}
 

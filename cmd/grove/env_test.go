@@ -10,7 +10,7 @@ import (
 func TestEnvReportsWhatIsLeased(t *testing.T) {
 	socket := startDaemon(t)
 	t.Chdir(tempRepo(t, "app1"))
-	if code, _, stderr := exercise(t, "sync", "--socket", socket); code != 0 {
+	if code, _, stderr := exercise(t, "hold", "--socket", socket); code != 0 {
 		t.Fatal(stderr)
 	}
 
@@ -173,7 +173,7 @@ func TestEnvIsQuietAboutItsOwnVariablesWhenBound(t *testing.T) {
 	repo := tempRepo(t, "app1")
 	writeConfig(t, repo, "[routes.web]\ndetached = true\nenv.PORT = \"{port}\"\n")
 	t.Chdir(repo)
-	if code, _, stderr := exercise(t, "sync", "--socket", socket); code != 0 {
+	if code, _, stderr := exercise(t, "hold", "--socket", socket); code != 0 {
 		t.Fatal(stderr)
 	}
 

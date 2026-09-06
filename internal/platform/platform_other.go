@@ -7,7 +7,7 @@ import "runtime"
 func PrivilegedPorts() PortAccess {
 	return PortAccess{
 		Detail: "grove does not know how " + runtime.GOOS + " grants low ports",
-		Advice: "Run the daemon on a high port: grove restart --listen 127.0.0.1:8443",
+		Advice: "Run the daemon on a high port: grove daemon restart --listen 127.0.0.1:8443",
 	}
 }
 

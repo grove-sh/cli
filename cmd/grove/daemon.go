@@ -129,12 +129,17 @@ func newDaemonCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "daemon",
-		Short: "Run the grove proxy and lease registry in the foreground",
-		Long: `Run the grove daemon in the foreground.
+		Short: "Start, stop, or inspect the machine's grove daemon",
+		Long: `Start, stop, or inspect the machine's grove daemon.
 
-The daemon terminates TLS for every context's hostname, routes each one to the
-port it leased, and holds the leases. A lease lasts exactly as long as the
-'grove exec' connection that asked for it.`,
+One daemon serves every context on the machine. It terminates TLS for each
+context's hostname, routes it to the port that context leased, and holds the
+leases. A lease lasts exactly as long as the 'grove exec' connection that asked
+for it, so stopping the daemon drops all of them at once.
+
+With no subcommand this runs the daemon in the foreground, which is what the
+service manager invokes. To start one for yourself, use 'grove daemon start',
+which puts it in the background where the service manager keeps it.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			server, err := daemon.New(daemon.Config{Domain: opts.domain, CADir: opts.caDir, Version: resolveVersion()})
@@ -175,7 +180,98 @@ port it leased, and holds the leases. A lease lasts exactly as long as the
 	}
 
 	opts.bind(cmd)
+	cmd.AddCommand(newStartCommand(), newStopCommand(), newRestartCommand(), newStatusCommand())
 	return cmd
+}
+
+// newStartCommand brings the daemon up the way this machine keeps it, which is
+// through the service manager when one owns it.
+func newStartCommand() *cobra.Command {
+	var opts daemonOptions
+
+	cmd := &cobra.Command{
+		Use:   "start",
+		Short: "Start the daemon in the background, if it is not already running",
+		Long: `Start the daemon in the background, if it is not already running.
+
+Running commands through grove exec starts one on its own, so this is for
+bringing the proxy up without running anything: a hostname you have bookmarked
+answers again without touching the project it belongs to.`,
+		Args: usageArgs(cobra.NoArgs),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if client, err := daemon.Dial(opts.socket); err == nil {
+				defer client.Close()
+				status, err := client.Status()
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "already running on %s, pid %d\n", status.Listen, status.PID)
+				return nil
+			}
+			if err := ensureDaemon(opts.socket); err != nil {
+				return err
+			}
+			return reportStatus(cmd, opts.socket)
+		},
+	}
+
+	opts.bind(cmd)
+	return cmd
+}
+
+// newStatusCommand answers one question, where doctor answers six.
+func newStatusCommand() *cobra.Command {
+	var socket string
+
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Report whether the daemon is running, and what it is holding",
+		Long: `Report whether the daemon is running, and what it is holding.
+
+Exits non-zero when nothing answers, so a script can ask without parsing.`,
+		Args: usageArgs(cobra.NoArgs),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			client, err := daemon.Dial(socket)
+			if err != nil {
+				var down *daemon.NotRunningError
+				if errors.As(err, &down) {
+					return fmt.Errorf("no daemon is running at %s", socket)
+				}
+				return err
+			}
+			defer client.Close()
+
+			status, err := client.Status()
+			if err != nil {
+				return err
+			}
+			build := status.Grove
+			if build == "" {
+				build = "unknown"
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "running on %s, pid %d, %s held, built from %s\n",
+				status.Listen, status.PID, count(status.Leases, "lease"), build)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&socket, "socket", daemon.DefaultSocket(), "control socket path")
+	return cmd
+}
+
+func reportStatus(cmd *cobra.Command, socket string) error {
+	client, err := daemon.Dial(socket)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	status, err := client.Status()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "grove daemon on %s, pid %d\n", status.Listen, status.PID)
+	return nil
 }
 
 func newStopCommand() *cobra.Command {
@@ -183,7 +279,7 @@ func newStopCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "stop",
-		Short: "Stop the running daemon",
+		Short: "Stop the daemon, and every lease on the machine with it",
 		Long: `Stop the running daemon.
 
 Every lease goes with it, detached ones included, since nothing about them
@@ -201,11 +297,15 @@ survives the process. Stopping a daemon that is not running is not an error.`,
 			}
 			defer client.Close()
 
+			// Read the table before ending it, so the report can say what
+			// stopping cost. This is a machine wide act with a small name. A
+			// connection carries one request, so the reading is its own.
+			held := whatItHolds(socket)
 			if err := client.Stop(); err != nil {
 				return err
 			}
 			waitForSocketGone(socket, 5*time.Second)
-			fmt.Fprintln(cmd.OutOrStdout(), "stopped")
+			fmt.Fprintln(cmd.OutOrStdout(), "stopped"+summarize(held))
 			return nil
 		},
 	}
@@ -256,6 +356,44 @@ func serviceOwnsDaemon(opts daemonOptions) bool {
 	return state.Supported && state.Installed
 }
 
+func count(n int, word string) string {
+	if n == 1 {
+		return "1 " + word
+	}
+	return fmt.Sprintf("%d %ss", n, word)
+}
+
+// whatItHolds reads the lease table on a connection of its own, since the one
+// about to carry the stop has room for exactly one request.
+func whatItHolds(socket string) []daemon.Live {
+	client, err := daemon.Dial(socket)
+	if err != nil {
+		return nil
+	}
+	defer client.Close()
+
+	held, err := client.List()
+	if err != nil {
+		return nil
+	}
+	return held
+}
+
+// summarize says what a stop just dropped. Nothing about a lease survives the
+// process, so a running stack keeps its ports and loses its hostname until
+// something holds it again.
+func summarize(held []daemon.Live) string {
+	if len(held) == 0 {
+		return ""
+	}
+	contexts := map[string]bool{}
+	for _, lease := range held {
+		contexts[lease.Slug] = true
+	}
+	return fmt.Sprintf("; %s across %s released, and anything still running is unrouted until it holds again",
+		count(len(held), "lease"), count(len(contexts), "context"))
+}
+
 func newRestartCommand() *cobra.Command {
 	var opts daemonOptions
 
@@ -287,7 +425,7 @@ directory.`,
 
 			// A fresh daemon knows nothing. Restore this context at least,
 			// since restarting from inside the project you are working on is
-			// the usual case. Other contexts need their own grove sync.
+			// the usual case. Other contexts need their own grove hold.
 			if err := syncContext(cmd.OutOrStdout(), opts.socket, false); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "grove: could not restore this context: %v\n", err)
 			}

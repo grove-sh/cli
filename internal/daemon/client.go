@@ -22,7 +22,7 @@ type NotRunningError struct {
 }
 
 func (e *NotRunningError) Error() string {
-	return fmt.Sprintf("no grove daemon at %s; start one with 'grove restart'", e.Socket)
+	return fmt.Sprintf("no grove daemon at %s; start one with 'grove daemon start'", e.Socket)
 }
 
 func (e *NotRunningError) Unwrap() error { return e.Err }
@@ -115,5 +115,5 @@ type VersionError struct {
 }
 
 func (e *VersionError) Error() string {
-	return fmt.Sprintf("the running daemon speaks control protocol v%d and this grove speaks v%d; restart it with 'grove restart', then 'grove sync' in each project, since a restart drops every detached port", e.Daemon, e.CLI)
+	return fmt.Sprintf("the running daemon speaks control protocol v%d and this grove speaks v%d; restart it with 'grove daemon restart', then 'grove hold' in each project, since a restart drops every detached port", e.Daemon, e.CLI)
 }

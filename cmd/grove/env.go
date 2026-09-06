@@ -24,7 +24,7 @@ func newEnvCommand() *cobra.Command {
 
 Ports come from the leases that exist right now, so this reports rather than
 allocates: a variable naming a port nobody holds is left out, and named on
-stderr. Run the command under grove exec, or grove sync, to bring those into
+stderr. Run the command under grove exec, or grove hold, to bring those into
 being.`,
 		Example: "  eval \"$(grove env)\"\n  grove env --format json",
 		Args:    usageArgs(cobra.NoArgs),

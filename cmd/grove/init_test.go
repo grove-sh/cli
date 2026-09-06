@@ -208,7 +208,7 @@ func TestInitPointsBucketSeedingAtTheAPIPort(t *testing.T) {
 	t.Chdir(repo)
 
 	exercise(t, "init")
-	if code, _, stderr := exercise(t, "sync", "--socket", socket); code != 0 {
+	if code, _, stderr := exercise(t, "hold", "--socket", socket); code != 0 {
 		t.Fatal(stderr)
 	}
 	_, stdout, _ := exercise(t, "env", "--socket", socket)
@@ -229,7 +229,7 @@ func TestInitPointsBucketSeedingAtADemotedAPI(t *testing.T) {
 	t.Chdir(repo)
 
 	exercise(t, "init")
-	if code, _, stderr := exercise(t, "sync", "--socket", socket); code != 0 {
+	if code, _, stderr := exercise(t, "hold", "--socket", socket); code != 0 {
 		t.Fatal(stderr)
 	}
 	_, stdout, _ := exercise(t, "env", "--socket", socket)
