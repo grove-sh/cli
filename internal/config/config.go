@@ -62,10 +62,16 @@ type Entry struct {
 
 func (e *Entry) Ref() string { return string(e.Kind) + "s." + e.Name }
 
-// Schema is the shape this grove understands. A file may declare its own, and
-// one from the future is worth saying so about: unknown keys are an error, so
-// without this a newer file reads as a pile of typos rather than as a newer
-// file.
+// Schema is the shape this grove understands.
+//
+// Nothing writes it. A file that declares nothing is this shape, which is every
+// file that exists, and the key is worth spending only when a shape actually
+// breaks: then the file that needs a newer grove says so, and every grove from
+// this one onward knows how to read that.
+//
+// It is here early because it cannot arrive late. Unknown keys are an error, so
+// a grove that predates the key chokes on it, and the only way to have the
+// check when it is needed is to ship it before it is.
 const Schema = 1
 
 type file struct {
