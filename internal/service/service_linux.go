@@ -94,6 +94,7 @@ func Status() State {
 	state.Enabled = systemctl("is-enabled", "--quiet", FileName) == nil
 	state.Active = systemctl("is-active", "--quiet", FileName) == nil
 	state.Lingering = Lingering()
+	state.LingerApplies = true
 	return state
 }
 

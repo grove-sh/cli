@@ -93,44 +93,48 @@ jobs:
       # No trust store and no agent: this is about the port, and the keychain
       # and launchd are their own questions.
       - name: Install, which stages the pf files and asks for one sudo
-        run: ./grove install --trust=false --service=false
+        run: ./grove install --trust=false --service=false | tee install.txt
 
+      # Running what it printed, rather than paths this file guessed at. The
+      # instructions are the thing being tested: they are what a person will
+      # paste, and a job that reconstructs them can pass while they are wrong.
       - name: Take the privileged step it asked for
         run: |
           set -euo pipefail
-          sudo cp "$GROVE_DATA_DIR/pf/anchor" /etc/pf.anchors/grove
-          sudo cp "$GROVE_DATA_DIR/pf/pf.conf" /etc/pf.conf
-          sudo cp "$GROVE_DATA_DIR/pf/sh.grove.pf.plist" /Library/LaunchDaemons/sh.grove.pf.plist
-          sudo launchctl bootstrap system /Library/LaunchDaemons/sh.grove.pf.plist
+          grep -E '^[[:space:]]+sudo ' install.txt | sed 's/^[[:space:]]*//' > steps.sh
+          echo "--- what install told me to run ---"
+          cat steps.sh
+          test -s steps.sh
+          sh -e steps.sh
           sudo pfctl -a grove -s nat
 
-      - name: Grove reports it can serve 443
+      - name: Grove now reports it can serve 443
         run: |
           set -euo pipefail
-          ./grove install --trust=false --service=false | tee /tmp/install.txt
-          grep -q "pf sends 443 to" /tmp/install.txt
+          ./grove install --trust=false --service=false | tee after.txt
+          grep -q "pf sends 443 to" after.txt
 
       - name: The daemon serves, and 443 arrives at it
         run: |
           set -euo pipefail
           ./grove restart
-          ./grove doctor || true
-          # Its own certificate, so this cannot pass because something else
-          # answered. --resolve rather than DNS, since the point is the port.
+          # Grove's own certificate, so this cannot pass because something else
+          # answered the port. --resolve rather than DNS, since the port is the
+          # question. An HTTP status curl dislikes still means TLS completed.
           curl -sS --fail-with-body --cacert "$GROVE_STATE_DIR/root.crt" \
             --resolve "ci.grov.site:443:127.0.0.1" \
             -o /dev/null -w 'reached grove on 443, http=%{http_code}\n' \
             "https://ci.grov.site/" || {
               status=$?
-              # 22 is an HTTP status curl dislikes, which still means TLS
-              # completed against grove's certificate on 443.
               test "$status" = "22"
               echo "reached grove on 443, and it had nothing to route"
             }
 
-      - name: What doctor makes of it
+      # For the log. It fails by design here, since --trust=false left the root
+      # untrusted, so it reports rather than gates.
+      - name: Doctor, for the record
         if: always()
-        run: ./grove doctor
+        run: ./grove doctor || true
 
   build:
     strategy:

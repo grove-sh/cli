@@ -23,9 +23,12 @@ type State struct {
 	Enabled   bool
 	Active    bool
 
-	// Lingering means the service survives logout. Only systemd distinguishes
-	// this; elsewhere it is false and uninteresting.
-	Lingering bool
+	// Lingering means the service survives logout, which only systemd offers a
+	// switch for. LingerApplies says whether the question has an answer here at
+	// all: a launchd agent belongs to a login session by design, so reporting
+	// "not lingering" there would be advising someone to fix the weather.
+	Lingering     bool
+	LingerApplies bool
 
 	// Path is where the unit or plist belongs, whether or not it is there.
 	Path string

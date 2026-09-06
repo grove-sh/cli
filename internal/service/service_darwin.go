@@ -138,9 +138,10 @@ func Status() State {
 	return state
 }
 
-// Lingering has no meaning here. A LaunchAgent belongs to a login session by
-// design, so there is nothing to enable and nothing to warn about.
-func Lingering() bool { return true }
+// Lingering has no meaning here, which State.LingerApplies is what says. A
+// LaunchAgent belongs to a login session by design: it comes back at login,
+// and it is gone at logout, and neither is something to enable.
+func Lingering() bool { return false }
 
 func EnableLingering() error { return nil }
 

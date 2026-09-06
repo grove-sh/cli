@@ -238,7 +238,7 @@ func checkService() finding {
 		f.detail = "installed but not enabled"
 		f.advice = "Run: systemctl --user enable grove"
 		return f
-	case !state.Lingering:
+	case state.LingerApplies && !state.Lingering:
 		f.state = warn
 		f.detail = "enabled, but your user manager does not linger, so it stops at logout"
 		f.advice = "Run: loginctl enable-linger $USER"
