@@ -205,13 +205,15 @@ func TestEnvNoLongerWritesDotenv(t *testing.T) {
 // A captured or piped stream gets plain text, since these commands are eval'd
 // and read by scripts, and an escape sequence there is corruption.
 func TestStylesLeaveAnythingButATerminalAlone(t *testing.T) {
-	name, detail := styles(&bytes.Buffer{})
+	paint := styles(&bytes.Buffer{})
 
-	if got := name("GROVE_PORT"); got != "GROVE_PORT" {
-		t.Errorf("name = %q, want it untouched", got)
-	}
-	if got := detail("because"); got != "because" {
-		t.Errorf("detail = %q, want it untouched", got)
+	for name, style := range map[string]func(string) string{
+		"good": paint.good, "warn": paint.warn, "bad": paint.bad,
+		"cmd": paint.cmd, "dim": paint.dim,
+	} {
+		if got := style("plain"); got != "plain" {
+			t.Errorf("%s = %q, want it untouched", name, got)
+		}
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -26,7 +27,12 @@ type finding struct {
 	name   string
 	state  string
 	detail string
+
+	// advice is what to do, when nothing else will be saying it. fix names a
+	// command instead, and several findings naming the same one are answered
+	// once: two problems with a single remedy is one thing to do, not two.
 	advice string
+	fix    string
 }
 
 const (
@@ -47,31 +53,53 @@ Each check reports on its own. A failure exits non-zero so this can gate a
 script; a warning does not.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			// The daemon check comes first so the port check can tell grove's
-			// own listener apart from something else holding the address.
-			running, daemonFinding := checkDaemon(socket)
+			// Grove's own check comes first so the port check can tell its
+			// listener apart from something else holding the address.
+			running, groveFinding := checkDaemon(socket)
 			findings := []finding{
-				checkDNS(domain),
+				groveFinding,
 				checkAuthority(stateDir),
 				checkBundle(stateDir),
-				daemonFinding,
-				checkPort443(running, stateDir, domain),
-				checkHTTPRedirect(running, domain),
+			}
+			// These say something only when they are not the ordinary case: a
+			// resolver that answers and a port grove itself holds are both
+			// already implied by the lines above.
+			// With grove down there is nothing to ask port 80, and the line
+			// above has already said why.
+			ports := []finding{checkDNS(domain), checkPort443(running, stateDir, domain)}
+			if running != nil {
+				ports = append(ports, checkHTTPRedirect(running, domain))
+			}
+			for _, f := range ports {
+				if f.state != ok {
+					findings = append(findings, f)
+				}
 			}
 
-			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			out := cmd.OutOrStdout()
+			paint := styles(out)
+			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 			failed := false
 			for _, f := range findings {
-				fmt.Fprintf(w, "%s\t%s\t%s\n", f.state, f.name, f.detail)
+				fmt.Fprintf(w, "%s\t%s\n", f.name, paint.paint(f.state)(f.detail))
 				if f.state == bad {
 					failed = true
 				}
 			}
+			// Not checks, but the two things every bug report needs and nobody
+			// can produce from memory.
+			fmt.Fprintf(w, "Version\t%s\n", paint.dim(resolveVersion()))
+			fmt.Fprintf(w, "Platform\t%s\n", paint.dim(platformName()))
 			w.Flush()
 
+			said := map[string]bool{}
 			for _, f := range findings {
-				if f.advice != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "\n%s: %s\n", f.name, f.advice)
+				switch {
+				case f.fix != "" && !said[f.fix]:
+					said[f.fix] = true
+					fmt.Fprintf(out, "\n%s\n", paint.paint(f.state)(remedy[f.fix]))
+				case f.fix == "" && f.advice != "":
+					fmt.Fprintf(out, "\n%s\n", paint.paint(f.state)(f.advice))
 				}
 			}
 			if failed {
@@ -87,9 +115,26 @@ script; a warning does not.`,
 	return cmd
 }
 
+// remedy is what to run, said once however many findings ask for it.
+var remedy = map[string]string{
+	"grove install": "Run grove install to generate the authority, trust it on this machine, and put its root where runtimes look.",
+	"grove start":   "Start it with grove start, which puts it in the background.",
+	"grove restart": "Run grove restart to pick up the build you have installed. Attached ports need their commands run again, since a restart drops them.",
+}
+
+// platformName says which build this is in the words the release uses, so a
+// bug report names something that can be looked up.
+func platformName() string {
+	arch := runtime.GOARCH
+	if arch == "amd64" {
+		arch = "x64"
+	}
+	return runtime.GOOS + "-" + arch
+}
+
 func checkDNS(domain string) finding {
 	host := "grove-doctor." + domain
-	f := finding{name: "dns"}
+	f := finding{name: "DNS"}
 
 	addrs, err := net.LookupHost(host)
 	if err != nil {
@@ -112,30 +157,36 @@ func checkDNS(domain string) finding {
 }
 
 func checkAuthority(stateDir string) finding {
-	f := finding{name: "authority"}
+	f := finding{name: "Authority"}
 
 	root, err := ca.Open(stateDir)
 	if err != nil {
 		f.state = bad
 		f.detail = err.Error()
 		if errors.Is(err, ca.ErrNoAuthority) {
-			f.advice = "Run grove install."
+			f.detail = "not installed"
+			f.fix = "grove install"
 		}
 		return f
 	}
 	if !trust.Trusted(root.Certificate()) {
 		f.state = bad
-		f.detail = "the root exists but this machine does not trust it"
-		f.advice = "Run grove install to add it to the system trust stores."
+		f.detail = "installed, but this machine does not trust it"
+		f.fix = "grove install"
 		return f
 	}
 	f.state = ok
-	f.detail = "trusted, expires " + root.Certificate().NotAfter.Format(time.DateOnly)
+	f.detail = "installed and trusted"
+	if expiry := root.Certificate().NotAfter; time.Until(expiry) < 30*24*time.Hour {
+		f.state = warn
+		f.detail = "installed and trusted, but expires " + expiry.Format(time.DateOnly)
+		f.advice = "Run grove uninstall, then grove install, to issue a new one."
+	}
 	return f
 }
 
 func checkBundle(stateDir string) finding {
-	f := finding{name: "runtime bundle"}
+	f := finding{name: "Runtime bundle"}
 
 	if trust.SystemBundle() == "" {
 		f.state = warn
@@ -155,12 +206,12 @@ func checkBundle(stateDir string) finding {
 	case !merged && !trust.SystemBundleTrusts(root.Certificate()):
 		f.state = warn
 		f.detail = bundle + " does not carry grove's root"
-		f.advice = "Run grove install, which adds it to the OS store or merges a bundle, whichever this system needs."
+		f.fix = "grove install"
 		return f
 	case merged && trust.BundleStale(stateDir):
 		f.state = warn
 		f.detail = bundle + " is older than the system roots it was merged from"
-		f.advice = "Run grove install to rebuild it."
+		f.fix = "grove install"
 		return f
 	case merged:
 		f.state = ok
@@ -176,13 +227,13 @@ func checkBundle(stateDir string) finding {
 // checkDaemon returns the daemon's own account of itself, or nil when nothing
 // answers.
 func checkDaemon(socket string) (*daemon.Status, finding) {
-	f := finding{name: "grove"}
+	f := finding{name: "Grove"}
 
 	client, err := daemon.Dial(socket)
 	if err != nil {
 		f.state = warn
-		f.detail = "not running at " + socket
-		f.advice = "Start one with grove start, which puts it in the background."
+		f.detail = "not running"
+		f.fix = "grove start"
 		return nil, f
 	}
 	defer client.Close()
@@ -194,11 +245,11 @@ func checkDaemon(socket string) (*daemon.Status, finding) {
 		return nil, f
 	}
 	f.state = ok
-	f.detail = fmt.Sprintf("on %s, pid %d, %d lease(s)", status.Listen, status.PID, status.Leases)
+	f.detail = "running"
 	if stale := staleDaemon(status.Grove, resolveVersion()); stale != "" {
 		f.state = warn
 		f.detail += ", " + stale
-		f.advice = "Run grove restart to pick up the build you have installed. Attached ports need their commands run again, since a restart drops them."
+		f.fix = "grove restart"
 	}
 	return &status, f
 }
@@ -219,7 +270,7 @@ func staleDaemon(daemonBuild, cliBuild string) string {
 }
 
 func checkPort443(running *daemon.Status, stateDir, domain string) finding {
-	f := finding{name: "port 443"}
+	f := finding{name: "Port 443"}
 
 	const address = "127.0.0.1:443"
 	if running != nil && running.Listen == address {
@@ -258,16 +309,11 @@ func checkPort443(running *daemon.Status, stateDir, domain string) finding {
 
 // whoHolds443 asks docker, since ss cannot name a process owned by root and a
 // container publishing the port is the usual culprit.// checkHTTPRedirect reports whether plain http reaches grove, which it only
-// does if grove could bind port 80. That is allowed to fail, so the only sign
+// does if grove could bind port 80. Only asked while grove is running. That is allowed to fail, so the only sign
 // is a line in the daemon's own log, which nobody reads. Hence this.
 func checkHTTPRedirect(running *daemon.Status, domain string) finding {
-	f := finding{name: "http redirect"}
+	f := finding{name: "HTTP redirect"}
 
-	if running == nil {
-		f.state = warn
-		f.detail = "cannot tell while grove is not running"
-		return f
-	}
 	if to, answered := redirectFrom80(domain); answered {
 		f.state = ok
 		f.detail = "80 sends " + to + " to https"

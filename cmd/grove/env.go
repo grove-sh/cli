@@ -79,13 +79,13 @@ func reportSkipped(out io.Writer, skipped []config.Skipped) {
 	if len(skipped) == 0 {
 		return
 	}
-	name, detail := styles(out)
+	paint := styles(out)
 
 	waiting := map[string][]string{}
 	var refs []string
 	for _, miss := range skipped {
 		if miss.Ref == "" {
-			fmt.Fprintf(out, "grove: %s is not set, %s\n", name(miss.Name), detail(miss.Reason))
+			fmt.Fprintf(out, "grove: %s is not set, %s\n", paint.warn(miss.Name), paint.dim(miss.Reason))
 			continue
 		}
 		if _, seen := waiting[miss.Ref]; !seen {
@@ -104,11 +104,11 @@ func reportSkipped(out io.Writer, skipped []config.Skipped) {
 			width = len(ref)
 		}
 	}
-	fmt.Fprintf(out, "grove: %s\n", detail("waiting on ports nothing holds yet"))
+	fmt.Fprintf(out, "grove: %s\n", paint.dim("waiting on ports nothing holds yet"))
 	for _, ref := range refs {
 		names := waiting[ref]
 		slices.Sort(names)
-		fmt.Fprintf(out, "  %-*s  %s\n", width, detail(ref), name(strings.Join(names, ", ")))
+		fmt.Fprintf(out, "  %-*s  %s\n", width, paint.dim(ref), paint.warn(strings.Join(names, ", ")))
 	}
 }
 
