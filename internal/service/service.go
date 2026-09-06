@@ -4,8 +4,11 @@
 package service
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // State is what grove can tell about the daemon's service registration.
@@ -73,4 +76,17 @@ func write(contents string) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+// run reports what a service manager said when it refused, since "exit status
+// 1" from launchctl or systemctl is not something anyone can act on.
+func run(name string, args ...string) error {
+	output, err := exec.Command(name, args...).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if trimmed := strings.TrimSpace(string(output)); trimmed != "" {
+		return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, trimmed)
+	}
+	return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 }

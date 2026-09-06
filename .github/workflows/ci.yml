@@ -70,6 +70,68 @@ jobs:
           ln -sfn /tmp/real-tmp /tmp/linked-tmp
           TMPDIR=/tmp/linked-tmp go test -count=1 ./...
 
+  # macOS is the platform where reaching 443 is not grove's own doing, so the
+  # only honest test is to install it and ask for the port. This replaces the
+  # spike that proved pf redirects local traffic: that answered a question about
+  # macOS, this one answers a question about grove.
+  macos-443:
+    runs-on: macos-26
+    env:
+      GROVE_DATA_DIR: ${{ github.workspace }}/.grove-data
+      GROVE_STATE_DIR: ${{ github.workspace }}/.grove-state
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Build
+        run: go build -o grove ./cmd/grove
+
+      # No trust store and no agent: this is about the port, and the keychain
+      # and launchd are their own questions.
+      - name: Install, which stages the pf files and asks for one sudo
+        run: ./grove install --trust=false --service=false
+
+      - name: Take the privileged step it asked for
+        run: |
+          set -euo pipefail
+          sudo cp "$GROVE_DATA_DIR/pf/anchor" /etc/pf.anchors/grove
+          sudo cp "$GROVE_DATA_DIR/pf/pf.conf" /etc/pf.conf
+          sudo cp "$GROVE_DATA_DIR/pf/sh.grove.pf.plist" /Library/LaunchDaemons/sh.grove.pf.plist
+          sudo launchctl bootstrap system /Library/LaunchDaemons/sh.grove.pf.plist
+          sudo pfctl -a grove -s nat
+
+      - name: Grove reports it can serve 443
+        run: |
+          set -euo pipefail
+          ./grove install --trust=false --service=false | tee /tmp/install.txt
+          grep -q "pf sends 443 to" /tmp/install.txt
+
+      - name: The daemon serves, and 443 arrives at it
+        run: |
+          set -euo pipefail
+          ./grove restart
+          ./grove doctor || true
+          # Its own certificate, so this cannot pass because something else
+          # answered. --resolve rather than DNS, since the point is the port.
+          curl -sS --fail-with-body --cacert "$GROVE_STATE_DIR/root.crt" \
+            --resolve "ci.grov.site:443:127.0.0.1" \
+            -o /dev/null -w 'reached grove on 443, http=%{http_code}\n' \
+            "https://ci.grov.site/" || {
+              status=$?
+              # 22 is an HTTP status curl dislikes, which still means TLS
+              # completed against grove's certificate on 443.
+              test "$status" = "22"
+              echo "reached grove on 443, and it had nothing to route"
+            }
+
+      - name: What doctor makes of it
+        if: always()
+        run: ./grove doctor
+
   build:
     strategy:
       fail-fast: false
