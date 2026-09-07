@@ -683,7 +683,7 @@ func TestURLProblemNamesAnUntrustedRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if problem := urlProblem(dir); !strings.Contains(problem, "does not trust") {
+	if problem := urlProblem(dir); !strings.Contains(problem, "trust") {
 		t.Errorf("urlProblem = %q, which does not say the root is untrusted", problem)
 	}
 }

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -73,10 +75,23 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 		return err
 	}
 	if !running {
-		fmt.Fprintln(cmd.ErrOrStderr(), "grove: not running, so nothing here is being served")
+		fmt.Fprintln(cmd.ErrOrStderr(), "grove is not running, so nothing here is being served")
 	}
 
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	// The URL is the thing someone came to this table for, so it carries how
+	// much to believe it: green opens, yellow would open if something were
+	// listening, red will not open at all. The STATE column and the line under
+	// the table say the same in words, since piping keeps only those.
+	paint := styles(cmd.OutOrStdout())
+	problem := urlProblem(daemon.StateDir())
+
+	// Coloured after the table is laid out, not while writing it: a tabwriter
+	// measures a cell by the bytes in it, and there is no way to tell it an
+	// escape code takes no width. Padding first and painting into the result
+	// keeps the columns honest.
+	var table bytes.Buffer
+	painted := map[string]string{}
+	w := tabwriter.NewWriter(&table, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ROUTE\tURL\tPORT\tSTATE\tPID")
 	routed := false
 	for _, entry := range cfg.All() {
@@ -109,6 +124,14 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 		url := "-"
 		if entry.Kind == config.KindRoute {
 			url = "https://" + identity.ComposeLabel(context.Slug, entry.Label) + "." + defaultDomain
+			switch {
+			case problem != "":
+				painted[url] = paint.bad(url)
+			case state == "running":
+				painted[url] = paint.good(url)
+			default:
+				painted[url] = paint.warn(url)
+			}
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", entry.Name, url, port, state, holder)
 		routed = routed || entry.Kind == config.KindRoute
@@ -116,13 +139,19 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 	if err := w.Flush(); err != nil {
 		return err
 	}
+	laid := table.String()
+	for plain, colour := range painted {
+		laid = strings.Replace(laid, plain, colour, 1)
+	}
+	fmt.Fprint(cmd.OutOrStdout(), laid)
 
 	// A URL in a table reads as a promise. Saying nothing when the browser
 	// would refuse it leaves the reader to discover that themselves, and to
 	// conclude their app is broken rather than that grove is not finished.
-	if problem := urlProblem(daemon.StateDir()); routed && problem != "" {
-		fmt.Fprintf(cmd.ErrOrStderr(), "grove: those URLs will not open yet, because %s. Run %s doctor.\n",
-			problem, invocation())
+	if routed && problem != "" {
+		say := styles(cmd.ErrOrStderr())
+		fmt.Fprintln(cmd.ErrOrStderr(), say.warn(fmt.Sprintf("%s, so those URLs will not open. Run %s doctor.",
+			problem, invocation())))
 	}
 	return nil
 }

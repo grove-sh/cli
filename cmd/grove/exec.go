@@ -126,13 +126,13 @@ func announce(out io.Writer, active *config.Entry, grants map[string]daemon.Gran
 func urlProblem(stateDir string) string {
 	root, err := ca.Open(stateDir)
 	if errors.Is(err, ca.ErrNoAuthority) {
-		return "there is no certificate authority on this machine"
+		return "there is no certificate authority here"
 	}
 	if err != nil {
 		return err.Error()
 	}
 	if !trust.Trusted(root.Certificate()) {
-		return "this machine does not trust grove's root"
+		return "grove's root is not trusted here"
 	}
 	if !platform.PrivilegedPorts().Allowed {
 		return "nothing reaches port 443 here"

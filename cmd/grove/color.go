@@ -13,19 +13,30 @@ type palette struct {
 	good, warn, bad, cmd, dim func(string) string
 }
 
-func styles(w io.Writer) palette {
+func styles(w io.Writer) palette { return build(w, wrap) }
+
+func build(w io.Writer, with func(string) func(string) string) palette {
 	plain := func(s string) string { return s }
 	if !isTerminal(w) || os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
 		return palette{plain, plain, plain, plain, plain}
 	}
 	return palette{
-		good: wrap("\x1b[32m"),
-		warn: wrap("\x1b[33m"),
-		bad:  wrap("\x1b[31m"),
-		cmd:  wrap("\x1b[36m"),
-		dim:  wrap("\x1b[2m"),
+		good: with(green),
+		warn: with(yellow),
+		bad:  with(red),
+		cmd:  with(cyan),
+		dim:  with(faint),
 	}
 }
+
+const (
+	green  = "\x1b[32m"
+	yellow = "\x1b[33m"
+	red    = "\x1b[31m"
+	cyan   = "\x1b[36m"
+	faint  = "\x1b[2m"
+	reset  = "\x1b[0m"
+)
 
 // paint returns the colour a finding's state calls for.
 func (p palette) paint(state string) func(string) string {
@@ -39,7 +50,7 @@ func (p palette) paint(state string) func(string) string {
 }
 
 func wrap(code string) func(string) string {
-	return func(s string) string { return code + s + "\x1b[0m" }
+	return func(s string) string { return code + s + reset }
 }
 
 func isTerminal(w io.Writer) bool {
