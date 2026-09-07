@@ -1,0 +1,245 @@
+name: Release
+
+# Cut by pushing a tag:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# Versions are never written down in this repo. The tag is the only place a
+# release number exists, and everything downstream is stamped from it, so there
+# is no file to forget to bump.
+
+on:
+  push:
+    tags: ['v*']
+  # The manual path, for re-cutting a release whose publish failed halfway.
+  # It defaults to a dry run so a stray click cannot publish anything.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish, with or without the v
+        required: true
+        type: string
+      dry_run:
+        description: Build and rehearse, but publish nothing
+        required: false
+        type: boolean
+        default: true
+
+# Publishing to npm cannot be undone, so two runs must never race. Queue rather
+# than cancel: a half-finished release is worse than a slow one.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+
+permissions:
+  contents: read
+
+jobs:
+  # Everything else waits on this. It builds all four platforms, publishes them
+  # to a local registry, installs them, and checks that what comes out works.
+  # Finding a packaging bug here costs a rerun; finding it after npm has the
+  # version costs a version, permanently.
+  rehearse:
+    name: Rehearse the publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - run: npm/rehearse.sh
+
+  publish:
+    name: Publish
+    needs: rehearse
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # to create the GitHub release
+      id-token: write # to sign the npm packages with provenance
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      dry_run: ${{ steps.plan.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Work out what is being released
+        id: plan
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            raw="${{ inputs.version }}"
+          else
+            raw="$GITHUB_REF_NAME"
+          fi
+          version=${raw#v}
+
+          # A tag that is not a version would otherwise be discovered by npm
+          # rejecting it, after the GitHub release had already been cut.
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "'$raw' is not a version this can release" >&2
+            exit 1
+          fi
+
+          # A prerelease does not become what `npm install` gives people. npm
+          # insists on being told which tag to use for one, rather than
+          # guessing, and this is that answer.
+          case "$version" in
+            *-*) npm_tag=next; prerelease=true ;;
+            *) npm_tag=latest; prerelease=false ;;
+          esac
+
+          dry_run=false
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            dry_run=true
+          fi
+
+          {
+            echo "version=$version"
+            echo "npm_tag=$npm_tag"
+            echo "prerelease=$prerelease"
+            echo "dry_run=$dry_run"
+          } >> "$GITHUB_OUTPUT"
+          echo "releasing $version to the $npm_tag tag (dry run: $dry_run)"
+
+      - name: Build the packages
+        run: npm/stage.sh "${{ steps.plan.outputs.version }}" "$RUNNER_TEMP/packages"
+
+      # For anyone not installing through npm, and for whatever package manager
+      # comes next: brew and scoop both want a tarball and a checksum. The
+      # platform names are the ones grove doctor prints, so the archive to
+      # download is the one named after what it says you are running.
+      - name: Make the archives
+        run: |
+          set -euo pipefail
+          version=${{ steps.plan.outputs.version }}
+          mkdir -p "$RUNNER_TEMP/archives"
+          for dir in "$RUNNER_TEMP"/packages/cli-*; do
+            name=$(basename "$dir" | sed 's/^cli-//')
+            tar -czf "$RUNNER_TEMP/archives/grove_${version}_${name}.tar.gz" \
+              -C "$dir/bin" grove \
+              -C "$GITHUB_WORKSPACE" LICENSE README.md
+          done
+          cd "$RUNNER_TEMP/archives"
+          sha256sum -- *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      # Kept even for a dry run, which is most of the point of having one.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grove-${{ steps.plan.outputs.version }}
+          path: ${{ runner.temp }}/archives/
+
+      # Before npm, deliberately. A GitHub release can be deleted if what
+      # follows fails; an npm version cannot.
+      - name: Cut the GitHub release
+        if: steps.plan.outputs.dry_run == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "v${{ steps.plan.outputs.version }}" \
+            --title "v${{ steps.plan.outputs.version }}" \
+            --generate-notes \
+            ${{ steps.plan.outputs.prerelease == 'true' && '--prerelease' || '' }} \
+            "$RUNNER_TEMP"/archives/*
+
+      # Last, because this is the step that cannot be taken back. The wrapper
+      # goes after the four it depends on: its optionalDependencies are pinned
+      # exactly, so publishing it first would put a manifest on the registry
+      # naming versions that do not exist yet.
+      - name: Publish to npm
+        if: steps.plan.outputs.dry_run == 'false'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag=${{ steps.plan.outputs.npm_tag }}
+          for dir in "$RUNNER_TEMP"/packages/cli-*; do
+            (cd "$dir" && npm publish --provenance --access public --tag "$tag")
+          done
+          (cd "$RUNNER_TEMP/packages/cli" && npm publish --provenance --access public --tag "$tag")
+
+  # Installing what was actually published, on one runner per binary shipped.
+  # The rehearsal proves the packages are right; this proves the right bytes
+  # reached the registry and run on the machine they were built for.
+  verify:
+    name: Install ${{ matrix.platform }} from npm
+    needs: publish
+    if: needs.publish.outputs.dry_run == 'false'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux-x64
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+          - runner: macos-26
+            platform: darwin-arm64
+          - runner: macos-15-intel
+            platform: darwin-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install it the way a person would
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          set -euo pipefail
+          # A version is not installable the instant it is published, so this
+          # waits rather than failing the release over a few seconds of the
+          # registry catching up.
+          for attempt in $(seq 1 10); do
+            npm install -g "@grove-sh/cli@$VERSION" && break
+            echo "not there yet (attempt $attempt)"
+            sleep 15
+          done
+          npm ls -g --depth 1 "@grove-sh/cli" || true
+
+      - name: It runs, and it is the build for this machine
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          set -euo pipefail
+          reported=$(grove --version)
+          if [ "$reported" != "grove v$VERSION" ]; then
+            echo "grove reports '$reported', not 'grove v$VERSION'" >&2
+            exit 1
+          fi
+
+          # doctor names the platform it thinks it is running on, which is the
+          # one thing that says the optional dependency npm chose was the right
+          # one. It exits 1 on a machine with no CA installed, which every
+          # runner is, so the exit code is not the question here.
+          grove doctor > doctor.txt 2>&1 || true
+          cat doctor.txt
+          if ! grep -Eq "^Platform[[:space:]]+${{ matrix.platform }}$" doctor.txt; then
+            echo "this is not the ${{ matrix.platform }} build" >&2
+            exit 1
+          fi

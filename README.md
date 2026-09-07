@@ -19,7 +19,11 @@ Early development. Nothing here is stable yet.
 
 ## Setting up a machine
 
-Once per machine:
+```sh
+npm install -g @grove-sh/cli
+```
+
+Or, if you have Go: `go install github.com/grove-sh/cli/cmd/grove@latest`. Either way there is one more step, once per machine:
 
 ```sh
 grove install

@@ -255,10 +255,10 @@ func checkDaemon(socket string) (*daemon.Status, finding) {
 }
 
 // staleDaemon describes the running grove's build when it is worth mentioning,
-// which is only when it is not this one: the service runs a copy taken at
-// install time, so upgrading the package leaves the old one serving. An empty
-// version comes from a daemon built before it could report one, which says the
-// same thing more loudly.
+// which is only when it is not this one. A daemon outlives the command that
+// started it, so upgrading grove while one is running leaves the old build
+// serving until something restarts it. An empty version comes from a daemon
+// built before it could report one, which says the same thing more loudly.
 func staleDaemon(daemonBuild, cliBuild string) string {
 	switch {
 	case daemonBuild == cliBuild:

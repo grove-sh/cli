@@ -139,6 +139,27 @@ jobs:
         if: always()
         run: ./grove doctor || true
 
+  # The npm packaging is JavaScript and shell that no Go test covers, and it is
+  # otherwise only exercised while cutting a release, which is the worst moment
+  # to learn it is broken. This is the same lesson as the --service flag that
+  # sat removed in the code and still passed in a workflow for two commits.
+  packaging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - run: npm/rehearse.sh
+
   build:
     strategy:
       fail-fast: false

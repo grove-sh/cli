@@ -175,7 +175,9 @@ fi
 # Go binary detached from everything, not a child of a node that has exited.
 export GROVE_STATE_DIR="$work/state" GROVE_DATA_DIR="$work/data"
 export GROVE_SOCKET="$work/state/grove.sock"
-export GROVE_LISTEN="127.0.0.1:$(free_port)" GROVE_HTTP_LISTEN="127.0.0.1:$(free_port)"
+https_port=$(free_port)
+http_port=$(free_port)
+export GROVE_LISTEN="127.0.0.1:$https_port" GROVE_HTTP_LISTEN="127.0.0.1:$http_port"
 mkdir -p "$GROVE_STATE_DIR" "$GROVE_DATA_DIR"
 
 "$bin" install --trust=false > /dev/null 2>&1 || true
