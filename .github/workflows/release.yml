@@ -266,20 +266,31 @@ jobs:
           # it cannot fetch one is to install the wrapper, leave the binary out,
           # and exit 0. A wrapper that has propagated ahead of its platform
           # package looks exactly like a successful install until you run it.
+          #
+          # Ten minutes, because npm's mirrors disagree for far longer than
+          # seems reasonable. Publishing v0.1.0, two runners had it inside 13
+          # seconds while the other two were still waiting after five minutes.
+          # It costs nothing when the wait is short: the loop breaks on success.
           installed=false
-          for attempt in $(seq 1 20); do
-            if npm install -g "@grove-sh/cli@$VERSION" > /dev/null 2>&1 &&
-              [ "$(grove --version 2> /dev/null)" = "grove v$VERSION" ]; then
+          for attempt in $(seq 1 40); do
+            # Which of the two waits this is, said out loud. Retrying without
+            # saying why leaves a reader of the log no way to tell a registry
+            # catching up from a package that will never work.
+            if ! npm install -g "@grove-sh/cli@$VERSION" > "$RUNNER_TEMP/npm.log" 2>&1; then
+              echo "attempt $attempt: npm cannot install it yet"
+            elif [ "$(grove --version 2> /dev/null)" = "grove v$VERSION" ]; then
               installed=true
               break
+            else
+              echo "attempt $attempt: $(grove --version 2>&1 | head -1)"
             fi
-            echo "not there yet (attempt $attempt)"
             sleep 15
           done
           # Saying so here, rather than letting the next step report it as a
           # missing command and send the reader looking at PATH.
           if [ "$installed" != "true" ]; then
-            echo "@grove-sh/cli@$VERSION never became runnable. grove says:" >&2
+            echo "@grove-sh/cli@$VERSION never became runnable." >&2
+            tail -5 "$RUNNER_TEMP/npm.log" >&2
             grove --version >&2 || true
             exit 1
           fi
