@@ -1,0 +1,145 @@
+name: macOS from npm
+
+# The one thing no other job covers: grove installed the way a person installs
+# it, on the platform where serving 443 is not grove's own doing.
+#
+# ci.yml's macos-443 job proves the pf redirect works for a binary it just
+# built. This proves it for the binary npm hands out, which lives inside
+# node_modules and is re-executed from there when the daemon starts. It also
+# installs the certificate authority for real, which nothing else does: every
+# other job passes --trust=false, so the macOS keychain path has never run.
+#
+# Dispatch only. It publishes nothing and changes nothing that outlives the
+# runner, but it is slow and there is no reason to pay for it on every push.
+
+on:
+  workflow_dispatch:
+    inputs:
+      spec:
+        description: What to install, as a dist-tag or an exact version
+        required: true
+        type: string
+        default: beta
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    # A prompt nobody can answer would otherwise hang until the six hour
+    # default, and sudo asking for a password is exactly what would do it.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install it the way a person would
+        env:
+          SPEC: ${{ inputs.spec }}
+        run: |
+          set -euo pipefail
+          npm install -g "@grove-sh/cli@$SPEC"
+          grove --version
+
+          # Which build npm chose, since that is the whole point of the four
+          # platform packages and nothing outside says which one landed.
+          landed=$(find "$(npm root -g)" -type d -name 'cli-darwin-*' -exec basename {} \; | sort -u)
+          echo "installed: $landed"
+          if [ "$landed" != "cli-darwin-${{ matrix.arch }}" ]; then
+            echo "wanted cli-darwin-${{ matrix.arch }}, got '$landed'" >&2
+            exit 1
+          fi
+
+      # No --trust=false, unlike every other job. This is the run that finds out
+      # whether the keychain accepts the root, and a disposable runner is the
+      # only place worth finding out.
+      - name: Install the authority for real
+        run: |
+          set -euo pipefail
+          grove install | tee install.txt
+
+      - name: Take the privileged step it printed
+        run: |
+          set -euo pipefail
+          grep -E '^[[:space:]]+sudo ' install.txt | sed 's/^[[:space:]]*//' > steps.sh
+          echo "--- what install told me to run ---"
+          cat steps.sh
+          test -s steps.sh
+          sh -e steps.sh
+          sudo pfctl -a grove -s nat
+
+      - name: It says it can serve 443 now
+        run: |
+          set -euo pipefail
+          grove install | tee after.txt
+          grep -q "pf sends 443 to" after.txt
+
+      # doctor reads the trust store through Go's SystemCertPool, which on
+      # macOS is the keychain, so this line is the keychain's own answer.
+      - name: The machine trusts the root
+        run: |
+          set -euo pipefail
+          grove doctor > doctor.txt 2>&1 || true
+          cat doctor.txt
+          if ! grep -Eq '^Authority[[:space:]]+installed and trusted' doctor.txt; then
+            echo "the keychain did not take the root" >&2
+            exit 1
+          fi
+
+      - name: It serves 443, from the binary npm installed
+        run: |
+          set -euo pipefail
+          grove start
+          root="$HOME/Library/Application Support/grove/root.crt"
+
+          # grove's own certificate, so this cannot pass because something else
+          # answered. --resolve rather than DNS, since the port is the question.
+          # A status curl dislikes still means TLS completed.
+          curl -sS --fail-with-body --cacert "$root" \
+            --resolve "ci.grov.site:443:127.0.0.1" \
+            -o /dev/null -w 'reached grove on 443, http=%{http_code}\n' \
+            "https://ci.grov.site/" || {
+              status=$?
+              test "$status" = "22"
+              echo "reached grove on 443, and it had nothing to route"
+            }
+
+          # The daemon has to be the Go binary out of the platform package,
+          # detached from the node process that asked for it.
+          pid=$(pgrep -f 'grove daemon' | head -1 || true)
+          if [ -z "$pid" ]; then
+            echo "grove start returned, but no daemon is running" >&2
+            exit 1
+          fi
+          # ps prints the full path on macOS, where Linux would truncate it.
+          running=$(ps -o comm= -p "$pid")
+          echo "daemon pid=$pid, running $running"
+          case "$running" in
+            *node_modules*grove) echo "it is the npm binary" ;;
+            *) echo "the daemon is not the npm binary" >&2; exit 1 ;;
+          esac
+
+      # Nothing else exercises uninstall, and leaving a trusted root behind on a
+      # machine is exactly the thing it exists to undo.
+      - name: Uninstall takes the root back out
+        run: |
+          set -euo pipefail
+          grove stop || true
+          grove uninstall
+          grove doctor > after-uninstall.txt 2>&1 || true
+          cat after-uninstall.txt
+          if grep -Eq '^Authority[[:space:]]+installed and trusted' after-uninstall.txt; then
+            echo "the root is still trusted after uninstall" >&2
+            exit 1
+          fi
