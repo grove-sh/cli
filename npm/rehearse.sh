@@ -118,41 +118,49 @@ echo
 echo "what the registry serves:"
 mkdir -p "$work/tarballs"
 
-mode_of() { # tarball, path inside it
-  tar -tzvf "$1" | awk -v want="package/$2" '$NF == want { print $1 }'
+# The name npm packs to, spelled out rather than matched. A glob for the
+# wrapper's tarball also matches every platform one, since cli- is a prefix of
+# cli-darwin-arm64, and which of them a glob returns first is up to the
+# filesystem: that passed here and failed on a CI runner.
+pack() { # package name without the scope; echoes the tarball it wrote
+  (cd "$work/tarballs" && local_npm pack "@grove-sh/$1@$version" --registry "$registry" > /dev/null 2>&1)
+  echo "$work/tarballs/grove-sh-$1-$version.tgz"
 }
 
-fetch() { # package name without the scope
-  (cd "$work/tarballs" && local_npm pack "@grove-sh/$1@$version" --registry "$registry" > /dev/null 2>&1)
-  find "$work/tarballs" -name "grove-sh-$1-*.tgz" | head -1
+mode_of() { # a tar -tzvf listing, and a path inside the package
+  awk -v want="package/$2" '$NF == want { print $1 }' <<< "$1"
+}
+
+check() { # package name without the scope, and the file that must be runnable
+  local tgz listing mode
+  tgz=$(pack "$1")
+  if [ ! -f "$tgz" ]; then
+    no "$1 is not in the registry"
+    return
+  fi
+  listing=$(tar -tzvf "$tgz")
+  mode=$(mode_of "$listing" "$2")
+  case "$mode" in
+    -rwx*) ok "$1 ships $2 executable" ;;
+    "") no "$1 ships no $2 at all" ;;
+    *) no "$1 ships $2 as $mode, which nothing can run" ;;
+  esac
+
+  # The wrapper is a shim and four dependencies. A binary inside it would put
+  # 11MB into every install of a package meant to be a few kilobytes.
+  if [ "$1" = "cli" ]; then
+    if grep -q 'package/bin/grove$' <<< "$listing"; then
+      no "cli carries a binary of its own"
+    else
+      ok "cli carries no binary of its own"
+    fi
+  fi
 }
 
 for name in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
-  tgz=$(fetch "cli-$name")
-  if [ -z "$tgz" ]; then
-    no "cli-$name is not in the registry"
-    continue
-  fi
-  case "$(mode_of "$tgz" bin/grove)" in
-    -rwx*) ok "cli-$name ships bin/grove executable" ;;
-    "") no "cli-$name ships no bin/grove at all" ;;
-    *) no "cli-$name ships bin/grove as $(mode_of "$tgz" bin/grove), which nothing can run" ;;
-  esac
+  check "cli-$name" bin/grove
 done
-
-tgz=$(fetch cli)
-case "$(mode_of "$tgz" bin/grove.js)" in
-  -rwx*) ok "cli ships bin/grove.js executable" ;;
-  "") no "cli ships no bin/grove.js at all" ;;
-  *) no "cli ships bin/grove.js as $(mode_of "$tgz" bin/grove.js)" ;;
-esac
-# The wrapper is a shim and four dependencies. A binary inside it would mean
-# 40MB on every install of a package meant to be a few kilobytes.
-if tar -tzf "$tgz" | grep -q "package/bin/grove$"; then
-  no "cli carries a binary of its own"
-else
-  ok "cli carries no binary of its own"
-fi
+check cli bin/grove.js
 
 # ----------------------------------------------------------------- the install
 prefix="$work/global"
