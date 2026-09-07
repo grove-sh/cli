@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/grove-sh/cli/internal/redirect"
+	"github.com/grove-sh/cli/internal/shell"
 )
 
 // Only reads the machine. What the answer means lives in redirect.Access, where
@@ -62,13 +63,15 @@ func PrepareRedirect(dir string) (string, error) {
 		return "", err
 	}
 
+	// Quoted, because this is pasted into a shell and the default state
+	// directory on macOS is ~/Library/Application Support/grove.
 	return strings.Join([]string{
 		fmt.Sprintf("The daemon listens on %d, and pf can send 443 there. The three files are", redirect.Port),
 		"written; installing them is one privileged step:",
 		"",
-		"  sudo cp " + staged.Anchor + " " + redirect.AnchorPath,
-		"  sudo cp " + staged.Conf + " " + redirect.ConfPath,
-		"  sudo cp " + staged.Plist + " " + redirect.PlistPath,
+		"  sudo cp " + shell.Quote(staged.Anchor) + " " + redirect.AnchorPath,
+		"  sudo cp " + shell.Quote(staged.Conf) + " " + redirect.ConfPath,
+		"  sudo cp " + shell.Quote(staged.Plist) + " " + redirect.PlistPath,
 		"  sudo launchctl bootstrap system " + redirect.PlistPath,
 		"",
 		"That last line loads the job, which runs it, so the redirect starts",
@@ -77,7 +80,7 @@ func PrepareRedirect(dir string) (string, error) {
 		redirect.ConfPath + " is the machine's own, so grove copied yours and added two",
 		"lines rather than writing its own. Worth reading before you install it:",
 		"",
-		"  diff " + redirect.ConfPath + " " + staged.Conf,
+		"  diff " + redirect.ConfPath + " " + shell.Quote(staged.Conf),
 	}, "\n"), nil
 }
 

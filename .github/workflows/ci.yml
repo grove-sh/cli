@@ -77,7 +77,10 @@ jobs:
   macos-443:
     runs-on: macos-26
     env:
-      GROVE_STATE_DIR: ${{ github.workspace }}/.grove-state
+      # A space on purpose. macOS puts grove's state under ~/Library/Application
+      # Support, so a path without one let this job pass while the instructions
+      # install prints were being split into the wrong number of arguments.
+      GROVE_STATE_DIR: ${{ github.workspace }}/grove state
     steps:
       - uses: actions/checkout@v5
 

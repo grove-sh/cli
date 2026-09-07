@@ -12,6 +12,7 @@ import (
 
 	"github.com/grove-sh/cli/internal/config"
 	"github.com/grove-sh/cli/internal/daemon"
+	"github.com/grove-sh/cli/internal/shell"
 )
 
 func newEnvCommand() *cobra.Command {
@@ -163,7 +164,7 @@ func writeEnv(out io.Writer, format string, env map[string]string) error {
 	switch format {
 	case "shell":
 		for _, name := range names {
-			fmt.Fprintf(out, "export %s=%s\n", name, shellQuote(env[name]))
+			fmt.Fprintf(out, "export %s=%s\n", name, shell.Quote(env[name]))
 		}
 	case "json":
 		encoder := json.NewEncoder(out)
@@ -173,9 +174,4 @@ func writeEnv(out io.Writer, format string, env map[string]string) error {
 		return usageErrorf("unknown format %q; use shell or json", format)
 	}
 	return nil
-}
-
-// Single quotes take everything literally, so only a single quote needs work.
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
