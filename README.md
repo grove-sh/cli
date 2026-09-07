@@ -119,8 +119,9 @@ grove doctor                     DNS, trust, the daemon, and port 443
 grove start | stop | restart     the daemon, which is one process for the machine
 ```
 
-One daemon serves every context, so `grove stop` drops every context's leases
-rather than just this project's. It says so when it does.
+One daemon serves every context, so `grove stop` drops every context's leases rather than just this project's. It says so when it does.
+
+On macOS, `grove uninstall` asks for authorization before it will untrust the root, since removing a trust root is not something to do quietly. In a terminal with no way to show that prompt, over ssh for instance, it waits rather than failing.
 
 ## How it decides things
 
