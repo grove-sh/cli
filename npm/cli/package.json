@@ -1,0 +1,40 @@
+{
+  "name": "@grove-sh/cli",
+  "version": "0.0.0",
+  "description": "Local HTTPS hostnames, ports, and env vars, scoped per git worktree",
+  "keywords": [
+    "git-worktree",
+    "https",
+    "localhost",
+    "proxy",
+    "dev-server"
+  ],
+  "homepage": "https://github.com/grove-sh/cli#readme",
+  "bugs": {
+    "url": "https://github.com/grove-sh/cli/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/grove-sh/cli.git",
+    "directory": "npm/cli"
+  },
+  "license": "Apache-2.0",
+  "bin": {
+    "grove": "bin/grove.js"
+  },
+  "files": [
+    "bin/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "optionalDependencies": {
+    "@grove-sh/cli-darwin-arm64": "0.0.0",
+    "@grove-sh/cli-darwin-x64": "0.0.0",
+    "@grove-sh/cli-linux-arm64": "0.0.0",
+    "@grove-sh/cli-linux-x64": "0.0.0"
+  }
+}

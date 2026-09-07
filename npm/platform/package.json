@@ -1,0 +1,28 @@
+{
+  "name": "@grove-sh/cli-PLATFORM",
+  "version": "0.0.0",
+  "description": "grove binary for PLATFORM",
+  "homepage": "https://github.com/grove-sh/cli#readme",
+  "bugs": {
+    "url": "https://github.com/grove-sh/cli/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/grove-sh/cli.git",
+    "directory": "npm/platform"
+  },
+  "license": "Apache-2.0",
+  "files": [
+    "bin/"
+  ],
+  "os": [
+    "OS"
+  ],
+  "cpu": [
+    "CPU"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "preferUnplugged": true
+}
