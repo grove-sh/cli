@@ -94,10 +94,12 @@ export default defineConfig({
 `grove ls` shows what this context has and what is holding it:
 
 ```
-ROUTE   URL                        PORT   STATE    PID
-web     https://app.grov.site      20107  running  514914
-db      -                          20402  claimed  -
+ROUTE  URL                    PORT   STATE
+web    https://app.grov.site  20107  running
+db     -                      20402  claimed
 ```
+
+On a terminal a route's URL is coloured by how much to believe it: green opens, yellow would open if something were listening, and red will not open until grove is finished being set up, which the line under the table explains.
 
 `idle` means nothing holds it, `claimed` means grove handed the port out and nothing answers on it, which is what a stopped stack looks like, and `running` means something is really there.
 

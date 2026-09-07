@@ -92,12 +92,12 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 	var table bytes.Buffer
 	painted := map[string]string{}
 	w := tabwriter.NewWriter(&table, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ROUTE\tURL\tPORT\tSTATE\tPID")
+	fmt.Fprintln(w, "ROUTE\tURL\tPORT\tSTATE")
 	routed := false
 	for _, entry := range cfg.All() {
 		// Allocation is a hash and could be run ahead, but a guess printed in
 		// the same column as a real allocation reads as one.
-		port, state, holder := "-", "idle", "-"
+		port, state := "-", "idle"
 		if held, ok := live[entry.Name]; ok {
 			port = strconv.Itoa(held.Port)
 			// An attached lease is running by definition. A detached one stands
@@ -108,9 +108,6 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 				state = "running"
 			default:
 				state = "claimed"
-			}
-			if held.PID != 0 {
-				holder = strconv.Itoa(held.PID)
 			}
 		}
 
@@ -133,7 +130,7 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 				painted[url] = paint.warn(url)
 			}
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", entry.Name, url, port, state, holder)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", entry.Name, url, port, state)
 		routed = routed || entry.Kind == config.KindRoute
 	}
 	if err := w.Flush(); err != nil {
