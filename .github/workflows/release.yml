@@ -256,13 +256,26 @@ jobs:
         run: |
           set -euo pipefail
           # A version is not installable the instant it is published, so this
-          # waits rather than failing the release over a few seconds of the
-          # registry catching up.
-          for attempt in $(seq 1 10); do
-            npm install -g "@grove-sh/cli@$VERSION" && break
+          # waits rather than failing a release over the registry catching up.
+          # Minutes, not seconds: a name npm has never served before has to
+          # reach every CDN edge, and the runners do not all ask the same one.
+          # The first publish of @grove-sh/cli took over two minutes, and the
+          # two Linux runners gave up while the two macOS ones did not.
+          installed=false
+          for attempt in $(seq 1 20); do
+            if npm install -g "@grove-sh/cli@$VERSION"; then
+              installed=true
+              break
+            fi
             echo "not there yet (attempt $attempt)"
             sleep 15
           done
+          # Saying so here, rather than letting the next step report the same
+          # thing as a missing command and send the reader looking at PATH.
+          if [ "$installed" != "true" ]; then
+            echo "@grove-sh/cli@$VERSION never became installable" >&2
+            exit 1
+          fi
           npm ls -g --depth 1 "@grove-sh/cli" || true
 
       - name: It runs, and it is the build for this machine
