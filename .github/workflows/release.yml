@@ -102,11 +102,15 @@ jobs:
             exit 1
           fi
 
-          # A prerelease does not become what `npm install` gives people. npm
-          # insists on being told which dist-tag to use for one rather than
-          # guessing, and the tag already says: v0.2.0-beta.1 installs as
-          # @grove-sh/cli@beta. An identifier off this list would make a
-          # dist-tag nobody would think to ask for, so it lands on next.
+          # npm insists on being told which dist-tag a prerelease goes to
+          # rather than guessing, and the tag already says: v0.2.0-beta.1
+          # installs as @grove-sh/cli@beta. An identifier off this list would
+          # make a dist-tag nobody would think to ask for, so it lands on next.
+          #
+          # This keeps a prerelease off latest for every publish but the first.
+          # npm points latest at whatever version created the package, --tag or
+          # not, so the first release is what a bare install gets whatever it
+          # is called.
           prerelease=false
           npm_tag=latest
           case "$version" in
