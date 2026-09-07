@@ -103,11 +103,22 @@ jobs:
           fi
 
           # A prerelease does not become what `npm install` gives people. npm
-          # insists on being told which tag to use for one, rather than
-          # guessing, and this is that answer.
+          # insists on being told which dist-tag to use for one rather than
+          # guessing, and the tag already says: v0.2.0-beta.1 installs as
+          # @grove-sh/cli@beta. An identifier off this list would make a
+          # dist-tag nobody would think to ask for, so it lands on next.
+          prerelease=false
+          npm_tag=latest
           case "$version" in
-            *-*) npm_tag=next; prerelease=true ;;
-            *) npm_tag=latest; prerelease=false ;;
+            *-*)
+              prerelease=true
+              npm_tag=next
+              case "${version#*-}" in
+                alpha*) npm_tag=alpha ;;
+                beta*) npm_tag=beta ;;
+                rc*) npm_tag=rc ;;
+              esac
+              ;;
           esac
 
           dry_run=false
@@ -151,19 +162,35 @@ jobs:
           name: grove-${{ steps.plan.outputs.version }}
           path: ${{ runner.temp }}/archives/
 
-      # Before npm, deliberately. A GitHub release can be deleted if what
-      # follows fails; an npm version cannot.
+      # As a draft, so nothing is visible until npm has the version too. The
+      # tag already exists either way: it is what started this run.
+      #
+      # A release that is already there is the Releases page flow, where a
+      # person wrote the notes and publishing created the tag. Add the archives
+      # to what they wrote rather than replacing it.
       - name: Cut the GitHub release
+        id: release
         if: steps.plan.outputs.dry_run == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ steps.plan.outputs.version }}
+          PRERELEASE: ${{ steps.plan.outputs.prerelease }}
         run: |
           set -euo pipefail
-          gh release create "v${{ steps.plan.outputs.version }}" \
-            --title "v${{ steps.plan.outputs.version }}" \
-            --generate-notes \
-            ${{ steps.plan.outputs.prerelease == 'true' && '--prerelease' || '' }} \
-            "$RUNNER_TEMP"/archives/*
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "$RUNNER_TEMP"/archives/* --clobber
+            # The tag is what says this is a prerelease, so an unticked box on
+            # a -rc tag is a slip worth correcting rather than a preference.
+            if [ "$PRERELEASE" = "true" ]; then
+              gh release edit "$TAG" --prerelease
+            fi
+            echo "drafted=false" >> "$GITHUB_OUTPUT"
+          else
+            flags=(--generate-notes --draft)
+            if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+            gh release create "$TAG" --title "$TAG" "${flags[@]}" "$RUNNER_TEMP"/archives/*
+            echo "drafted=true" >> "$GITHUB_OUTPUT"
+          fi
 
       # Last, because this is the step that cannot be taken back. The wrapper
       # goes after the four it depends on: its optionalDependencies are pinned
@@ -180,6 +207,14 @@ jobs:
             (cd "$dir" && npm publish --provenance --access public --tag "$tag")
           done
           (cd "$RUNNER_TEMP/packages/cli" && npm publish --provenance --access public --tag "$tag")
+
+      # Last of all, so the release page appears only once the version it
+      # describes is installable.
+      - name: Make the release visible
+        if: steps.plan.outputs.dry_run == 'false' && steps.release.outputs.drafted == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "v${{ steps.plan.outputs.version }}" --draft=false
 
   # Installing what was actually published, on one runner per binary shipped.
   # The rehearsal proves the packages are right; this proves the right bytes
