@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/grove-sh/cli/internal/ca"
 	"github.com/grove-sh/cli/internal/daemon"
 	"github.com/grove-sh/cli/internal/platform"
 )
@@ -74,11 +75,25 @@ func connect(socket string, autostart, optional bool) (*daemon.Client, error) {
 	if !autostart {
 		return nil, err
 	}
+	// Knowable without starting anything, and worth saying in the words of
+	// someone who has never heard of grove: they ran a command in a project
+	// that happens to use it, and the daemon's own complaint about certificate
+	// authorities explains nothing to them.
+	if _, caErr := ca.Open(daemon.StateDir()); errors.Is(caErr, ca.ErrNoAuthority) {
+		return nil, errors.New(notSetUp)
+	}
 	if err := ensureDaemon(socket); err != nil {
 		return nil, err
 	}
 	return daemon.Dial(socket)
 }
+
+const notSetUp = `this project runs its commands through grove, which is not set up on this machine yet.
+
+    grove install
+
+That generates a certificate authority so grove can serve https, trusts it here, and
+prints the one privileged step your platform needs. It is asked for once per machine.`
 
 // This only decides what happens when no daemon answered. One deliberately
 // running in CI is used like any other.

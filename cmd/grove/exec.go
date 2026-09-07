@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -83,6 +84,7 @@ asks for the same tolerance anywhere.`,
 			if err != nil {
 				return err
 			}
+			announce(cmd.ErrOrStderr(), active, grants)
 			return runChild(args, env)
 		},
 	}
@@ -94,6 +96,31 @@ asks for the same tolerance anywhere.`,
 	cmd.Flags().BoolVar(&autostart, "autostart", true, "start a daemon if none is running")
 	cmd.Flags().BoolVar(&optional, "if-available", false, "run the command unchanged when grove is not running, rather than failing")
 	return cmd
+}
+
+// announce names the hostname this command just took, which is the one thing
+// nobody discovers on their own: the dev server prints the port it was handed
+// and says nothing about the URL that reaches it.
+//
+// Only for a route, since a port has no URL, and only to a terminal, so that a
+// build's output stays exactly what the build wrote.
+func announce(out io.Writer, active *config.Entry, grants map[string]daemon.Grant) {
+	if line := routeLine(active, grants); line != "" && isTerminal(out) {
+		fmt.Fprintln(out, line)
+	}
+}
+
+// routeLine is what there is to say, separately from whether to say it, so the
+// judgement is testable without a terminal.
+func routeLine(active *config.Entry, grants map[string]daemon.Grant) string {
+	if active == nil {
+		return ""
+	}
+	grant, ok := grants[active.Name]
+	if !ok || grant.URL == "" {
+		return ""
+	}
+	return fmt.Sprintf("grove: %s is at %s", active.Name, grant.URL)
 }
 
 func entriesToLease(cfg *config.Config, active *config.Entry) []daemon.Entry {

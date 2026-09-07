@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/grove-sh/cli/internal/ca"
+	"github.com/grove-sh/cli/internal/config"
 	"github.com/grove-sh/cli/internal/daemon"
 )
 
@@ -631,5 +632,34 @@ func TestExecAlwaysNamesTheContext(t *testing.T) {
 	}
 	if string(said) != "app1" {
 		t.Errorf("GROVE_CONTEXT = %q, want the context slug", said)
+	}
+}
+
+// The dev server prints the port it was handed and says nothing about the URL
+// that reaches it, so grove says that part once.
+func TestRouteLineNamesTheURL(t *testing.T) {
+	active := &config.Entry{Name: "web", Kind: config.KindRoute}
+	grants := map[string]daemon.Grant{"web": {Port: 20107, Host: "app.grov.site", URL: "https://app.grov.site"}}
+
+	if got, want := routeLine(active, grants), "grove: web is at https://app.grov.site"; got != want {
+		t.Errorf("routeLine = %q, want %q", got, want)
+	}
+}
+
+// A port has no hostname, and a command that binds nothing has nothing to name.
+// Saying so anyway would put a line in front of every build in the repository.
+func TestRouteLineStaysQuietWithoutAURL(t *testing.T) {
+	cases := map[string]struct {
+		active *config.Entry
+		grants map[string]daemon.Grant
+	}{
+		"nothing bound": {nil, map[string]daemon.Grant{"web": {URL: "https://app.grov.site"}}},
+		"a bare port":   {&config.Entry{Name: "db"}, map[string]daemon.Grant{"db": {Port: 20402}}},
+		"no grant":      {&config.Entry{Name: "web"}, map[string]daemon.Grant{}},
+	}
+	for name, c := range cases {
+		if got := routeLine(c.active, c.grants); got != "" {
+			t.Errorf("%s: routeLine = %q, want silence", name, got)
+		}
 	}
 }
