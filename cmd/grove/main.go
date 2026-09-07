@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -131,6 +132,32 @@ func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
 		}
 		return nil
 	}
+}
+
+// invocation names grove the way this caller can actually reach it. A project
+// that depends on @grove-sh/cli has no grove on PATH, so telling someone there
+// to run "grove install" is telling them to run a command they do not have.
+func invocation() string {
+	self, err := os.Executable()
+	if err != nil {
+		return "grove"
+	}
+	return invocationFrom(self)
+}
+
+func invocationFrom(self string) string {
+	if !strings.Contains(self, "node_modules") {
+		return "grove"
+	}
+	// Set by every package manager for the commands it runs, and grove is one.
+	manager, _, _ := strings.Cut(os.Getenv("npm_config_user_agent"), "/")
+	switch manager {
+	case "pnpm", "yarn":
+		return manager + " grove"
+	case "bun":
+		return "bunx grove"
+	}
+	return "npx grove"
 }
 
 // Go derives a version from VCS in a git checkout, so an unstamped build still

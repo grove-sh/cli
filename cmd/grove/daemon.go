@@ -80,7 +80,7 @@ func connect(socket string, autostart, optional bool) (*daemon.Client, error) {
 	// that happens to use it, and the daemon's own complaint about certificate
 	// authorities explains nothing to them.
 	if _, caErr := ca.Open(daemon.StateDir()); errors.Is(caErr, ca.ErrNoAuthority) {
-		return nil, errors.New(notSetUp)
+		return nil, errors.New(notSetUp())
 	}
 	if err := ensureDaemon(socket); err != nil {
 		return nil, err
@@ -88,12 +88,15 @@ func connect(socket string, autostart, optional bool) (*daemon.Client, error) {
 	return daemon.Dial(socket)
 }
 
-const notSetUp = `this project runs its commands through grove, which is not set up on this machine yet.
+func notSetUp() string {
+	return fmt.Sprintf(`this project runs its commands through grove, which is not set up on this machine yet.
 
-    grove install
+    %s install
 
 That generates a certificate authority so grove can serve https, trusts it here, and
-prints the one privileged step your platform needs. It is asked for once per machine.`
+prints the one privileged step your platform needs. It is asked for once per machine.`,
+		invocation())
+}
 
 // This only decides what happens when no daemon answered. One deliberately
 // running in CI is used like any other.

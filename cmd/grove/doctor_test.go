@@ -60,7 +60,7 @@ func TestOneRemedyIsSaidOnce(t *testing.T) {
 		t.Fatal("the fixture no longer has two findings sharing a remedy")
 	}
 	for fix := range said {
-		if remedy[fix] == "" {
+		if remedy(fix) == "" {
 			t.Errorf("no remedy is written for %q, so the advice would be blank", fix)
 		}
 	}

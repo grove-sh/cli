@@ -94,7 +94,7 @@ script; a warning does not.`,
 				switch {
 				case f.fix != "" && !said[f.fix]:
 					said[f.fix] = true
-					fmt.Fprintf(out, "\n%s\n", paint.paint(f.state)(remedy[f.fix]))
+					fmt.Fprintf(out, "\n%s\n", paint.paint(f.state)(remedy(f.fix)))
 				case f.fix == "" && f.advice != "":
 					fmt.Fprintf(out, "\n%s\n", paint.paint(f.state)(f.advice))
 				}
@@ -112,11 +112,19 @@ script; a warning does not.`,
 	return cmd
 }
 
-// Said once however many findings ask for it.
-var remedy = map[string]string{
-	"grove install": "Run grove install to generate the authority, trust it on this machine, and put its root where runtimes look.",
-	"grove start":   "Start it with grove start, which puts it in the background.",
-	"grove restart": "Run grove restart to pick up the build you have installed. Attached ports need their commands run again, since a restart drops them.",
+// Said once however many findings ask for it, and spelled the way this caller
+// can actually run it.
+func remedy(fix string) string {
+	grove := invocation()
+	switch fix {
+	case "grove install":
+		return "Run " + grove + " install to generate the authority, trust it on this machine, and put its root where runtimes look."
+	case "grove start":
+		return "Start it with " + grove + " start, which puts it in the background."
+	case "grove restart":
+		return "Run " + grove + " restart to pick up the build you have installed. Attached ports need their commands run again, since a restart drops them."
+	}
+	return ""
 }
 
 // In the words the release uses, so a bug report names something lookupable.
