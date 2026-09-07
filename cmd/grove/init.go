@@ -163,11 +163,6 @@ POSTGRES_URL = "postgres://postgres:postgres@localhost:{db.port}/postgres"
 		if len(demoted) > 0 {
 			notes = append(notes, "no hostname for "+strings.Join(demoted, ", ")+", which the stack has turned off")
 		}
-		if url := supabaseAPIURL(flags); url != "" {
-			b.WriteString(url)
-			notes = append(notes, "SUPABASE_API_EXTERNAL_URL, which needs one line in "+
-				filepath.Join(stackDir, "config.toml")+" before bucket seeding honors it")
-		}
 	}
 	for _, name := range sortedKeys(urls) {
 		if shared[name] {
@@ -378,23 +373,14 @@ func supabaseServices(flags supabaseFlags) (services []supabaseService, demoted 
 }
 
 type supabaseFlags struct {
-	off     map[string]bool
-	apiTLS  bool
-	buckets bool
+	off map[string]bool
 }
 
 // Only an explicit false turns a service off, so an unreadable config changes nothing.
 func readSupabaseFlags(path string) supabaseFlags {
 	var raw struct {
-		API struct {
-			Enabled *bool
-			TLS     struct{ Enabled *bool } `toml:"tls"`
-		} `toml:"api"`
-		Studio struct{ Enabled *bool } `toml:"studio"`
-		// Buckets are the only thing that reaches the storage API's port handling.
-		Storage struct {
-			Buckets map[string]any `toml:"buckets"`
-		} `toml:"storage"`
+		API      struct{ Enabled *bool } `toml:"api"`
+		Studio   struct{ Enabled *bool } `toml:"studio"`
 		Inbucket struct{ Enabled *bool } `toml:"inbucket"`
 		// The section was renamed along with the port key at CLI 2.108.
 		LocalSMTP struct{ Enabled *bool } `toml:"local_smtp"`
@@ -403,11 +389,7 @@ func readSupabaseFlags(path string) supabaseFlags {
 		return supabaseFlags{}
 	}
 
-	flags := supabaseFlags{
-		off:     map[string]bool{},
-		apiTLS:  raw.API.TLS.Enabled != nil && *raw.API.TLS.Enabled,
-		buckets: len(raw.Storage.Buckets) > 0,
-	}
+	flags := supabaseFlags{off: map[string]bool{}}
 	disabled := func(name string, flag *bool) {
 		if flag != nil && !*flag {
 			flags.off[name] = true
@@ -418,19 +400,6 @@ func readSupabaseFlags(path string) supabaseFlags {
 	disabled("mail", raw.Inbucket.Enabled)
 	disabled("mail", raw.LocalSMTP.Enabled)
 	return flags
-}
-
-// The CLI reads this out of config.toml rather than the environment, so it
-// takes effect only once that file routes it back through env(). Nothing is
-// written for a stack serving its API over TLS, which this would downgrade.
-func supabaseAPIURL(flags supabaseFlags) string {
-	// Only bucket seeding reads it from config.toml, so no buckets means no bug.
-	if !flags.buckets || flags.apiTLS {
-		return ""
-	}
-	return `# Read by bucket seeding only through env() in config.toml: supabase/cli#6452
-SUPABASE_API_EXTERNAL_URL = "http://127.0.0.1:{api.port}"
-`
 }
 
 func supabaseEntries(services []supabaseService) string {

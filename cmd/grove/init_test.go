@@ -197,71 +197,6 @@ func TestInitGivesNoHostnameToADisabledService(t *testing.T) {
 	}
 }
 
-// The port this names has to be the one the api actually holds, since the
-// whole point is to get bucket seeding off the 54321 the CLI would otherwise
-// dial. Resolving it is the only way to know the reference is right.
-func TestInitPointsBucketSeedingAtTheAPIPort(t *testing.T) {
-	socket := startDaemon(t)
-	repo := tempRepo(t, "app1")
-	os.Remove(filepath.Join(repo, config.FileName))
-	writeStack(t, filepath.Join(repo, "supabase"), bucketStack)
-	t.Chdir(repo)
-
-	exercise(t, "init")
-	if code, _, stderr := exercise(t, "hold", "--socket", socket); code != 0 {
-		t.Fatal(stderr)
-	}
-	_, stdout, _ := exercise(t, "env", "--socket", socket)
-
-	env := exported(stdout)
-	if want := "http://127.0.0.1:" + env["SUPABASE_API_PORT"]; env["SUPABASE_API_EXTERNAL_URL"] != want {
-		t.Errorf("SUPABASE_API_EXTERNAL_URL = %q, want %q", env["SUPABASE_API_EXTERNAL_URL"], want)
-	}
-}
-
-// A disabled api is a bare port rather than a route, and the reference has to
-// follow it there: {api.port} would name a section init never wrote.
-func TestInitPointsBucketSeedingAtADemotedAPI(t *testing.T) {
-	socket := startDaemon(t)
-	repo := tempRepo(t, "app1")
-	os.Remove(filepath.Join(repo, config.FileName))
-	writeStack(t, filepath.Join(repo, "supabase"), disabledStack)
-	t.Chdir(repo)
-
-	exercise(t, "init")
-	if code, _, stderr := exercise(t, "hold", "--socket", socket); code != 0 {
-		t.Fatal(stderr)
-	}
-	_, stdout, _ := exercise(t, "env", "--socket", socket)
-
-	if got := generated(t, repo); !strings.Contains(got, `"http://127.0.0.1:{api.port}"`) {
-		t.Errorf("the reference does not follow the demoted api:\n%s", got)
-	}
-	env := exported(stdout)
-	if want := "http://127.0.0.1:" + env["SUPABASE_API_PORT"]; env["SUPABASE_API_EXTERNAL_URL"] != want {
-		t.Errorf("SUPABASE_API_EXTERNAL_URL = %q, want %q", env["SUPABASE_API_EXTERNAL_URL"], want)
-	}
-}
-
-// The scheme follows api.tls, so hardcoding http where the stack serves https
-// would be a downgrade. Better to say nothing.
-func TestInitNamesNoAPIURLForATLSStack(t *testing.T) {
-	repo := tempRepo(t, "app1")
-	os.Remove(filepath.Join(repo, config.FileName))
-	writeStack(t, filepath.Join(repo, "supabase"), bucketStack+"\n[api.tls]\nenabled = true\n")
-	t.Chdir(repo)
-
-	exercise(t, "init")
-
-	cfg, err := config.Load(repo)
-	if err != nil {
-		t.Fatalf("what init wrote does not load: %v\n%s", err, generated(t, repo))
-	}
-	if got := cfg.Env["SUPABASE_API_EXTERNAL_URL"]; got != "" {
-		t.Errorf("SUPABASE_API_EXTERNAL_URL = %q, but the stack serves https", got)
-	}
-}
-
 // The supabase URL names the api route, so a disabled api has to leave it
 // unset: naming a route that was never written would not load.
 func TestInitNamesNoSupabaseURLForADisabledAPI(t *testing.T) {
@@ -470,37 +405,6 @@ func TestInitNamesNoSupabaseURLWithoutAStack(t *testing.T) {
 		t.Errorf("VITE_SUPABASE_URL = %q, but there is no stack", got)
 	}
 }
-
-// A stack with no buckets never calls the storage API, so the workaround would
-// be a paragraph of explanation about a problem the project cannot have.
-func TestInitNamesNoAPIURLWithoutBuckets(t *testing.T) {
-	repo := tempRepo(t, "app1")
-	os.Remove(filepath.Join(repo, config.FileName))
-	writeStack(t, filepath.Join(repo, "supabase"), "project_id = \"x\"\n")
-	t.Chdir(repo)
-
-	exercise(t, "init")
-
-	cfg, err := config.Load(repo)
-	if err != nil {
-		t.Fatalf("what init wrote does not load: %v\n%s", err, generated(t, repo))
-	}
-	if got := cfg.Env["SUPABASE_API_EXTERNAL_URL"]; got != "" {
-		t.Errorf("SUPABASE_API_EXTERNAL_URL = %q, but the stack declares no buckets", got)
-	}
-	// The rest of the stack is allocated either way.
-	if _, ok := cfg.Ports["db"]; !ok {
-		t.Error("the stack lost its ports with it")
-	}
-}
-
-// bucketStack is the smallest stack that reaches the storage API.
-const bucketStack = `
-project_id = "x"
-
-[storage.buckets.app]
-public = false
-`
 
 // disabledStack is the shape that started all this: kong publishes 54321 with
 // the api turned off, and nothing at all answers for mail.
