@@ -77,7 +77,6 @@ jobs:
   macos-443:
     runs-on: macos-26
     env:
-      GROVE_DATA_DIR: ${{ github.workspace }}/.grove-data
       GROVE_STATE_DIR: ${{ github.workspace }}/.grove-state
     steps:
       - uses: actions/checkout@v5

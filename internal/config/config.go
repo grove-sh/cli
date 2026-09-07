@@ -1,5 +1,4 @@
-// Package config reads grove.toml: the routes a project serves, the ports it
-// needs, and the environment those map onto.
+// Package config reads grove.toml.
 package config
 
 import (
@@ -31,8 +30,7 @@ const (
 )
 
 type Config struct {
-	// Dir is the directory holding grove.toml. Every relative path resolves
-	// against it, not against the caller's working directory.
+	// Every relative path resolves against this, not the caller's cwd.
 	Dir      string
 	Name     string
 	EnvFiles []string
@@ -45,16 +43,15 @@ type Entry struct {
 	Name string
 	Kind Kind
 
-	// Dir scopes an attached entry to one part of the tree, so running a dev
-	// command inside it selects this entry with no flag.
+	// Scopes an attached entry to part of the tree, so a command run inside it
+	// selects this entry with no flag.
 	Dir string
 
-	// Label is the hostname suffix. Routes only, empty means the context's own
-	// hostname with no suffix.
+	// Hostname suffix, routes only. Empty means the context's own hostname.
 	Label string
 
-	// Detached says whatever binds this port outlives the command that asked
-	// for it, as containers started by "supabase start" do.
+	// Whatever binds this port outlives the command that asked for it, as
+	// containers started by "supabase start" do.
 	Detached bool
 
 	Env map[string]string
@@ -62,16 +59,9 @@ type Entry struct {
 
 func (e *Entry) Ref() string { return string(e.Kind) + "s." + e.Name }
 
-// Schema is the shape this grove understands.
-//
-// Nothing writes it. A file that declares nothing is this shape, which is every
-// file that exists, and the key is worth spending only when a shape actually
-// breaks: then the file that needs a newer grove says so, and every grove from
-// this one onward knows how to read that.
-//
-// It is here early because it cannot arrive late. Unknown keys are an error, so
-// a grove that predates the key chokes on it, and the only way to have the
-// check when it is needed is to ship it before it is.
+// Schema exists before anything writes it, because it cannot arrive late:
+// unknown keys are an error, so a grove predating the key would choke on the
+// first file that carried one.
 const Schema = 1
 
 type file struct {
@@ -90,10 +80,9 @@ type entry struct {
 	Env      map[string]string `toml:"env"`
 }
 
-// Find walks up from dir looking for grove.toml, the way git looks for .git.
-// The path it reports is resolved, because git resolves the paths it reports
-// too, and on macOS /var is a symlink to /private/var. Resolving at both
-// boundaries is what lets a config path and a worktree path be compared.
+// Find resolves the path it reports, because git resolves the paths it reports
+// too and on macOS /var is a symlink. Resolving at both boundaries is what lets
+// a config path and a worktree path be compared.
 func Find(dir string) (string, error) {
 	abs, err := resolvePath(dir)
 	if err != nil {
@@ -112,8 +101,7 @@ func Find(dir string) (string, error) {
 	}
 }
 
-// Load reads the grove.toml covering dir, along with an uncommitted
-// grove.local.toml beside it.
+// Load also reads an uncommitted grove.local.toml beside the file it finds.
 func Load(dir string) (*Config, error) {
 	path, err := Find(dir)
 	if err != nil {
@@ -142,9 +130,8 @@ func decode(path string) (*file, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Before the unknown keys, since a file from a later grove is expected to
-	// have keys this one has never heard of, and saying which grove to run
-	// beats listing them.
+	// Before the unknown-key check: a file from a later grove is expected to
+	// carry keys this one has never heard of.
 	if decoded.Schema > Schema {
 		return nil, fmt.Errorf("%s: declares schema %d, and this grove understands %d; upgrade grove",
 			filepath.Base(path), decoded.Schema, Schema)
@@ -160,8 +147,8 @@ func decode(path string) (*file, error) {
 	return &decoded, nil
 }
 
-// merge lets the uncommitted file override whole entries and individual env
-// values, which is what machine specific differences look like in practice.
+// Whole entries and individual env values, which is what a machine-specific
+// difference looks like in practice.
 func merge(base, local *file) {
 	if local.Name != "" {
 		base.Name = local.Name
@@ -242,9 +229,8 @@ func build(dir string, f *file) (*Config, error) {
 	return cfg, validate(cfg)
 }
 
-// usableName keeps entry names out of the way of the tokens that are not
-// entries. A template says {<name>.<field>}, so an entry called context would
-// make {context.slug} mean two things.
+// A template says {<name>.<field>}, so an entry called context would make
+// {context.slug} mean two things.
 func usableName(name string) error {
 	if name == "context" {
 		return fmt.Errorf("config: %q cannot be an entry name, since {context.slug} already means something", name)
@@ -293,7 +279,7 @@ func validate(cfg *Config) error {
 	return checkTemplates(cfg)
 }
 
-// All reports every entry, routes first, each sorted by name.
+// All puts routes first, each group sorted by name.
 func (c *Config) All() []*Entry {
 	out := make([]*Entry, 0, len(c.Routes)+len(c.Ports))
 	for _, group := range []map[string]*Entry{c.Routes, c.Ports} {
@@ -309,8 +295,7 @@ func (c *Config) All() []*Entry {
 	return out
 }
 
-// Detached reports the entries that are always active, whatever the caller is
-// running: their ports belong to something that outlives a single command.
+// Detached entries are always active, whatever the caller is running.
 func (c *Config) Detached() []*Entry {
 	var out []*Entry
 	for _, entry := range c.All() {
@@ -321,9 +306,8 @@ func (c *Config) Detached() []*Entry {
 	return out
 }
 
-// Select reports the attached entry a command should bind: the one named by
-// -s, else the one whose dir contains cwd. Neither is an error; plenty of
-// commands need no port at all.
+// Select prefers -s over the entry whose dir contains cwd. Finding neither is
+// not an error: plenty of commands need no port at all.
 func (c *Config) Select(cwd, named string) (*Entry, error) {
 	if named != "" {
 		if entry, ok := c.Routes[named]; ok {
@@ -345,9 +329,8 @@ func (c *Config) Select(cwd, named string) (*Entry, error) {
 		if entry.Detached {
 			continue
 		}
-		// An entry with no dir is not scoped to part of the tree, so it stands
-		// for the whole project: a single app whose directory is the repository
-		// has nothing to name. It only ever applies where nothing scoped does.
+		// No dir means the whole project, as a single app at the repository
+		// root has. It applies only where nothing scoped does.
 		if entry.Dir == "" {
 			unscoped = append(unscoped, entry)
 			continue
@@ -369,8 +352,7 @@ func (c *Config) Select(cwd, named string) (*Entry, error) {
 	case 1:
 		return unscoped[0], nil
 	}
-	// Two entries claiming the whole project is a question grove cannot answer
-	// for itself, and picking one would be picking at random.
+	// Two entries claiming the whole project: picking one would be at random.
 	names := make([]string, 0, len(unscoped))
 	for _, entry := range unscoped {
 		names = append(names, entry.Name)
@@ -378,10 +360,9 @@ func (c *Config) Select(cwd, named string) (*Entry, error) {
 	return nil, fmt.Errorf("config: %s all have no dir, so each claims this whole project; name one with -s", strings.Join(names, ", "))
 }
 
-// resolvePath reports an absolute path with symlinks followed. EvalSymlinks
-// needs the whole path to exist, so this resolves the deepest part that does
-// and keeps the rest: half-resolving would be worse than not resolving, since
-// a resolved config directory would stop matching an unresolved one below it.
+// EvalSymlinks needs the whole path to exist, so this resolves the deepest part
+// that does and keeps the rest. Half-resolving would be worse than not
+// resolving: a resolved config dir would stop matching an unresolved one below.
 func resolvePath(dir string) (string, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {

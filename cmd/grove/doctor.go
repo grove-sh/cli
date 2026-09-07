@@ -28,9 +28,8 @@ type finding struct {
 	state  string
 	detail string
 
-	// advice is what to do, when nothing else will be saying it. fix names a
-	// command instead, and several findings naming the same one are answered
-	// once: two problems with a single remedy is one thing to do, not two.
+	// advice is said as-is; fix names a command, and several findings naming
+	// the same one are answered once rather than repeated.
 	advice string
 	fix    string
 }
@@ -61,11 +60,9 @@ script; a warning does not.`,
 				checkAuthority(stateDir),
 				checkBundle(stateDir),
 			}
-			// These say something only when they are not the ordinary case: a
-			// resolver that answers and a port grove itself holds are both
-			// already implied by the lines above.
-			// With grove down there is nothing to ask port 80, and the line
-			// above has already said why.
+			// Said only when not ordinary: a resolver that answers and a port
+			// grove holds are already implied above. With grove down there is
+			// nothing to ask port 80.
 			ports := []finding{checkDNS(domain), checkPort443(running, stateDir, domain)}
 			if running != nil {
 				ports = append(ports, checkHTTPRedirect(running, domain))
@@ -86,8 +83,8 @@ script; a warning does not.`,
 					failed = true
 				}
 			}
-			// Not checks, but the two things every bug report needs and nobody
-			// can produce from memory.
+			// Not checks: the two things every bug report needs and nobody can
+			// produce from memory.
 			fmt.Fprintf(w, "Version\t%s\n", paint.dim(resolveVersion()))
 			fmt.Fprintf(w, "Platform\t%s\n", paint.dim(platformName()))
 			w.Flush()
@@ -115,15 +112,14 @@ script; a warning does not.`,
 	return cmd
 }
 
-// remedy is what to run, said once however many findings ask for it.
+// Said once however many findings ask for it.
 var remedy = map[string]string{
 	"grove install": "Run grove install to generate the authority, trust it on this machine, and put its root where runtimes look.",
 	"grove start":   "Start it with grove start, which puts it in the background.",
 	"grove restart": "Run grove restart to pick up the build you have installed. Attached ports need their commands run again, since a restart drops them.",
 }
 
-// platformName says which build this is in the words the release uses, so a
-// bug report names something that can be looked up.
+// In the words the release uses, so a bug report names something lookupable.
 func platformName() string {
 	arch := runtime.GOARCH
 	if arch == "amd64" {
@@ -224,8 +220,6 @@ func checkBundle(stateDir string) finding {
 	return f
 }
 
-// checkDaemon returns the daemon's own account of itself, or nil when nothing
-// answers.
 func checkDaemon(socket string) (*daemon.Status, finding) {
 	f := finding{name: "Grove"}
 
@@ -254,11 +248,9 @@ func checkDaemon(socket string) (*daemon.Status, finding) {
 	return &status, f
 }
 
-// staleDaemon describes the running grove's build when it is worth mentioning,
-// which is only when it is not this one. A daemon outlives the command that
-// started it, so upgrading grove while one is running leaves the old build
-// serving until something restarts it. An empty version comes from a daemon
-// built before it could report one, which says the same thing more loudly.
+// A daemon outlives the command that started it, so upgrading grove leaves the
+// old build serving until something restarts it. An empty version comes from
+// one built before it could report a version, which says the same more loudly.
 func staleDaemon(daemonBuild, cliBuild string) string {
 	switch {
 	case daemonBuild == cliBuild:
@@ -307,10 +299,8 @@ func checkPort443(running *daemon.Status, stateDir, domain string) finding {
 	return f
 }
 
-// whoHolds443 asks docker, since ss cannot name a process owned by root and a
-// container publishing the port is the usual culprit.// checkHTTPRedirect reports whether plain http reaches grove, which it only
-// does if grove could bind port 80. Only asked while grove is running. That is allowed to fail, so the only sign
-// is a line in the daemon's own log, which nobody reads. Hence this.
+// Binding 80 is allowed to fail, so the only other sign is a line in the
+// daemon's log that nobody reads.
 func checkHTTPRedirect(running *daemon.Status, domain string) finding {
 	f := finding{name: "HTTP redirect"}
 
@@ -329,9 +319,8 @@ func checkHTTPRedirect(running *daemon.Status, domain string) finding {
 	return f
 }
 
-// redirectFrom80 asks port 80 for a hostname only grove would answer for, and
-// reports where it was sent. Something else on the port cannot pass this by
-// accident, and a grove one build behind still answers it, which is what a
+// Asking for a hostname only grove answers for means something else on the port
+// cannot pass by accident, and a grove one build behind still answers, which a
 // field in the status could not manage.
 func redirectFrom80(domain string) (string, bool) {
 	host := "doctor." + domain
@@ -386,6 +375,8 @@ func answersOn443(stateDir, domain string) bool {
 	return true
 }
 
+// Asks docker, since ss cannot name a process owned by root and a container
+// publishing the port is the usual culprit.
 func whoHolds(port int) string {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return "another process"

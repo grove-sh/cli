@@ -77,8 +77,7 @@ env = { DB_PORT = "{port}" }
 DATABASE_URL = "postgres://127.0.0.1:{db.port}/app"
 `
 
-// writeConfig replaces the repository's grove.toml, for a test that cares
-// about something the shared fixture does not cover.
+// For a test that cares about something the shared fixture does not cover.
 func writeConfig(t *testing.T, repo, body string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(repo, "grove.toml"), []byte(body), 0o644); err != nil {

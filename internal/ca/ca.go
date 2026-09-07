@@ -21,8 +21,8 @@ import (
 const (
 	rootValidity = 10 * 365 * 24 * time.Hour
 
-	// Platforms cap how long a server certificate may be valid. Renewal is free
-	// with a local CA, so stay well inside every limit.
+	// Platforms cap server certificate validity, and renewal is free with a
+	// local CA, so stay well inside every limit.
 	leafValidity = 395 * 24 * time.Hour
 )
 
@@ -31,12 +31,10 @@ type CA struct {
 	key  *ecdsa.PrivateKey
 }
 
-// ErrNoAuthority means no CA has been generated yet. Only OpenOrCreate makes
-// one, so every other caller reports this rather than quietly minting a root
-// that nothing on the machine trusts.
+// Only OpenOrCreate mints a root, so everything else reports this rather than
+// quietly making one nothing on the machine trusts.
 var ErrNoAuthority = errors.New("ca: no certificate authority yet")
 
-// Open loads an existing root.
 func Open(dir string) (*CA, error) {
 	certPEM, certErr := os.ReadFile(filepath.Join(dir, "root.crt"))
 	keyPEM, keyErr := os.ReadFile(filepath.Join(dir, "root.key"))
@@ -50,7 +48,6 @@ func Open(dir string) (*CA, error) {
 	}
 }
 
-// OpenOrCreate loads the root, generating one on first use.
 func OpenOrCreate(dir string) (*CA, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -129,8 +126,7 @@ func (c *CA) RootPEM() []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.cert.Raw})
 }
 
-// Leaf issues a server certificate. A wildcard covers one label and does not
-// cover the domain itself, so callers pass both.
+// A wildcard covers one label and not the domain itself, so callers pass both.
 func (c *CA) Leaf(names ...string) (*tls.Certificate, error) {
 	if len(names) == 0 {
 		return nil, errors.New("ca: no names for leaf")

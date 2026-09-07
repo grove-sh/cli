@@ -8,14 +8,8 @@ import (
 	"github.com/grove-sh/cli/internal/redirect"
 )
 
-// macOS has no unprivileged port floor to lower, and a LaunchAgent cannot bind
-// a low port any more than a systemd user unit can. What works is pf: the
-// daemon binds a port it is allowed to bind, and 443 is sent there. Confirmed
-// on macOS 26, 15, and 15 on Intel, hostname and all: grove-sh/cli#2.
-//
-// Reading the machine is all that happens here. What the answer means, and
-// what to say when it is no, lives in redirect.Access, where a Linux machine
-// can test it.
+// Only reads the machine. What the answer means lives in redirect.Access, where
+// a Linux machine's tests can reach it.
 func PrivilegedPorts() PortAccess {
 	state, err := inspect()
 	if err != nil {
@@ -25,9 +19,8 @@ func PrivilegedPorts() PortAccess {
 	return PortAccess{Allowed: allowed, Detail: detail, Advice: advice}
 }
 
-// inspect reports which pieces this machine has. An anchor nothing refers to
-// loads cleanly and does nothing, so the reference is as much a piece as the
-// file it names.
+// An anchor nothing refers to loads cleanly and does nothing, so the reference
+// counts as much as the file it names.
 func inspect() (redirect.State, error) {
 	conf, err := os.ReadFile(redirect.ConfPath)
 	if err != nil {
@@ -44,12 +37,8 @@ func inspect() (redirect.State, error) {
 	}, nil
 }
 
-// PrepareRedirect writes the files the privileged step installs, so that step
-// is a copy of things you can read first rather than a shell incantation.
-//
-// Grove writes them and stops there. Editing how a machine filters packets is
-// not something to do behind someone's back, and it is the same stance the
-// Linux sysctl gets.
+// Writes the files and stops there: editing how a machine filters packets is
+// not a thing to do behind someone's back, and the Linux sysctl gets the same.
 func PrepareRedirect(dir string) (string, error) {
 	state, err := inspect()
 	if err != nil {
@@ -63,8 +52,7 @@ func PrepareRedirect(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Already referenced is fine: the merge is idempotent, and the staged copy
-	// then matches what is installed.
+	// Already referenced is fine: the merge is idempotent.
 	merged, _, err := redirect.Conf(string(current))
 	if err != nil {
 		return "", err
@@ -93,13 +81,11 @@ func PrepareRedirect(dir string) (string, error) {
 	}, "\n"), nil
 }
 
-// DefaultListen is the port pf sends 443 to, since binding 443 itself is what
-// macOS will not allow. Without the redirect installed nothing reaches it,
-// which is what PrivilegedPorts reports.
+// Where pf sends 443, since macOS will not allow binding it. Nothing reaches
+// here until the redirect is installed, which PrivilegedPorts reports on.
 func DefaultListen() string { return fmt.Sprintf("127.0.0.1:%d", redirect.Port) }
 
 func WSL() bool { return false }
 
-// DefaultHTTPListen is the port pf sends 80 to, which is the same arrangement
-// 443 gets and comes with the same anchor.
+// The same arrangement for 80, out of the same anchor.
 func DefaultHTTPListen() string { return fmt.Sprintf("127.0.0.1:%d", redirect.HTTPPort) }

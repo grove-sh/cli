@@ -5,15 +5,10 @@ import (
 	"os"
 )
 
-// Colour is for a person reading a terminal, and nothing else. These commands
-// are routinely piped, eval'd, or captured by a test, and an escape sequence in
-// any of those is corruption rather than decoration, so a writer that is not a
-// terminal gets plain text. NO_COLOR turns it off even on one, as no-color.org
-// asks, and so does TERM=dumb.
-//
-// Nothing is ever said in colour alone. A line that is yellow because something
-// needs attention says so in words too, or piping the output would throw the
-// meaning away and leave only the facts.
+// These commands are routinely piped, eval'd, or captured by a test, where an
+// escape sequence is corruption rather than decoration. So nothing is ever said
+// in colour alone: a line that is yellow because it needs attention says so in
+// words too, or piping would throw the meaning away and leave only the facts.
 type palette struct {
 	good, warn, bad, cmd, dim func(string) string
 }

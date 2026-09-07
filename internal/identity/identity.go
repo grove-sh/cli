@@ -1,5 +1,4 @@
-// Package identity resolves the grove context for a directory: which project
-// it belongs to, which worktree it is, and the DNS label that names it.
+// Package identity resolves the grove context for a directory.
 package identity
 
 import (
@@ -42,9 +41,8 @@ func (c Context) Host(domain string) string {
 	return c.Slug + "." + domain
 }
 
-// WithProject renames the project, keeping whichever worktree this is. A name
-// in grove.toml wins over the directory the repository happens to sit in, but
-// not over GROVE_CONTEXT_OVERRIDE, which replaces the whole context.
+// A name in grove.toml wins over the directory the repository sits in, but not
+// over GROVE_CONTEXT_OVERRIDE, which replaces the whole context.
 func (c Context) WithProject(name string) (Context, error) {
 	if name == "" || c.Source == FromOverride {
 		return c, nil
@@ -65,10 +63,9 @@ func composeSlug(project, variant string) string {
 	return cap63(project + "-" + variant)
 }
 
-// Resolve reports the context for dir. GROVE_CONTEXT_OVERRIDE replaces it
-// outright, and is named for what it does: the plain GROVE_CONTEXT is a value
-// grove exports into every command, so an override sharing that name would
-// follow a process tree into other worktrees and quietly answer for them.
+// GROVE_CONTEXT_OVERRIDE, not GROVE_CONTEXT: the plain name is exported into
+// every command, so an override sharing it would follow a process tree into
+// other worktrees and quietly answer for them.
 func Resolve(dir string) (Context, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -122,8 +119,8 @@ func Resolve(dir string) (Context, error) {
 		Root:     repo.current,
 		MainRoot: repo.main,
 		BareRoot: repo.bare,
-		// A bare repository has no worktree of its own, so every worktree
-		// hanging off it is a linked one and carries a variant.
+		// A bare repository has no worktree of its own, so every one hanging
+		// off it is linked and carries a variant.
 		IsMain: repo.bare == "" && repo.current == repo.main,
 		Source: FromGit,
 	}
@@ -145,8 +142,8 @@ type repo struct {
 	bare    string // the bare repository, empty when it is not bare
 }
 
-// findRepo takes both paths from git so they stay comparable. Mixing in
-// os.Getwd would break on macOS, where /tmp resolves through a symlink.
+// Both paths come from git so they stay comparable: mixing in os.Getwd breaks
+// on macOS, where /tmp resolves through a symlink.
 func findRepo(dir string) (repo, error) {
 	out, err := git(dir, "rev-parse", "--path-format=absolute", "--show-toplevel")
 	if err != nil {

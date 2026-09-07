@@ -24,13 +24,12 @@ import (
 type Config struct {
 	Domain string
 
-	// CADir is the directory grove keeps its own files in: the authority, and
-	// the record of where detached ports landed.
+	// The authority, and the record of where detached ports landed.
 	CADir string
 	Range lease.PortRange
 
-	// Version is what this build calls itself, reported to clients so they can
-	// say when the running daemon is not the grove asking.
+	// Reported to clients, so they can say when the running daemon is not the
+	// grove asking.
 	Version string
 }
 
@@ -73,8 +72,8 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The record sits beside the authority, so a daemon pointed at a different
-	// directory keeps its allocations there too.
+	// Beside the authority, so a daemon pointed elsewhere keeps its allocations
+	// there too.
 	memory, err := lease.OpenMemory(filepath.Join(cfg.CADir, "ports.json"))
 	if err != nil {
 		return nil, err
@@ -97,7 +96,7 @@ func New(cfg Config) (*Server, error) {
 
 func (s *Server) RootPEM() []byte { return s.root }
 
-// Listen binds the control socket, replacing one a dead daemon left behind.
+// Listen replaces a socket a dead daemon left behind.
 func Listen(socket string) (net.Listener, error) {
 	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
 		return nil, err
@@ -122,11 +121,9 @@ func Listen(socket string) (net.Listener, error) {
 	return net.Listen("unix", socket)
 }
 
-// Serve runs the control socket and the HTTPS proxy until one of them fails.
-// Serve runs until one of its listeners fails. A nil http listener is the
-// ordinary case rather than an error: port 80 is below the floor grove asks for
-// on Linux, so most machines will not hand it over, and nothing about grove
-// stops working when they do not.
+// Serve runs until one of its listeners fails. A nil http listener is ordinary
+// rather than an error: 80 is below the floor grove asks for on Linux, and
+// nothing about grove stops working on a machine that will not hand it over.
 func (s *Server) Serve(control, https, http net.Listener) error {
 	s.mu.Lock()
 	s.control = control

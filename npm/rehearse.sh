@@ -173,12 +173,12 @@ fi
 # grove's daemon has to outlive the process that started it, and under npm that
 # process is node. It re-executes os.Executable(), so what must come back is the
 # Go binary detached from everything, not a child of a node that has exited.
-export GROVE_STATE_DIR="$work/state" GROVE_DATA_DIR="$work/data"
+export GROVE_STATE_DIR="$work/state"
 export GROVE_SOCKET="$work/state/grove.sock"
 https_port=$(free_port)
 http_port=$(free_port)
 export GROVE_LISTEN="127.0.0.1:$https_port" GROVE_HTTP_LISTEN="127.0.0.1:$http_port"
-mkdir -p "$GROVE_STATE_DIR" "$GROVE_DATA_DIR"
+mkdir -p "$GROVE_STATE_DIR"
 
 "$bin" install --trust=false > /dev/null 2>&1 || true
 started=$("$bin" start 2>&1 || true)

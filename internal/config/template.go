@@ -19,8 +19,7 @@ type Context struct {
 	Variant string
 }
 
-// A Binding is what an entry resolved to once its port was allocated. Port is
-// zero when nothing has allocated it, and Host and URL are empty for a port
+// Port is zero when nothing has allocated it. Host and URL are empty for a port
 // entry, which has no hostname.
 type Binding struct {
 	Port int
@@ -34,11 +33,9 @@ type Values struct {
 	Ports   map[string]Binding
 }
 
-// Environment resolves every template into the variables a command should run
-// with: the project's own [env] first, then the entries that are always active,
-// then whichever entry this command binds, so the most specific wins. A
-// variable that cannot be resolved is an error, since running a command with
-// half its environment is worse than not running it.
+// [env] first, then the always-active entries, then the entry this command
+// binds, so the most specific wins. A variable that cannot be resolved is an
+// error: running a command with half its environment is worse than not running.
 func (c *Config) Environment(active *Entry, values Values) (map[string]string, error) {
 	out, skipped := c.environment(active, values)
 	if len(skipped) > 0 {
@@ -47,22 +44,19 @@ func (c *Config) Environment(active *Entry, values Values) (map[string]string, e
 	return out, nil
 }
 
-// A Skipped variable is one whose template names something that does not exist
-// yet, usually a port nothing has leased.
+// Skipped names something that does not exist yet, usually an unleased port.
 type Skipped struct {
 	Name   string
 	Reason string
 
-	// Ref names the entry this was waiting on, when that is why it was
-	// skipped. Empty for anything else, since a reference to an entry that
-	// does not exist is a mistake rather than a wait.
+	// Empty unless this was waiting on an entry: a reference to one that does
+	// not exist is a mistake rather than a wait.
 	Ref string
 }
 
-// UnboundError says an entry exists and has nothing to give yet, which is a
-// state that ends the moment something holds it, rather than a mistake in the
-// file. The caller groups by Ref, since one unheld entry is usually several
-// unset variables.
+// UnboundError is a state that ends the moment something holds the entry,
+// rather than a mistake in the file. Callers group by Ref, since one unheld
+// entry is usually several unset variables.
 type UnboundError struct {
 	Ref   string
 	Field string
@@ -72,9 +66,8 @@ func (e *UnboundError) Error() string {
 	return e.Ref + " has no " + e.Field + " yet; it is only allocated while something binds it"
 }
 
-// EnvironmentSkipping resolves what it can and reports the rest. Printing an
-// environment is not running a command, so a port nobody holds should cost one
-// variable rather than the whole answer.
+// Printing an environment is not running a command, so a port nobody holds
+// costs one variable rather than the whole answer.
 func (c *Config) EnvironmentSkipping(active *Entry, values Values) (map[string]string, []Skipped) {
 	return c.environment(active, values)
 }
@@ -170,9 +163,8 @@ func lookup(path string, self *Entry, values Values) (string, error) {
 		return "", fmt.Errorf("unknown token {%s}", path)
 	}
 
-	// Anything else names an entry. Which section it lives in is not part of
-	// the reference: an entry that moves between [routes] and [ports] would
-	// otherwise take every line that mentions it along with it.
+	// Which section an entry lives in is not part of the reference, or moving
+	// one between [routes] and [ports] would break every line naming it.
 	if len(parts) != 2 {
 		return "", fmt.Errorf("unknown token {%s}; a reference is {<name>.port}, .url or .host", path)
 	}
@@ -185,9 +177,8 @@ func lookup(path string, self *Entry, values Values) (string, error) {
 	return "", fmt.Errorf("{%s} names no entry called %q", path, parts[0])
 }
 
-// field reads one value off a binding. An empty URL means two different things
-// and they need different messages: a port can never have one, while a route
-// has none until something leases it.
+// An empty URL means two things needing different messages: a port can never
+// have one, a route has none until something leases it.
 func field(binding Binding, name, ref string, routed bool) (string, error) {
 	switch name {
 	case "port":
@@ -222,10 +213,8 @@ func bindingOf(entry *Entry, values Values) Binding {
 	return values.Ports[entry.Name]
 }
 
-// checkTemplates catches what can be known without running anything: bad token
-// syntax, references to entries that do not exist, and hostname fields asked of
-// a port. A typo in a variable grove never sets is the bug this tool exists to
-// prevent, so it fails at load rather than at use.
+// A typo in a variable grove never sets is the bug this tool exists to prevent,
+// so it fails at load rather than at use.
 func checkTemplates(cfg *Config) error {
 	values := Values{Routes: map[string]Binding{}, Ports: map[string]Binding{}}
 	for name := range cfg.Routes {

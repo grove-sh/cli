@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// customVersion is never set in this repo. Downstream packagers stamp it in:
+// Never set in this repo. The release stamps it in:
 //
 //	go build -ldflags '-X main.customVersion=v0.1.0' ./cmd/grove
 var customVersion string
@@ -99,8 +99,7 @@ already reads.`,
 	return root
 }
 
-// exitError carries an exit code out to run. A nil err means the command has
-// already reported the failure, as a child process does.
+// A nil err means the command already reported the failure, as a child does.
 type exitError struct {
 	code int
 	err  error
@@ -124,8 +123,7 @@ func usageErrorf(format string, a ...any) usageError {
 	return usageError{fmt.Errorf(format, a...)}
 }
 
-// usageArgs marks a cobra argument validator's failures as usage errors, so a
-// bad invocation exits 2 rather than looking like a runtime failure.
+// So a bad invocation exits 2 rather than looking like a runtime failure.
 func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
 		if err := validate(cmd, args); err != nil {
@@ -135,9 +133,8 @@ func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
 	}
 }
 
-// resolveVersion reports the version Go recorded in the binary. The go command
-// derives it from VCS in a git checkout, so nothing stamps it in at build time.
-// "(devel)" means it had nothing to go on, as with "go run" or -buildvcs=false.
+// Go derives a version from VCS in a git checkout, so an unstamped build still
+// reports one. "(devel)" means it had nothing to go on, as under "go run".
 func resolveVersion() string {
 	if customVersion != "" {
 		return customVersion

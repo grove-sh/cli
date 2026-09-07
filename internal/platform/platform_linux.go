@@ -41,8 +41,8 @@ func PrivilegedPorts() PortAccess {
 	return PortAccess{Detail: "the unprivileged port floor is " + value + ", so 443 needs privileges grove does not have", Advice: sysctlAdvice}
 }
 
-// WSL reports whether this is a Linux kernel running under Windows, where the
-// browser, the trust store, and the hosts file all live on the other side.
+// Under Windows the browser, the trust store, and the hosts file all live on
+// the other side.
 func WSL() bool {
 	if os.Getenv("WSL_DISTRO_NAME") != "" {
 		return true
@@ -54,14 +54,12 @@ func WSL() bool {
 	return strings.Contains(strings.ToLower(string(release)), "microsoft")
 }
 
-// PrepareRedirect has nothing to stage here, since lowering the port floor is
-// a sysctl rather than a pair of files. The static advice stands.
+// Nothing to stage: lowering the floor is a sysctl, not a pair of files.
 func PrepareRedirect(string) (string, error) { return "", nil }
 
-// DefaultListen is where the daemon serves. The sysctl lowers the floor, so grove binds 443 itself.
+// The sysctl lowers the floor, so grove binds 443 itself.
 func DefaultListen() string { return "127.0.0.1:443" }
 
-// DefaultHTTPListen is where the daemon answers plain http, only ever to send
-// the browser to https. Binding it is best effort: 80 is below the floor the
-// sysctl advice lowers to 443, so this usually fails and nothing breaks.
+// Best effort: 80 is below the floor the advised sysctl lowers to 443, so this
+// usually fails and nothing breaks.
 func DefaultHTTPListen() string { return "127.0.0.1:80" }

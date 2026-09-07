@@ -58,9 +58,7 @@ variable an app reads its URL from is exactly that.`,
 	return cmd
 }
 
-// projectRoot is the worktree root, so running init from a subdirectory still
-// puts the file where every relative path in it resolves against, along with
-// the name grove derives for it.
+// The worktree root, so init from a subdirectory writes where relative paths resolve.
 func projectRoot(dir string) (root, project string) {
 	context, err := identity.Resolve(dir)
 	if err != nil || context.Root == "" {
@@ -73,8 +71,7 @@ type app struct {
 	name string
 	dir  string
 
-	// prefix is what this app's framework puts on a browser-visible variable,
-	// so the same one names both its own URL and the API's.
+	// One prefix names both this app's URL variable and the API's.
 	prefix string
 }
 
@@ -130,10 +127,8 @@ func scaffold(root, project string) (string, []string) {
 		return false
 	}
 
-	// A URL belongs in [env] rather than on its route: [env] applies to every
-	// command, while a route's own variables apply only when that route is the
-	// one being bound, and a build binds nothing. Ports stay on the route,
-	// since a port means nothing without a lease.
+	// URLs go in [env] because a route's own variables apply only while that
+	// route is bound, and a build binds nothing. Ports stay on the route.
 	urls := map[string]string{}
 	shared := map[string]bool{}
 	claim := func(name, template string) {
@@ -150,9 +145,8 @@ func scaffold(root, project string) (string, []string) {
 	}
 	for _, found := range apps {
 		claim(found.siteURLVar(), "{"+found.name+".url}")
-		// Every app in a project talks to the same stack, so they agree on
-		// this one and it does not count as a clash. A disabled api has no
-		// hostname to point at, and naming one would not load.
+		// Every app talks to the same stack, so agreeing here is not a clash.
+		// A disabled api has no hostname to point at.
 		if routed("api") {
 			claim(found.supabaseURLVar(), "{api.url}")
 		}
@@ -237,10 +231,7 @@ func sortedKeys(m map[string]string) []string {
 	return out
 }
 
-// findApps looks under apps/, which is where a monorepo puts the things that
-// get deployed, and at the root for a single app repository. Libraries under
-// packages/ are not apps: a watching type checker has a dev script too, and it
-// serves nothing.
+// packages/ is skipped: a library's dev script is a watching compiler, not a server.
 func findApps(root string) (found []app, unsure []string) {
 	entries, err := os.ReadDir(filepath.Join(root, "apps"))
 	if err == nil {
@@ -276,9 +267,7 @@ type manifest struct {
 	DevDependencies map[string]string `json:"devDependencies"`
 }
 
-// frameworks that serve HTTP, and the prefix each puts on a variable it will
-// expose to the browser. Guessing this is why init tells you to read what it
-// wrote.
+// HTTP-serving frameworks, and the prefix each puts on a browser-visible variable.
 var frameworks = map[string]string{
 	"next":           "NEXT_PUBLIC_",
 	"nuxt":           "NUXT_PUBLIC_",
@@ -288,8 +277,7 @@ var frameworks = map[string]string{
 	"@sveltejs/kit":  "PUBLIC_",
 }
 
-// servers that listen without a convention for their own URL, so they get a
-// port and nothing else.
+// Servers with no convention for naming their own URL, so they get only a port.
 var servers = []string{"express", "fastify", "hono", "koa", "@nestjs/core"}
 
 func readManifest(dir string) (manifest, bool) {
@@ -304,9 +292,7 @@ func readManifest(dir string) (manifest, bool) {
 	return parsed, true
 }
 
-// serves reports whether a directory holds something that listens on a port,
-// judged by what it depends on rather than by having a dev script, since a
-// library's dev script is a watching compiler.
+// Judged by dependencies rather than by a dev script, which a library has too.
 func serves(dir string) (bool, string) {
 	parsed, ok := readManifest(dir)
 	if !ok {
@@ -330,8 +316,6 @@ func hasDevScript(dir string) bool {
 	return ok && parsed.Scripts["dev"] != ""
 }
 
-// findSupabase reports the stack directory, looking at the root and one level
-// under apps/ and packages/, which is where every layout puts it.
 func findSupabase(root string) (found bool, dir string) {
 	candidates := []string{"."}
 	for _, parent := range []string{"apps", "packages"} {
@@ -354,8 +338,7 @@ func findSupabase(root string) (found bool, dir string) {
 	return false, ""
 }
 
-// supabaseService is one port the stack can publish. Routed says it earns a
-// hostname, which only a service you would open in a browser does.
+// routed says the service earns a hostname, which only a browser-facing one does.
 type supabaseService struct {
 	name   string
 	routed bool
@@ -363,13 +346,9 @@ type supabaseService struct {
 	env    []string
 }
 
-// supabaseServices reports what to allocate for a stack, reading the enabled
-// flags only to decide which services deserve a hostname. Every port is
-// allocated either way: kong publishes its own even with "[api] enabled =
-// false", so a flag is not a reliable signal of what binds, and the costs are
-// not symmetric. A spare allocation is one number out of a thousand, while a
-// missing one collides with whatever worktree started first. A hostname is the
-// opposite: nothing collides, and one that never answers is only clutter.
+// Every port is allocated even for a service the config disables: kong
+// publishes its own with "[api] enabled = false", and a spare port costs less
+// than a collision. Hostnames are the reverse, so a disabled service loses one.
 func supabaseServices(flags supabaseFlags) (services []supabaseService, demoted []string) {
 	services = []supabaseService{
 		{name: "api", routed: true, env: []string{`SUPABASE_API_PORT = "{port}"`}},
@@ -398,17 +377,13 @@ func supabaseServices(flags supabaseFlags) (services []supabaseService, demoted 
 	return services, demoted
 }
 
-// supabaseFlags is what a stack says about itself: the services it turns off,
-// and whether its API speaks TLS.
 type supabaseFlags struct {
 	off     map[string]bool
 	apiTLS  bool
 	buckets bool
 }
 
-// readSupabaseFlags reads those two answers out of the stack's config. Only an
-// explicit false turns a service off, so a config this cannot read, or one
-// that says nothing, leaves everything as it was.
+// Only an explicit false turns a service off, so an unreadable config changes nothing.
 func readSupabaseFlags(path string) supabaseFlags {
 	var raw struct {
 		API struct {
@@ -416,8 +391,7 @@ func readSupabaseFlags(path string) supabaseFlags {
 			TLS     struct{ Enabled *bool } `toml:"tls"`
 		} `toml:"api"`
 		Studio struct{ Enabled *bool } `toml:"studio"`
-		// Buckets are what reach the storage API, and the only reason to work
-		// around its port handling.
+		// Buckets are the only thing that reaches the storage API's port handling.
 		Storage struct {
 			Buckets map[string]any `toml:"buckets"`
 		} `toml:"storage"`
@@ -446,21 +420,11 @@ func readSupabaseFlags(path string) supabaseFlags {
 	return flags
 }
 
-// supabaseAPIURL writes the variable that puts bucket seeding on grove's port.
-// The CLI reads the storage gateway's URL out of config.toml rather than the
-// environment, so this takes effect only once that file routes the value back
-// through env(), which the comment explains. It is written either way, since
-// start and status do honor it and resolve it to the URL they would have
-// derived anyway.
-//
-// Nothing is written for a stack serving its API over TLS, where the scheme
-// would be https and this would quietly downgrade it. The host is grove's own
-// assumption rather than a universal one: the CLI takes it from the docker
-// context, and a remote DOCKER_HOST would want a different one.
+// The CLI reads this out of config.toml rather than the environment, so it
+// takes effect only once that file routes it back through env(). Nothing is
+// written for a stack serving its API over TLS, which this would downgrade.
 func supabaseAPIURL(flags supabaseFlags) string {
-	// Only bucket seeding reads the URL out of config.toml, so a stack that
-	// declares no buckets never reaches the code that gets this wrong, and the
-	// variable would be a paragraph of explanation about nothing.
+	// Only bucket seeding reads it from config.toml, so no buckets means no bug.
 	if !flags.buckets || flags.apiTLS {
 		return ""
 	}

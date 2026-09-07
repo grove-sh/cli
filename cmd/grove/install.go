@@ -78,9 +78,8 @@ its own.`,
 	return cmd
 }
 
-// settleBundle leaves exactly one bundle in play for the runtimes that carry
-// their own roots, deleting grove's copy the moment the system file will do.
-// trust.Bundle explains which is which.
+// Exactly one bundle in play, so grove's copy goes the moment the system file
+// will do. trust.Bundle explains which is which.
 func settleBundle(stateDir string, root *x509.Certificate, rootPEM []byte) string {
 	system := trust.SystemBundle()
 	if system == "" {
@@ -130,8 +129,7 @@ for anything that still trusts the root.`,
 	return cmd
 }
 
-// makePrivate creates the state directory, and tightens one that already exists
-// with looser permissions, since the CA's private key lives there.
+// Tightens an existing directory too, since the CA's private key lives there.
 func makePrivate(dir string, out io.Writer) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -148,12 +146,13 @@ func makePrivate(dir string, out io.Writer) error {
 	}
 	return nil
 }
+
 func reportPrivilegedPorts(out io.Writer, stateDir string) {
 	access := platform.PrivilegedPorts()
 	if access.Allowed {
 		fmt.Fprintf(out, "\n%s\n", access.Detail)
-		// A yes can still leave something worth doing, since a floor that
-		// clears 443 but not 80 costs only the http redirect.
+		// A yes can still leave something to do: a floor that clears 443 but
+		// not 80 costs the http redirect.
 		if access.Advice != "" {
 			fmt.Fprintf(out, "\n%s\n", access.Advice)
 		}
@@ -161,9 +160,8 @@ func reportPrivilegedPorts(out io.Writer, stateDir string) {
 	}
 	fmt.Fprintf(out, "\n%s.\n", access.Detail)
 
-	// A platform with files to stage says what to do with them, and knows more
-	// than the static advice does. Failing to stage them is worth saying out
-	// loud rather than falling back to advice that names nothing.
+	// A platform with files to stage knows more than the static advice, and
+	// failing to stage beats falling back to advice that names nothing.
 	advice, err := platform.PrepareRedirect(stateDir)
 	switch {
 	case err != nil:

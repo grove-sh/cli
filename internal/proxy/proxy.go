@@ -28,15 +28,14 @@ type Server struct {
 func New() *Server {
 	s := &Server{}
 	s.SetRoutes(nil)
-	// No read or write timeout: websockets and SSE are the normal case here. A
-	// header timeout is still safe and keeps a stalled handshake from pinning a
-	// connection.
+	// No read or write timeout: websockets and SSE are normal here. A header
+	// timeout is still safe and keeps a stalled handshake from pinning one.
 	s.http = &http.Server{Handler: s, ReadHeaderTimeout: 10 * time.Second}
 	return s
 }
 
-// SetRoutes replaces the whole table. Requests in flight keep the table they
-// started with, so a swap needs no coordination with them.
+// Requests in flight keep the table they started with, so a swap needs no
+// coordination with them.
 func (s *Server) SetRoutes(routes []Route) {
 	table := make(map[string]*httputil.ReverseProxy, len(routes))
 	for _, r := range routes {
@@ -69,14 +68,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rp.ServeHTTP(w, r)
 }
 
-// loopbackTransport reaches a dev server on either loopback address.
-//
-// A lease is a port, not an address family, and servers pick a family without
-// asking: vite binds [::1] alone by default, so dialing 127.0.0.1 gets a
-// refused connection and grove reports nothing listening for a server that is
-// running perfectly well. The v4 address is still tried first, since almost
-// everything is there, and the original error is what surfaces if neither
-// answers.
+// A lease is a port, not an address family, and servers pick one without
+// asking: vite binds [::1] alone, so dialing 127.0.0.1 is refused and grove
+// reports nothing listening for a server running perfectly well. v4 is tried
+// first since almost everything is there, and its error is what surfaces.
 var loopbackTransport = func() *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	var dialer net.Dialer

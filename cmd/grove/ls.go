@@ -79,16 +79,14 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ROUTE\tURL\tPORT\tSTATE\tPID")
 	for _, entry := range cfg.All() {
-		// A port is a fact about a lease, so an entry without one has no number
-		// to show. Allocation is a hash and could be run ahead of time, but a
-		// guess printed in the same column as an allocation reads as one.
+		// Allocation is a hash and could be run ahead, but a guess printed in
+		// the same column as a real allocation reads as one.
 		port, state, holder := "-", "idle", "-"
 		if held, ok := live[entry.Name]; ok {
 			port = strconv.Itoa(held.Port)
-			// An attached lease is held by a command grove is watching, so it
-			// is running by definition. A detached one stands for something
-			// grove cannot see, and whether anything answers is the question
-			// worth asking: a stopped stack keeps its ports until released.
+			// An attached lease is running by definition. A detached one stands
+			// for something grove cannot see, and a stopped stack keeps its
+			// ports until released, so ask whether anything answers.
 			switch {
 			case !held.Detached, answering(held.Port):
 				state = "running"
@@ -100,12 +98,9 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 			}
 		}
 
-		// A route is worth listing whatever its state, since its URL is the
-		// thing you would go and open. A bare port has no URL, so an idle one
-		// is only a guess at where allocation would put it, and guesses are
-		// noise. A held one is a fact, and the fact worth seeing: it is how a
-		// stopped stack still holding its ports tells itself apart from a port
-		// nobody has taken.
+		// A route's URL is worth listing whatever its state. An idle bare port
+		// is only a guess, while a held one is how a stopped stack still
+		// holding its ports tells itself apart from one nobody has taken.
 		if entry.Kind != config.KindRoute && state == "idle" {
 			continue
 		}
@@ -147,8 +142,7 @@ func listLeases(cmd *cobra.Command, socket string) error {
 	return w.Flush()
 }
 
-// answering reports whether anything is listening on a loopback port. A
-// refused connection comes back at once, so this costs nothing worth measuring.
+// A refused connection comes back at once, so this costs nothing measurable.
 func answering(port int) bool {
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 200*time.Millisecond)
 	if err != nil {
@@ -158,9 +152,8 @@ func answering(port int) bool {
 	return true
 }
 
-// liveLeases reports what one context holds, and whether a daemon answered at
-// all. Nothing running is a true answer rather than a failure, since the routes
-// are worth listing either way.
+// Nothing running is a true answer rather than a failure: the routes are worth
+// listing either way.
 func liveLeases(socket, slug string) (map[string]daemon.Live, bool, error) {
 	client, err := daemon.Dial(socket)
 	if err != nil {

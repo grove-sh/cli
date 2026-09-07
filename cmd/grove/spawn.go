@@ -14,8 +14,8 @@ import (
 	"github.com/grove-sh/cli/internal/daemon"
 )
 
-// spawnDaemon starts a daemon that outlives this process and waits for it to
-// answer. Its output goes to a log file, since nothing is watching its stderr.
+// Waits for the daemon to answer. Its output goes to a log file, since nothing
+// is watching its stderr once it outlives this process.
 func spawnDaemon(opts daemonOptions) error {
 	self, err := os.Executable()
 	if err != nil {
@@ -38,8 +38,8 @@ func spawnDaemon(opts daemonOptions) error {
 	if err := child.Start(); err != nil {
 		return err
 	}
-	// Nothing waits on it, so let the kernel reap it rather than leaving a
-	// zombie behind when this process outlives the start.
+	// So the kernel reaps it rather than leaving a zombie when this process
+	// outlives the start.
 	go child.Wait()
 
 	if err := waitForSocket(opts.socket, 15*time.Second); err != nil {

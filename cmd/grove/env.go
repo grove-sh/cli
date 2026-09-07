@@ -68,13 +68,9 @@ being.`,
 	return cmd
 }
 
-// reportSkipped says what is not set and why, once.
-//
-// One unheld entry is usually several unset variables, and printing the same
-// sentence for each buries the one line that is different: a reference to an
-// entry that does not exist is a mistake, while a port nobody holds is a state
-// that ends when something holds it. So the waits are grouped under the entry
-// they wait on, and everything else gets its own line.
+// One unheld entry is usually several unset variables, and the same sentence
+// per variable buries the line that is different, so waits are grouped under
+// the entry they wait on and everything else gets its own line.
 func reportSkipped(out io.Writer, skipped []config.Skipped) {
 	if len(skipped) == 0 {
 		return
@@ -112,8 +108,7 @@ func reportSkipped(out io.Writer, skipped []config.Skipped) {
 	}
 }
 
-// unbound reports the variables grove would have set itself, had anything been
-// holding the entry they describe.
+// What grove would have set itself, had anything held the entry.
 func unbound(active *config.Entry, env map[string]string) []config.Skipped {
 	if active == nil {
 		return nil
@@ -133,7 +128,6 @@ func unbound(active *config.Entry, env map[string]string) []config.Skipped {
 	return missing
 }
 
-// liveBindings turns what the context holds into template values.
 func liveBindings(socket, slug string) (map[string]config.Binding, error) {
 	leases, _, err := liveLeases(socket, slug)
 	if err != nil {
@@ -181,8 +175,7 @@ func writeEnv(out io.Writer, format string, env map[string]string) error {
 	return nil
 }
 
-// shellQuote makes a value safe to eval. Single quotes take everything
-// literally, so only a single quote in the value needs work.
+// Single quotes take everything literally, so only a single quote needs work.
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }

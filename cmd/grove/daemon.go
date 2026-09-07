@@ -18,8 +18,6 @@ import (
 	"github.com/grove-sh/cli/internal/platform"
 )
 
-// daemonOptions are shared by the command that runs a daemon and the one that
-// starts a fresh one.
 type daemonOptions struct {
 	socket     string
 	listen     string
@@ -55,12 +53,9 @@ func (o *daemonOptions) bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&o.caDir, "ca-dir", defaults.caDir, "directory holding the local CA")
 }
 
-// connect reaches the daemon, starting one when nothing answers. A nil client
-// with a nil error means grove has nothing to add and the caller should run the
-// command as it stands.
-//
-// Only exec does any of this: a daemon appearing because you asked what was
-// running, or because you asked to stop it, would be a surprise.
+// A nil client with a nil error means grove has nothing to add and the caller
+// should run the command as it stands. Only exec autostarts: a daemon appearing
+// because you asked what was running would be a surprise.
 func connect(socket string, autostart, optional bool) (*daemon.Client, error) {
 	client, err := daemon.Dial(socket)
 	if err == nil {
@@ -71,9 +66,8 @@ func connect(socket string, autostart, optional bool) (*daemon.Client, error) {
 		return nil, err
 	}
 
-	// A build server has its own environment and grove is not the authority
-	// there, so with nothing to talk to the honest move is to get out of the
-	// way rather than to inject half an answer or to fail a deploy.
+	// A build server is the authority on its own environment, so getting out of
+	// the way beats injecting half an answer or failing a deploy.
 	if optional || underCI() {
 		return nil, nil
 	}
@@ -86,9 +80,8 @@ func connect(socket string, autostart, optional bool) (*daemon.Client, error) {
 	return daemon.Dial(socket)
 }
 
-// underCI follows the convention every build service shares. It only decides
-// what happens when no daemon answered: a daemon deliberately running in CI is
-// used like any other.
+// This only decides what happens when no daemon answered. One deliberately
+// running in CI is used like any other.
 func underCI() bool {
 	switch os.Getenv("CI") {
 	case "", "0", "false":
@@ -97,11 +90,6 @@ func underCI() bool {
 	return true
 }
 
-// ensureDaemon prefers the service manager when there is a unit for it to
-// manage, so a daemon grove starts is one the manager knows about. That only
-// works for the standard socket: the registered daemon answers there, and
-// starting it would leave a caller who named its own socket waiting on one
-// nobody is listening to.
 func ensureDaemon(socket string) error {
 	opts := defaultDaemonOptions()
 	opts.socket = socket
@@ -150,10 +138,8 @@ for it, so stopping the daemon drops all of them at once.`,
 				return bindHint(opts.listen, err)
 			}
 
-			// Port 80 is best effort. It only ever answers with a redirect to
-			// https, so a machine that will not hand it over costs a
-			// convenience rather than a feature, and saying so beats failing to
-			// start over it.
+			// Best effort: 80 only ever redirects to https, so a machine that
+			// will not hand it over costs a convenience, not a feature.
 			http, err := net.Listen("tcp", opts.httpListen)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "grove: no plain http redirect on %s: %v\n", opts.httpListen, err)
@@ -175,8 +161,6 @@ for it, so stopping the daemon drops all of them at once.`,
 	return cmd
 }
 
-// newStartCommand brings the daemon up the way this machine keeps it, which is
-// through the service manager when one owns it.
 func newStartCommand() *cobra.Command {
 	var opts daemonOptions
 
@@ -248,9 +232,8 @@ survives the process. Stopping a daemon that is not running is not an error.`,
 			}
 			defer client.Close()
 
-			// Read the table before ending it, so the report can say what
-			// stopping cost. This is a machine wide act with a small name. A
-			// connection carries one request, so the reading is its own.
+			// Read the table before ending it, so the report can say what a
+			// machine-wide act with a small name just cost.
 			held := whatItHolds(socket)
 			if err := client.Stop(); err != nil {
 				return err
@@ -265,8 +248,7 @@ survives the process. Stopping a daemon that is not running is not an error.`,
 	return cmd
 }
 
-// restartDaemon stops whatever is listening and puts a fresh one in its place.
-// Nothing supervises the daemon, so this is the whole of it.
+// Nothing supervises the daemon, so stop-and-spawn is the whole of a restart.
 func restartDaemon(opts daemonOptions) error {
 	if client, err := daemon.Dial(opts.socket); err == nil {
 		client.Stop()
@@ -283,14 +265,10 @@ func count(n int, word string) string {
 	return fmt.Sprintf("%d %ss", n, word)
 }
 
-// restoreContexts puts back what the daemon was holding, asking each project
-// rather than replaying the table. The snapshot says which worktrees to ask;
-// their grove.toml files say what to hold, so a project that has changed since
-// gets what it asks for now rather than what it wanted before.
-//
-// Attached leases are left out on purpose. One belongs to a command that is
-// still running and no longer connected, and there is nothing to reconnect it
-// to: that command has to be run again.
+// Each project is asked rather than the table replayed, so one that has changed
+// since gets what it asks for now. Attached leases are left out: one belongs to
+// a command still running and no longer connected, with nothing to reconnect
+// it to, so that command has to be run again.
 func restoreContexts(cmd *cobra.Command, socket string, before []daemon.Live) {
 	worktrees := map[string]string{}
 	for _, lease := range before {
@@ -321,8 +299,8 @@ func restoreContexts(cmd *cobra.Command, socket string, before []daemon.Live) {
 	}
 }
 
-// whatItHolds reads the lease table on a connection of its own, since the one
-// about to carry the stop has room for exactly one request.
+// On a connection of its own, since one connection carries exactly one request
+// and the caller's is about to carry the stop.
 func whatItHolds(socket string) []daemon.Live {
 	client, err := daemon.Dial(socket)
 	if err != nil {
@@ -337,9 +315,8 @@ func whatItHolds(socket string) []daemon.Live {
 	return held
 }
 
-// summarize says what a stop just dropped. Nothing about a lease survives the
-// process, so a running stack keeps its ports and loses its hostname until
-// something holds it again.
+// Nothing about a lease survives the process, so a running stack keeps its
+// ports and loses its hostname until something holds it again.
 func summarize(held []daemon.Live) string {
 	if len(held) == 0 {
 		return ""
@@ -364,7 +341,6 @@ protocol it was built with. Its output goes to daemon.log in the state
 directory.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			// Whatever it holds now, read a moment before it stops holding it.
 			// A snapshot this fresh cannot describe a stack that has since gone
 			// away, which is the objection to writing leases down at all.
 			before := whatItHolds(opts.socket)

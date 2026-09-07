@@ -9,34 +9,24 @@ import (
 	"sync"
 )
 
-// Memory remembers where a detached lease landed, so a daemon that starts again
-// hands the same entry the same port.
-//
-// It only ever matters for a port that could not be the hashed one. Two entries
-// whose hashes collide have to be resolved in some order, and that order is
-// whichever context asks first, which is not stable across a restart. With no
-// record, the entry that walked last time can win the race next time, take the
-// hashed port, and be handed the port the other context's stack is actually
-// listening on: a database URL pointing at another worktree's data. Writing the
-// exception down is what makes walking safe.
+// Only matters for a port that could not be the hashed one. Colliding entries
+// are resolved in whichever order they ask, which is not stable across a
+// restart, so with no record the entry that walked last time can take the
+// hashed port next time and be handed the port another worktree's stack is
+// listening on: a database URL pointing at someone else's data.
 type Memory interface {
-	// Port reports a remembered port, and whether there was one.
 	Port(slug, service string) (int, bool)
-
-	// Remember records where an entry landed.
 	Remember(slug, service string, port int) error
 }
 
-// noMemory forgets everything, which is what a registry with no record keeping
-// does: every collision is resolved again from scratch.
+// Every collision resolved again from scratch.
 type noMemory struct{}
 
 func (noMemory) Port(string, string) (int, bool)    { return 0, false }
 func (noMemory) Remember(string, string, int) error { return nil }
 
-// FileMemory keeps the record in a JSON file. Only exceptions are written, so
-// the file stays a short list of the entries whose port is not the one
-// arithmetic gives, rather than a copy of every allocation.
+// Only exceptions are written, so the file stays a short list of entries whose
+// port is not the one arithmetic gives, not a copy of every allocation.
 type FileMemory struct {
 	path string
 
@@ -44,11 +34,9 @@ type FileMemory struct {
 	ports map[string]map[string]int
 }
 
-// OpenMemory reads an existing record, or starts an empty one. A file that
-// cannot be parsed is started over rather than refused: every entry in it can
-// be derived again by resolving the collisions once more, so a broken record
-// costs a reshuffle and not a daemon. A file that cannot be read at all is a
-// different thing, and says so.
+// An unparseable file is started over rather than refused: every entry can be
+// derived again, so a broken record costs a reshuffle and not a daemon. One
+// that cannot be read at all is a different thing, and says so.
 func OpenMemory(path string) (*FileMemory, error) {
 	m := &FileMemory{path: path, ports: map[string]map[string]int{}}
 
@@ -94,8 +82,8 @@ func (m *FileMemory) Remember(slug, service string, port int) error {
 	return m.write()
 }
 
-// write replaces the file by rename, so a daemon that dies mid-write leaves the
-// previous record rather than half of a new one.
+// By rename, so a daemon dying mid-write leaves the previous record rather than
+// half of a new one.
 func (m *FileMemory) write() error {
 	body, err := json.MarshalIndent(struct {
 		Ports map[string]map[string]int `json:"ports"`

@@ -40,10 +40,8 @@ asks for the same tolerance anywhere.`,
 		Example: "  grove exec -- pnpm dev\n  grove exec -s admin -- pnpm dev",
 		Args:    usageArgs(cobra.MinimumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Before anything else, since a command grove is not going to
-			// touch should not pay for reading git and the config, and a
-			// project whose config has a typo should not fail a deploy over a
-			// tool that is doing nothing there.
+			// First, so a command grove will not touch pays for neither reading
+			// the config nor a typo in it.
 			client, err := connect(socket, autostart, optional)
 			if err != nil {
 				return err
@@ -71,9 +69,8 @@ asks for the same tolerance anywhere.`,
 				return err
 			}
 
-			// Nothing to lease is an ordinary answer, not a failure: a project
-			// whose entries are all scoped elsewhere still has an environment,
-			// and a command that needs no port should just run.
+			// Nothing to lease is ordinary: a project whose entries are scoped
+			// elsewhere still has an environment.
 			var grants map[string]daemon.Grant
 			if entries := entriesToLease(cfg, active); len(entries) > 0 {
 				grants, err = client.Acquire(context.Slug, context.Root, entries)
@@ -119,10 +116,8 @@ func entriesToLease(cfg *config.Config, active *config.Entry) []daemon.Entry {
 	return out
 }
 
-// valuesFrom assembles what templates resolve against. Every route's hostname
-// is known from the context and the config, with no lease involved, which is
-// what lets a command that binds nothing still name a route's URL. Only ports
-// come from an allocation.
+// A hostname needs no lease, which is what lets a command that binds nothing
+// still name a route's URL. Only ports come from an allocation.
 func valuesFrom(cfg *config.Config, context identity.Context, allocated map[string]config.Binding) config.Values {
 	values := config.Values{
 		Context: config.Context{
@@ -138,9 +133,8 @@ func valuesFrom(cfg *config.Config, context identity.Context, allocated map[stri
 		host := identity.ComposeLabel(context.Slug, route.Label) + "." + defaultDomain
 		values.Routes[name] = config.Binding{Host: host, URL: "https://" + host}
 	}
-	// Every configured port, bound or not. Leaving the unbound ones out makes a
-	// reference to one read as a typo, when the entry is right there in the
-	// file and simply has nothing to give yet.
+	// Bound or not: leaving the unbound out makes a reference to one read as a
+	// typo, when the entry is right there and simply has nothing to give yet.
 	for name := range cfg.Ports {
 		values.Ports[name] = config.Binding{}
 	}
@@ -203,20 +197,18 @@ func layer(cfg *config.Config, context identity.Context, resolved map[string]str
 		name, value, _ := strings.Cut(entry, "=")
 		layered[name] = value
 	}
-	// An env_file yields to the environment grove was invoked from, because an
-	// inline override is the most deliberate thing in the chain and a checked
-	// in file is the least. Grove's own resolved values still win over both:
-	// the route points at the port it leased, so letting anything else name
-	// that port would make the routing a lie.
+	// An env_file yields to the environment grove was invoked from: an inline
+	// override is the most deliberate thing in the chain, a checked-in file the
+	// least. Grove's own values still win over both, since a route naming a port
+	// it did not lease would be a lie.
 	for name, value := range fromFiles {
 		if _, inherited := os.LookupEnv(name); inherited {
 			continue
 		}
 		layered[name] = value
 	}
-	// Which context this is, whether or not anything is bound. Every project so
-	// far has ended up naming it for itself, as SUPABASE_PROJECT_ID or a
-	// scratch database, so grove says it once rather than each file repeating
+	// Set whether or not anything is bound: every project so far names the
+	// context for itself, so grove says it once rather than each file repeating
 	// {context.slug}.
 	layered["GROVE_CONTEXT"] = context.Slug
 	if active != nil {
@@ -235,8 +227,7 @@ func layer(cfg *config.Config, context identity.Context, resolved map[string]str
 }
 
 func runChild(args []string, env []string) error {
-	// Inheriting the parent's descriptors keeps the child on the same terminal,
-	// so it still detects a tty and keeps its colors and prompts.
+	// The same terminal, so the child still detects a tty and keeps its colours.
 	child := exec.Command(args[0], args[1:]...)
 	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
 	child.Env = env
@@ -248,13 +239,10 @@ func runChild(args []string, env []string) error {
 		return err
 	}
 
-	// The child shares grove's process group, so a terminal delivers Ctrl-C to
-	// both. Relaying anyway covers the case of a signal sent to grove alone.
-	//
-	// Asking twice means it. A child that hangs mid shutdown would otherwise
-	// hold its lease for as long as it stays alive, and since grove relays
-	// rather than exits, signalling grove could not break that either: the
-	// port stays claimed by something no longer listening on it.
+	// A terminal delivers Ctrl-C to the whole group already; relaying covers a
+	// signal sent to grove alone. Asking twice means it, because a child that
+	// hangs mid shutdown otherwise holds its lease for as long as it is alive,
+	// and grove relays rather than exits, so signalling grove cannot break that.
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	defer signal.Stop(signals)

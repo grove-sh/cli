@@ -13,9 +13,8 @@ import (
 	"github.com/grove-sh/cli/internal/identity"
 )
 
-// resolveContext reports the context a command runs in. A project that names
-// itself in grove.toml overrides the directory it happens to live in; a config
-// that is absent, as in a repository grove does not manage, changes nothing.
+// A name in grove.toml overrides the directory the project lives in. An absent
+// config, as in a repository grove does not manage, changes nothing.
 func resolveContext(dir string, cfg *config.Config) (identity.Context, error) {
 	ctx, err := identity.Resolve(dir)
 	if err != nil {

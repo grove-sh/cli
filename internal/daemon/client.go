@@ -14,8 +14,7 @@ type Client struct {
 	enc  *json.Encoder
 }
 
-// NotRunningError says nothing usable answered on the socket, whether the file
-// was missing or a dead daemon left it behind.
+// Nothing usable answered, whether the socket was missing or left by a corpse.
 type NotRunningError struct {
 	Socket string
 	Err    error
@@ -37,9 +36,8 @@ func Dial(socket string) (*Client, error) {
 
 func (c *Client) Close() error { return c.conn.Close() }
 
-// Acquire leases a port for each entry, keyed by name in the reply. Attached
-// leases last until the client is closed, so the caller keeps it open for as
-// long as the process it starts is alive; detached ones outlive it.
+// Attached leases last until the client is closed, so the caller holds it open
+// as long as the process it started is alive. Detached ones outlive it.
 func (c *Client) Acquire(slug, worktree string, entries []Entry) (map[string]Grant, error) {
 	resp, err := c.roundTrip(Request{Op: OpAcquire, Slug: slug, Worktree: worktree, Entries: entries})
 	if err != nil {
@@ -59,8 +57,7 @@ func (c *Client) List() ([]Live, error) {
 	return resp.Leases, nil
 }
 
-// Release ends detached leases for a context, all of them when names is empty,
-// and reports which were there to end.
+// Empty names releases all of them. Reports which were there to end.
 func (c *Client) Release(slug, worktree string, names []string) ([]string, error) {
 	resp, err := c.roundTrip(Request{Op: OpRelease, Slug: slug, Worktree: worktree, Names: names})
 	if err != nil {
@@ -80,8 +77,7 @@ func (c *Client) Status() (Status, error) {
 	return *resp.Status, nil
 }
 
-// Stop asks the daemon to shut down. Every attached lease ends with it, and
-// detached ones go too, since nothing survives the process.
+// Detached leases go too: nothing survives the process.
 func (c *Client) Stop() error {
 	_, err := c.roundTrip(Request{Op: OpStop})
 	return err
@@ -101,7 +97,7 @@ func (c *Client) roundTrip(req Request) (Response, error) {
 		return Response{}, errors.New(resp.Error)
 	}
 	// A daemon too old to know about versions reports none, which is exactly
-	// the case worth naming: it predates this binary.
+	// the case worth naming.
 	if resp.Version != Version {
 		return Response{}, &VersionError{Daemon: resp.Version, CLI: Version}
 	}

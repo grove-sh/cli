@@ -1,8 +1,7 @@
 package daemon
 
-// Version is the control protocol both sides must agree on. A grove binary is
-// rebuilt far more often than its daemon is restarted, so the mismatch has to
-// name itself rather than surface as a missing field.
+// A grove binary is rebuilt far more often than its daemon is restarted, so a
+// mismatch has to name itself rather than surface as a missing field.
 const Version = 2
 
 const (
@@ -21,13 +20,11 @@ type Request struct {
 	Worktree string  `json:"worktree,omitempty"`
 	Entries  []Entry `json:"entries,omitempty"`
 
-	// Names limits a release to these entries. Empty releases every detached
-	// lease the context holds.
+	// Empty releases every detached lease the context holds.
 	Names []string `json:"names,omitempty"`
 }
 
-// An Entry is one thing to allocate. Routed entries get a hostname built from
-// Label; the rest are ports with no name in DNS.
+// Routed entries get a hostname built from Label; the rest have no name in DNS.
 type Entry struct {
 	Name     string `json:"name"`
 	Label    string `json:"label,omitempty"`
@@ -46,10 +43,9 @@ type Response struct {
 
 type Status struct {
 	Version int `json:"version"`
-	// Grove is the build version, which the protocol version does not track:
-	// the wire shape can sit still across many releases. A client reads it to
-	// tell when the grove that is running is not the one asking. Empty from one
-	// built before this field, which says the same thing.
+	// The build version, which Version does not track: the wire shape sits
+	// still across many releases. Empty from a daemon built before this field,
+	// which says the same thing.
 	Grove  string `json:"grove,omitempty"`
 	PID    int    `json:"pid"`
 	Listen string `json:"listen"`
@@ -57,8 +53,7 @@ type Status struct {
 	Leases int `json:"leases"`
 }
 
-// A Grant is a leased port, and the hostname routed to it when there is one. An
-// attached grant lives only as long as the connection that asked for it.
+// An attached grant lives only as long as the connection that asked for it.
 type Grant struct {
 	Port int    `json:"port"`
 	Host string `json:"host,omitempty"`

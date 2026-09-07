@@ -5,9 +5,8 @@ import (
 	"os"
 )
 
-// Ready tells a service manager the proxy is actually listening, rather than
-// merely spawned, so a start command can block until grove can serve. Nothing
-// happens when the process was not started by one.
+// sd_notify, for a supervisor that wants "listening" rather than "spawned".
+// A no-op when nothing set NOTIFY_SOCKET, which is the usual case.
 func Ready() {
 	notify("READY=1")
 }

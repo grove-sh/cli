@@ -10,9 +10,8 @@ import (
 	"strings"
 )
 
-// EnvFiles reads the project's env_files in order, later files winning. A file
-// that is not there is skipped: .env is usually gitignored, so its absence is
-// normal rather than a mistake.
+// Later files win. A missing one is skipped: .env is usually gitignored, so its
+// absence is normal rather than a mistake.
 func (c *Config) LoadEnvFiles() (map[string]string, error) {
 	out := make(map[string]string)
 	for _, name := range c.EnvFiles {

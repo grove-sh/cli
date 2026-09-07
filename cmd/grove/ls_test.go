@@ -246,8 +246,8 @@ func portOf(t *testing.T, table, route string) int {
 	return 0
 }
 
-// lineFor reports whether a row for route says want. An empty want asks only
-// whether the row is there at all, which is now half of what ls decides.
+// An empty want asks only whether the row is there at all, which is now half of
+// what ls decides.
 func lineFor(table, route, want string) bool {
 	for _, line := range strings.Split(table, "\n") {
 		if strings.HasPrefix(line, route+" ") {
