@@ -161,7 +161,7 @@ jobs:
           cat SHA256SUMS
 
       # Kept even for a dry run, which is most of the point of having one.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: grove-${{ steps.plan.outputs.version }}
           path: ${{ runner.temp }}/archives/
