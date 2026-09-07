@@ -110,6 +110,50 @@ for dir in "$work"/packages/cli-*; do publish "$dir"; done
 publish "$work/packages/cli"
 echo "published 5 packages"
 
+# ------------------------------------------------------ what the registry keeps
+# Installing only ever proves the build for this machine. The other three are
+# what a release ships to people who cannot run them here, and a mode lost on
+# the way through a registry stays invisible until one of them tries.
+echo
+echo "what the registry serves:"
+mkdir -p "$work/tarballs"
+
+mode_of() { # tarball, path inside it
+  tar -tzvf "$1" | awk -v want="package/$2" '$NF == want { print $1 }'
+}
+
+fetch() { # package name without the scope
+  (cd "$work/tarballs" && local_npm pack "@grove-sh/$1@$version" --registry "$registry" > /dev/null 2>&1)
+  find "$work/tarballs" -name "grove-sh-$1-*.tgz" | head -1
+}
+
+for name in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+  tgz=$(fetch "cli-$name")
+  if [ -z "$tgz" ]; then
+    no "cli-$name is not in the registry"
+    continue
+  fi
+  case "$(mode_of "$tgz" bin/grove)" in
+    -rwx*) ok "cli-$name ships bin/grove executable" ;;
+    "") no "cli-$name ships no bin/grove at all" ;;
+    *) no "cli-$name ships bin/grove as $(mode_of "$tgz" bin/grove), which nothing can run" ;;
+  esac
+done
+
+tgz=$(fetch cli)
+case "$(mode_of "$tgz" bin/grove.js)" in
+  -rwx*) ok "cli ships bin/grove.js executable" ;;
+  "") no "cli ships no bin/grove.js at all" ;;
+  *) no "cli ships bin/grove.js as $(mode_of "$tgz" bin/grove.js)" ;;
+esac
+# The wrapper is a shim and four dependencies. A binary inside it would mean
+# 40MB on every install of a package meant to be a few kilobytes.
+if tar -tzf "$tgz" | grep -q "package/bin/grove$"; then
+  no "cli carries a binary of its own"
+else
+  ok "cli carries no binary of its own"
+fi
+
 # ----------------------------------------------------------------- the install
 prefix="$work/global"
 local_npm install -g --prefix "$prefix" --registry "$registry" "@grove-sh/cli@$version" > /dev/null
