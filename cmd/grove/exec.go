@@ -14,9 +14,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/grove-sh/cli/internal/ca"
 	"github.com/grove-sh/cli/internal/config"
 	"github.com/grove-sh/cli/internal/daemon"
 	"github.com/grove-sh/cli/internal/identity"
+	"github.com/grove-sh/cli/internal/platform"
 	"github.com/grove-sh/cli/internal/trust"
 )
 
@@ -105,9 +107,28 @@ asks for the same tolerance anywhere.`,
 // Only for a route, since a port has no URL, and only to a terminal, so that a
 // build's output stays exactly what the build wrote.
 func announce(out io.Writer, active *config.Entry, grants map[string]daemon.Grant) {
-	if line := routeLine(active, grants); line != "" && isTerminal(out) {
-		fmt.Fprintln(out, line)
+	line := routeLine(active, grants)
+	if line == "" || !isTerminal(out) {
+		return
 	}
+	// Naming a URL the browser will reject is worse than naming none: the
+	// hostname resolves and grove routes it, so the failure looks like grove
+	// working and the site being broken.
+	if !urlWorks(daemon.StateDir()) {
+		return
+	}
+	fmt.Fprintln(out, line)
+}
+
+// urlWorks reports whether https://<host> would actually open. The daemon is
+// answering or there would be no grant to name, so what is left is the root
+// this machine has to trust and the port the URL implies.
+func urlWorks(stateDir string) bool {
+	root, err := ca.Open(stateDir)
+	if err != nil || !trust.Trusted(root.Certificate()) {
+		return false
+	}
+	return platform.PrivilegedPorts().Allowed
 }
 
 // routeLine is what there is to say, separately from whether to say it, so the

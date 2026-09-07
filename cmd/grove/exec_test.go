@@ -663,3 +663,23 @@ func TestRouteLineStaysQuietWithoutAURL(t *testing.T) {
 		}
 	}
 }
+
+// A URL grove routes but the browser rejects reads as grove working and the
+// site being broken, which sends the reader to the wrong place entirely.
+func TestURLWorksNeedsAnAuthority(t *testing.T) {
+	if urlWorks(t.TempDir()) {
+		t.Error("a state directory with no authority in it still claimed the URL would open")
+	}
+}
+
+// An authority that exists but this machine does not trust is exactly what
+// grove uninstall leaves behind, and it was the case that prompted the check.
+func TestURLWorksNeedsTheRootTrusted(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := ca.OpenOrCreate(dir); err != nil {
+		t.Fatal(err)
+	}
+	if urlWorks(dir) {
+		t.Error("a freshly minted root nothing trusts still claimed the URL would open")
+	}
+}
