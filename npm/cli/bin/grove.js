@@ -47,11 +47,17 @@ function locate() {
   try {
     manifest = require.resolve(`${pkg}/package.json`);
   } catch {
-    // npm does not report an optional dependency that failed to install, so
-    // this is the first anyone hears of it.
+    // npm does not report an optional dependency it could not fetch, so this
+    // is the first anyone hears of it. Blaming --no-optional was wrong often
+    // enough to be worth not saying: an install run in the first minutes after
+    // a release does this too, when the wrapper has reached a mirror ahead of
+    // the platform package it depends on.
     fail(
       `${pkg} is not installed, so there is no binary to run.\n` +
-        "Reinstall without --no-optional: npm install -g @grove-sh/cli"
+        "npm counts it as optional, so an install that skipped optional\n" +
+        "dependencies leaves it out, and so does one run before a new release\n" +
+        "has reached every mirror. Installing again fixes both:\n" +
+        "  npm install -g @grove-sh/cli"
     );
   }
   return path.join(path.dirname(manifest), "bin", "grove");

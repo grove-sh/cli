@@ -261,34 +261,33 @@ jobs:
           # reach every CDN edge, and the runners do not all ask the same one.
           # The first publish of @grove-sh/cli took over two minutes, and the
           # two Linux runners gave up while the two macOS ones did not.
+          # What to wait on is grove running, not npm succeeding. The binary
+          # arrives as an optional dependency, and npm's defined behaviour when
+          # it cannot fetch one is to install the wrapper, leave the binary out,
+          # and exit 0. A wrapper that has propagated ahead of its platform
+          # package looks exactly like a successful install until you run it.
           installed=false
           for attempt in $(seq 1 20); do
-            if npm install -g "@grove-sh/cli@$VERSION"; then
+            if npm install -g "@grove-sh/cli@$VERSION" > /dev/null 2>&1 &&
+              [ "$(grove --version 2> /dev/null)" = "grove v$VERSION" ]; then
               installed=true
               break
             fi
             echo "not there yet (attempt $attempt)"
             sleep 15
           done
-          # Saying so here, rather than letting the next step report the same
-          # thing as a missing command and send the reader looking at PATH.
+          # Saying so here, rather than letting the next step report it as a
+          # missing command and send the reader looking at PATH.
           if [ "$installed" != "true" ]; then
-            echo "@grove-sh/cli@$VERSION never became installable" >&2
+            echo "@grove-sh/cli@$VERSION never became runnable. grove says:" >&2
+            grove --version >&2 || true
             exit 1
           fi
           npm ls -g --depth 1 "@grove-sh/cli" || true
 
-      - name: It runs, and it is the build for this machine
-        env:
-          VERSION: ${{ needs.publish.outputs.version }}
+      - name: It is the build for this machine
         run: |
           set -euo pipefail
-          reported=$(grove --version)
-          if [ "$reported" != "grove v$VERSION" ]; then
-            echo "grove reports '$reported', not 'grove v$VERSION'" >&2
-            exit 1
-          fi
-
           # doctor names the platform it thinks it is running on, which is the
           # one thing that says the optional dependency npm chose was the right
           # one. It exits 1 on a machine with no CA installed, which every
