@@ -227,8 +227,14 @@ jobs:
   # Installing what was actually published, on one runner per binary shipped.
   # The rehearsal proves the packages are right; this proves the right bytes
   # reached the registry and run on the machine they were built for.
+  #
+  # The macOS legs go further, because serving 443 there is not grove's own
+  # doing and none of it is testable from a locally built binary: the daemon
+  # re-executes os.Executable(), which under npm is a path inside node_modules.
+  # This is also the only place grove install runs without --trust=false, so
+  # the macOS keychain has no other coverage anywhere.
   verify:
-    name: Install ${{ matrix.platform }} from npm
+    name: ${{ matrix.platform }} from npm
     needs: publish
     if: needs.publish.outputs.dry_run == 'false'
     strategy:
@@ -244,7 +250,8 @@ jobs:
           - runner: macos-15-intel
             platform: darwin-x64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    # The install loop alone can spend ten minutes waiting on npm's mirrors.
+    timeout-minutes: 25
     steps:
       - uses: actions/setup-node@v6
         with:
@@ -309,3 +316,87 @@ jobs:
             echo "this is not the ${{ matrix.platform }} build" >&2
             exit 1
           fi
+
+      # No --trust=false, unlike anywhere else. This is what finds out whether
+      # the keychain accepts the root, and a disposable runner is the only place
+      # worth finding out.
+      - name: Install the authority for real
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          grove install | tee install.txt
+
+      # Running what it printed, rather than paths this file guessed at. The
+      # instructions are the thing being tested: they are what a person pastes,
+      # and a job that reconstructs them can pass while they are wrong. That is
+      # not hypothetical, and the state directory here has a space in it.
+      - name: Take the privileged step it printed
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          grep -E '^[[:space:]]+sudo ' install.txt | sed 's/^[[:space:]]*//' > steps.sh
+          echo "--- what install told me to run ---"
+          cat steps.sh
+          test -s steps.sh
+          sh -e steps.sh
+          sudo pfctl -a grove -s nat
+
+      - name: It says it can serve 443 now
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          grove install | tee after.txt
+          grep -q "pf sends 443 to" after.txt
+
+      # doctor reads the trust store through Go's SystemCertPool, which on macOS
+      # is the keychain, so this line is the keychain's own answer.
+      - name: The machine trusts the root
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          grove doctor > trusted.txt 2>&1 || true
+          cat trusted.txt
+          if ! grep -Eq '^Authority[[:space:]]+installed and trusted' trusted.txt; then
+            echo "the keychain did not take the root" >&2
+            exit 1
+          fi
+
+      - name: It serves 443, from the binary npm installed
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          grove start
+          root="$HOME/Library/Application Support/grove/root.crt"
+
+          # grove's own certificate, so this cannot pass because something else
+          # answered. --resolve rather than DNS, since the port is the question.
+          # A status curl dislikes still means TLS completed.
+          curl -sS --fail-with-body --cacert "$root" \
+            --resolve "ci.grov.site:443:127.0.0.1" \
+            -o /dev/null -w 'reached grove on 443, http=%{http_code}\n' \
+            "https://ci.grov.site/" || {
+              status=$?
+              test "$status" = "22"
+              echo "reached grove on 443, and it had nothing to route"
+            }
+
+          # The daemon has to be the Go binary out of the platform package,
+          # detached from the node process that asked for it.
+          pid=$(pgrep -f 'grove daemon' | head -1 || true)
+          if [ -z "$pid" ]; then
+            echo "grove start returned, but no daemon is running" >&2
+            exit 1
+          fi
+          # ps prints the full path on macOS, where Linux would truncate it.
+          running=$(ps -o comm= -p "$pid")
+          echo "daemon pid=$pid, running $running"
+          case "$running" in
+            *node_modules*grove) echo "it is the npm binary" ;;
+            *) echo "the daemon is not the npm binary" >&2; exit 1 ;;
+          esac
+
+      # No uninstall step. Removing a trust root edits the admin trust settings,
+      # which macOS gates behind an authorization prompt: security blocks until
+      # someone answers it, and nobody can on a runner. Asking a person before
+      # untrusting a root is the right behaviour, so there is nothing to fix
+      # here and nothing to test without a human.
