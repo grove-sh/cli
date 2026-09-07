@@ -78,6 +78,7 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ROUTE\tURL\tPORT\tSTATE\tPID")
+	routed := false
 	for _, entry := range cfg.All() {
 		// Allocation is a hash and could be run ahead, but a guess printed in
 		// the same column as a real allocation reads as one.
@@ -110,8 +111,20 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 			url = "https://" + identity.ComposeLabel(context.Slug, entry.Label) + "." + defaultDomain
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", entry.Name, url, port, state, holder)
+		routed = routed || entry.Kind == config.KindRoute
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+
+	// A URL in a table reads as a promise. Saying nothing when the browser
+	// would refuse it leaves the reader to discover that themselves, and to
+	// conclude their app is broken rather than that grove is not finished.
+	if problem := urlProblem(daemon.StateDir()); routed && problem != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "grove: those URLs will not open yet, because %s. Run %s doctor.\n",
+			problem, invocation())
+	}
+	return nil
 }
 
 func listLeases(cmd *cobra.Command, socket string) error {

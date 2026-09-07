@@ -114,21 +114,30 @@ func announce(out io.Writer, active *config.Entry, grants map[string]daemon.Gran
 	// Naming a URL the browser will reject is worse than naming none: the
 	// hostname resolves and grove routes it, so the failure looks like grove
 	// working and the site being broken.
-	if !urlWorks(daemon.StateDir()) {
+	if urlProblem(daemon.StateDir()) != "" {
 		return
 	}
 	fmt.Fprintln(out, line)
 }
 
-// urlWorks reports whether https://<host> would actually open. The daemon is
-// answering or there would be no grant to name, so what is left is the root
-// this machine has to trust and the port the URL implies.
-func urlWorks(stateDir string) bool {
+// urlProblem says why https://<host> would not open, or nothing when it would.
+// Callers that already know the daemon is answering have only the root this
+// machine must trust and the port the URL implies left to worry about.
+func urlProblem(stateDir string) string {
 	root, err := ca.Open(stateDir)
-	if err != nil || !trust.Trusted(root.Certificate()) {
-		return false
+	if errors.Is(err, ca.ErrNoAuthority) {
+		return "there is no certificate authority on this machine"
 	}
-	return platform.PrivilegedPorts().Allowed
+	if err != nil {
+		return err.Error()
+	}
+	if !trust.Trusted(root.Certificate()) {
+		return "this machine does not trust grove's root"
+	}
+	if !platform.PrivilegedPorts().Allowed {
+		return "nothing reaches port 443 here"
+	}
+	return ""
 }
 
 // routeLine is what there is to say, separately from whether to say it, so the
