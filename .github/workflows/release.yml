@@ -188,13 +188,17 @@ jobs:
             if [ "$PRERELEASE" = "true" ]; then
               gh release edit "$TAG" --prerelease
             fi
-            echo "drafted=false" >> "$GITHUB_OUTPUT"
+            # Whether it is still a draft, not whether this run drafted it. A
+            # retry after a failed publish finds the draft its own first attempt
+            # left behind, and has to finish the job rather than skip it.
+            draft=$(gh release view "$TAG" --json isDraft --jq .isDraft)
           else
             flags=(--generate-notes --draft)
             if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
             gh release create "$TAG" --title "$TAG" "${flags[@]}" "$RUNNER_TEMP"/archives/*
-            echo "drafted=true" >> "$GITHUB_OUTPUT"
+            draft=true
           fi
+          echo "draft=$draft" >> "$GITHUB_OUTPUT"
 
       # Last, because this is the step that cannot be taken back. The wrapper
       # goes after the four it depends on: its optionalDependencies are pinned
@@ -215,7 +219,7 @@ jobs:
       # Last of all, so the release page appears only once the version it
       # describes is installable.
       - name: Make the release visible
-        if: steps.plan.outputs.dry_run == 'false' && steps.release.outputs.drafted == 'true'
+        if: steps.plan.outputs.dry_run == 'false' && steps.release.outputs.draft == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release edit "v${{ steps.plan.outputs.version }}" --draft=false
