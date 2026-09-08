@@ -102,6 +102,7 @@ func settleBundle(stateDir string, root *x509.Certificate, rootPEM []byte) strin
 
 func newUninstallCommand() *cobra.Command {
 	var stateDir string
+	var removeTrust bool
 
 	cmd := &cobra.Command{
 		Use:   "uninstall",
@@ -110,22 +111,47 @@ func newUninstallCommand() *cobra.Command {
 
 The CA files stay on disk, so a later 'grove install' trusts the same root
 rather than generating another one. Certificates already issued keep working
-for anything that still trusts the root.`,
+for anything that still trusts the root.
+
+Where a platform needed a privileged step to reach port 443, this prints the
+step that undoes it, the same way install printed the one that set it up.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
 			root, err := ca.Open(stateDir)
 			if err != nil {
 				return err
 			}
-			if !trust.Trusted(root.Certificate()) {
-				fmt.Fprintln(cmd.OutOrStdout(), "this root is not in the system trust store")
-				return nil
+			switch {
+			case !removeTrust:
+				fmt.Fprintln(out, "trust store     left alone by --trust=false")
+			case !trust.Trusted(root.Certificate()):
+				fmt.Fprintln(out, "this root is not in the system trust store")
+			default:
+				if err := trust.Uninstall(root.Certificate()); err != nil {
+					return err
+				}
 			}
-			return trust.Uninstall(root.Certificate())
+
+			// After the trust store, because untrusting is what someone came
+			// for and it is the half that needs their attention now. The
+			// redirect outlives this process either way.
+			advice, err := platform.RemoveRedirect(stateDir)
+			switch {
+			case err != nil:
+				fmt.Fprintf(cmd.ErrOrStderr(), "\ngrove could not stage the removal: %v\n", err)
+			case advice != "":
+				fmt.Fprintf(out, "\n%s\n", advice)
+			}
+			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&stateDir, "state-dir", daemon.StateDir(), "directory holding the CA")
+	// Mirrors install's flag, and it is what lets CI check the printed removal
+	// by pasting it: untrusting a root asks macOS for authorization nobody can
+	// give on a runner, so the keychain half has to be skippable.
+	cmd.Flags().BoolVar(&removeTrust, "trust", true, "remove the root from the system trust stores")
 	return cmd
 }
 

@@ -16,6 +16,9 @@ func WSL() bool { return false }
 // Nothing to stage on a platform grove knows nothing about.
 func PrepareRedirect(string) (string, error) { return "", nil }
 
+// RemoveRedirect has nothing to take back, since nothing was staged.
+func RemoveRedirect(string) (string, error) { return "", nil }
+
 // Nothing here knows better, so ask for 443 and report what happens.
 func DefaultListen() string { return "127.0.0.1:443" }
 

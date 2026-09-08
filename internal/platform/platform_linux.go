@@ -57,6 +57,11 @@ func WSL() bool {
 // Nothing to stage: lowering the floor is a sysctl, not a pair of files.
 func PrepareRedirect(string) (string, error) { return "", nil }
 
+// RemoveRedirect has nothing to take back: grove binds 443 itself here, so
+// stopping it releases the port. The sysctl is the machine's own setting, not
+// grove's to undo, and lowering a floor intercepts nothing.
+func RemoveRedirect(string) (string, error) { return "", nil }
+
 // The sysctl lowers the floor, so grove binds 443 itself.
 func DefaultListen() string { return "127.0.0.1:443" }
 

@@ -77,6 +77,24 @@ func Conf(existing string) (string, bool, error) {
 	return out + loadLine + "\n", true, nil
 }
 
+// Without is the inverse of Conf: the machine's pf.conf with grove's two lines
+// taken out, and whether either was there to take. Apple's rules and anyone
+// else's are carried through, which is why this removes named lines rather
+// than restoring a copy of what pf.conf looked like before.
+func Without(existing string) (string, bool) {
+	kept := make([]string, 0, len(existing))
+	removed := false
+	for _, line := range strings.Split(existing, "\n") {
+		switch strings.TrimSpace(line) {
+		case reference, loadLine:
+			removed = true
+		default:
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n"), removed
+}
+
 // Configured matters because an anchor nothing refers to loads without
 // complaint and does nothing at all.
 func Configured(conf string) bool {

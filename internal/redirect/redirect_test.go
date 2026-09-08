@@ -228,3 +228,37 @@ func TestAccessNamesThePieceThatIsMissing(t *testing.T) {
 		}
 	}
 }
+
+// Uninstall has to give back a pf.conf that is the machine's own again, so it
+// takes grove's two lines out rather than restoring a remembered copy: nothing
+// says the file has not been edited since, by Docker or a VPN or a person.
+func TestWithoutTakesOutOnlyGrovesLines(t *testing.T) {
+	stock := "scrub-anchor \"com.apple/*\"\nrdr-anchor \"com.apple/*\"\ndummynet-anchor \"com.apple/*\"\nanchor \"com.apple/*\"\n"
+	merged, changed, err := redirect.Conf(stock)
+	if err != nil || !changed {
+		t.Fatalf("Conf(stock) = %v, %v", changed, err)
+	}
+
+	back, removed := redirect.Without(merged)
+
+	if !removed {
+		t.Error("Without reported nothing to remove from a merged pf.conf")
+	}
+	if back != stock {
+		t.Errorf("did not give back the machine's own file:\n%q\nwant\n%q", back, stock)
+	}
+}
+
+// Running it twice, or on a machine that never had the redirect, is not an error.
+func TestWithoutLeavesAnUntouchedConfAlone(t *testing.T) {
+	stock := "rdr-anchor \"com.apple/*\"\nanchor \"com.apple/*\"\n"
+
+	back, removed := redirect.Without(stock)
+
+	if removed {
+		t.Error("Without claimed to remove lines that were never there")
+	}
+	if back != stock {
+		t.Errorf("changed a file it had nothing to do with:\n%q", back)
+	}
+}

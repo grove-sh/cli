@@ -3,6 +3,7 @@ package platform
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/grove-sh/cli/internal/redirect"
@@ -81,6 +82,55 @@ func PrepareRedirect(dir string) (string, error) {
 		"lines rather than writing its own. Worth reading before you install it:",
 		"",
 		"  diff " + redirect.ConfPath + " " + shell.Quote(staged.Conf),
+	}, "\n"), nil
+}
+
+// RemoveRedirect stages a pf.conf without grove's lines and prints the step
+// that installs it, the same way PrepareRedirect does for putting them in.
+//
+// Uninstalling only the trust store used to leave the redirect and its boot job
+// behind, so a machine with no grove on it still sent every loopback
+// connection on 443 to a port nothing was listening to.
+func RemoveRedirect(dir string) (string, error) {
+	state, err := inspect()
+	if err != nil {
+		return "", err
+	}
+	if !state.Referenced && !state.Anchor && !state.Boot {
+		return "", nil
+	}
+
+	current, err := os.ReadFile(redirect.ConfPath)
+	if err != nil {
+		return "", err
+	}
+	cleaned, _ := redirect.Without(string(current))
+	staged := filepath.Join(dir, "pf", "pf.conf.clean")
+	if err := os.MkdirAll(filepath.Dir(staged), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(staged, []byte(cleaned), 0o644); err != nil {
+		return "", err
+	}
+
+	return strings.Join([]string{
+		"The redirect and the job that puts it back are still installed. Removing",
+		"them is one privileged step:",
+		"",
+		"  sudo launchctl bootout system " + redirect.PlistPath,
+		"  sudo rm " + redirect.PlistPath + " " + redirect.AnchorPath,
+		"  sudo cp " + shell.Quote(staged) + " " + redirect.ConfPath,
+		"  sudo pfctl -f " + redirect.ConfPath,
+		"  sudo pfctl -a " + redirect.AnchorName + " -F nat",
+		"",
+		"The last two reload the machine's own rules and clear grove's, which stay",
+		"loaded until something flushes them. pf itself is left enabled, since it",
+		"may have been on before grove and other rules may want it.",
+		"",
+		redirect.ConfPath + " is the machine's own, so grove took its two lines out of",
+		"the copy above rather than restoring one it remembered. Worth reading first:",
+		"",
+		"  diff " + redirect.ConfPath + " " + shell.Quote(staged),
 	}, "\n"), nil
 }
 
