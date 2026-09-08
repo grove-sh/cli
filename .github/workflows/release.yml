@@ -35,6 +35,7 @@ env:
   GOTOOLCHAIN: local
 
 permissions:
+  id-token: write
   contents: read
 
 jobs:
@@ -79,9 +80,12 @@ jobs:
           go-version-file: go.mod
           check-latest: true
 
+      # Node 24 for npm 11: trusted publishing needs npm 11.5.1 or newer, and
+      # node 22 ships npm 10.9. Provenance worked there, which is why every
+      # release so far was fine and this would not have been.
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
 
       - name: Work out what is being released
@@ -204,17 +208,20 @@ jobs:
       # goes after the four it depends on: its optionalDependencies are pinned
       # exactly, so publishing it first would put a manifest on the registry
       # naming versions that do not exist yet.
+      # No NODE_AUTH_TOKEN on purpose. npm uses a token when it finds one and
+      # only asks for an OIDC token when it does not, so leaving one here would
+      # publish exactly as before and say nothing about trusted publishing
+      # working. Provenance needs no flag either: trusted publishing signs.
       - name: Publish to npm
         if: steps.plan.outputs.dry_run == 'false'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
+          npm --version
           tag=${{ steps.plan.outputs.npm_tag }}
           for dir in "$RUNNER_TEMP"/packages/cli-*; do
-            (cd "$dir" && npm publish --provenance --access public --tag "$tag")
+            (cd "$dir" && npm publish --access public --tag "$tag")
           done
-          (cd "$RUNNER_TEMP/packages/cli" && npm publish --provenance --access public --tag "$tag")
+          (cd "$RUNNER_TEMP/packages/cli" && npm publish --access public --tag "$tag")
 
       # Last of all, so the release page appears only once the version it
       # describes is installable.
