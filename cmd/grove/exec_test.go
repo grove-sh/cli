@@ -379,7 +379,6 @@ func TestExecStartsADaemonWhenNoneIsRunning(t *testing.T) {
 	t.Setenv("GROVE_SOCKET", socket)
 	t.Setenv("GROVE_LISTEN", "127.0.0.1:0")
 	t.Setenv("GROVE_TEST_RUN_CLI", "1")
-	t.Setenv("GROVE_SERVICE_DIR", filepath.Join(state, "units"))
 	// Autostart is the non-CI path: with CI set, a missing daemon is stepped
 	// around rather than started.
 	t.Setenv("CI", "")
