@@ -1,6 +1,11 @@
 // Package platform keeps build tags and GOOS checks out of the rest of grove.
 package platform
 
+// Not 127.0.0.1, so that whatever else wants that address on 443 can have it.
+// Only meaningful paired with defaultDomain in cmd/grove, whose wildcard points
+// here: change either alone and hostnames resolve somewhere nothing serves.
+const Address = "127.0.0.4"
+
 // Whether a process running as you can bind below 1024, which is what serving
 // hostnames with no port in them requires.
 type PortAccess struct {

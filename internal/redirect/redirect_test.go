@@ -103,15 +103,20 @@ func TestConfRefusesAFileItDoesNotRecognise(t *testing.T) {
 // range leases come from, or a redirect target could be handed out as someone's
 // port.
 func TestAnchorSendsBothPortsToTheDaemon(t *testing.T) {
-	rules := redirect.Anchor(redirect.Port, redirect.HTTPPort)
+	rules := redirect.Anchor("127.0.0.4", redirect.Port, redirect.HTTPPort)
 
 	for _, want := range []string{
-		"port = 443 -> 127.0.0.1 port 10443",
-		"port = 80 -> 127.0.0.1 port 10080",
+		"to 127.0.0.4 port = 443 -> 127.0.0.4 port 10443",
+		"to 127.0.0.4 port = 80 -> 127.0.0.4 port 10080",
 	} {
 		if !strings.Contains(rules, want) {
 			t.Errorf("no rule for %q:\n%s", want, rules)
 		}
+	}
+	// An unscoped rule is the whole interface, so anything else on 443 is never
+	// reached, and a pf rule outlives the daemon that installed it.
+	if strings.Contains(rules, "to any port") {
+		t.Errorf("the rules are not scoped to one address:\n%s", rules)
 	}
 	for _, port := range []int{redirect.Port, redirect.HTTPPort} {
 		if port >= 20000 && port <= 20999 {
@@ -129,15 +134,15 @@ func TestStageWritesBothFilesWhereItSaysItDid(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	staged, err := redirect.Stage(dir, merged)
+	staged, err := redirect.Stage(dir, "127.0.0.4", merged)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	for path, want := range map[string]string{
-		staged.Anchor: redirect.Anchor(redirect.Port, redirect.HTTPPort),
+		staged.Anchor: redirect.Anchor("127.0.0.4", redirect.Port, redirect.HTTPPort),
 		staged.Conf:   merged,
-		staged.Plist:  redirect.Plist(),
+		staged.Plist:  redirect.Plist("127.0.0.4"),
 	} {
 		body, err := os.ReadFile(path)
 		if err != nil {
@@ -159,17 +164,16 @@ func TestStageWritesBothFilesWhereItSaysItDid(t *testing.T) {
 	}
 }
 
-// launchd is strict about plists, and the job has to both enable pf and put the
-// rules back, since macOS loads pf.conf at boot with pf switched off.
-func TestPlistEnablesAndLoadsAtBoot(t *testing.T) {
-	body := redirect.Plist()
+// A reboot takes away both the alias and pf, and losing the alias means nothing
+// resolves rather than nothing being redirected, so the job has to restore both.
+func TestPlistRestoresBothTheAddressAndTheRules(t *testing.T) {
+	body := redirect.Plist("127.0.0.4")
 
 	for _, want := range []string{
 		"<key>Label</key>",
 		"<string>" + redirect.PlistLabel + "</string>",
-		"<string>/sbin/pfctl</string>",
-		"<string>-E</string>",
-		"<string>" + redirect.ConfPath + "</string>",
+		"ifconfig lo0 alias 127.0.0.4",
+		"pfctl -E -f " + redirect.ConfPath,
 		"<key>RunAtLoad</key>",
 	} {
 		if !strings.Contains(body, want) {

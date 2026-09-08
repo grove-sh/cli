@@ -41,9 +41,11 @@ var (
 	ErrUnknownConf = errors.New("redirect: no rdr-anchor to add grove's beside")
 )
 
-func Anchor(https, http int) string {
+// Scoped to one address, because an unscoped rule takes every loopback
+// connection on 443 whatever else is bound there, and outlives the daemon.
+func Anchor(addr string, https, http int) string {
 	rule := func(from, to int) string {
-		return fmt.Sprintf("rdr pass on lo0 inet proto tcp from any to any port = %d -> 127.0.0.1 port %d\n", from, to)
+		return fmt.Sprintf("rdr pass on lo0 inet proto tcp from any to %s port = %d -> %s port %d\n", addr, from, addr, to)
 	}
 	return rule(443, https) + rule(80, http)
 }
@@ -106,10 +108,13 @@ func Configured(conf string) bool {
 	return false
 }
 
-// Plist uses pfctl -E rather than -e: it tolerates pf already being on, where
-// -e fails and would leave a failed job in the log every boot. Loading the job
-// runs it, so installing it also applies the rules.
-func Plist() string {
+// Plist restores the alias as well as the rules, since macOS configures neither
+// the address nor pf at boot, and without the address nothing resolves at all.
+//
+// Sequenced with ; so pf still loads when the alias is already there, and
+// pfctl -E rather than -e so it tolerates pf already being on. Loading the job
+// runs it, so installing it applies both.
+func Plist(addr string) string {
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -118,16 +123,15 @@ func Plist() string {
 	<string>%s</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/sbin/pfctl</string>
-		<string>-E</string>
-		<string>-f</string>
-		<string>%s</string>
+		<string>/bin/sh</string>
+		<string>-c</string>
+		<string>/sbin/ifconfig lo0 alias %s netmask 0xffffffff; /sbin/pfctl -E -f %s</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
 </dict>
 </plist>
-`, PlistLabel, ConfPath)
+`, PlistLabel, addr, ConfPath)
 }
 
 // Staged is where grove wrote the files the privileged step installs.
@@ -139,7 +143,7 @@ type Staged struct {
 
 // Stage leaves readable files rather than a shell incantation nobody can check
 // first. Root has to read them, so they are not private.
-func Stage(dir, conf string) (Staged, error) {
+func Stage(dir, addr, conf string) (Staged, error) {
 	dir = filepath.Join(dir, "pf")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return Staged{}, err
@@ -150,9 +154,9 @@ func Stage(dir, conf string) (Staged, error) {
 		Plist:  filepath.Join(dir, PlistLabel+".plist"),
 	}
 	for path, body := range map[string]string{
-		staged.Anchor: Anchor(Port, HTTPPort),
+		staged.Anchor: Anchor(addr, Port, HTTPPort),
 		staged.Conf:   conf,
-		staged.Plist:  Plist(),
+		staged.Plist:  Plist(addr),
 	} {
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			return Staged{}, err

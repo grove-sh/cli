@@ -7,7 +7,7 @@ import "runtime"
 func PrivilegedPorts() PortAccess {
 	return PortAccess{
 		Detail: "grove does not know how " + runtime.GOOS + " grants low ports",
-		Advice: "Run the daemon on a high port: grove restart --listen 127.0.0.1:8443",
+		Advice: "Run the daemon on a high port: grove restart --listen " + Address + ":8443",
 	}
 }
 
@@ -20,7 +20,7 @@ func PrepareRedirect(string) (string, error) { return "", nil }
 func RemoveRedirect(string) (string, error) { return "", nil }
 
 // Nothing here knows better, so ask for 443 and report what happens.
-func DefaultListen() string { return "127.0.0.1:443" }
+func DefaultListen() string { return Address + ":443" }
 
 // Best effort, like 443: nothing breaks when it fails.
-func DefaultHTTPListen() string { return "127.0.0.1:80" }
+func DefaultHTTPListen() string { return Address + ":80" }

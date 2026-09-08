@@ -63,8 +63,8 @@ func PrepareRedirect(string) (string, error) { return "", nil }
 func RemoveRedirect(string) (string, error) { return "", nil }
 
 // The sysctl lowers the floor, so grove binds 443 itself.
-func DefaultListen() string { return "127.0.0.1:443" }
+func DefaultListen() string { return Address + ":443" }
 
 // Best effort: 80 is below the floor the advised sysctl lowers to 443, so this
 // usually fails and nothing breaks.
-func DefaultHTTPListen() string { return "127.0.0.1:80" }
+func DefaultHTTPListen() string { return Address + ":80" }
