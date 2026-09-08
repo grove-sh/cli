@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -155,6 +156,14 @@ func checkDNS(domain string) finding {
 			return f
 		}
 	}
+	// Loopback is not enough: a domain pointing at the wrong loopback address
+	// means the domain and the grove reading it came from different versions.
+	if !slices.Contains(addrs, platform.Address) {
+		f.state = bad
+		f.detail = fmt.Sprintf("%s resolves to %s, and grove serves %s", host, strings.Join(addrs, ", "), platform.Address)
+		f.advice = "That domain belongs to a different version of grove than this one. Check which grove you are running."
+		return f
+	}
 	f.state = ok
 	f.detail = fmt.Sprintf("*.%s resolves to %s", domain, strings.Join(addrs, ", "))
 	return f
@@ -278,7 +287,7 @@ func checkPort443(running *daemon.Status, stateDir, domain string) finding {
 func port443(running *daemon.Status, stateDir, domain, listen string, access platform.PortAccess) finding {
 	f := finding{name: "Port 443"}
 
-	const address = "127.0.0.1:443"
+	address := platform.Address + ":443"
 	if running != nil && running.Listen == address {
 		f.state = ok
 		f.detail = fmt.Sprintf("held by grove itself, pid %d", running.PID)
@@ -352,7 +361,7 @@ func checkHTTPRedirect(running *daemon.Status, domain string) finding {
 // field in the status could not manage.
 func redirectFrom80(domain string) (string, bool) {
 	host := "doctor." + domain
-	request, err := http.NewRequest("GET", "http://127.0.0.1:80/", nil)
+	request, err := http.NewRequest("GET", "http://"+platform.Address+":80/", nil)
 	if err != nil {
 		return "", false
 	}
@@ -393,7 +402,7 @@ func answersOn443(stateDir, domain string) bool {
 
 	conn, err := tls.DialWithDialer(
 		&net.Dialer{Timeout: 2 * time.Second},
-		"tcp", "127.0.0.1:443",
+		"tcp", platform.Address+":443",
 		&tls.Config{ServerName: "doctor." + domain, RootCAs: pool},
 	)
 	if err != nil {

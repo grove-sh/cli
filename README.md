@@ -20,8 +20,8 @@
 Every worktree of a repository gets its own hostname, its own ports, and its own environment, so several checkouts run at the same time without colliding:
 
 ```
-~/work/app            https://app.grov.site          postgres on 20402
-~/worktrees/app/feat  https://app-feat.grov.site     postgres on 20533
+~/work/app            https://app.v4.grov.site       postgres on 20402
+~/worktrees/app/feat  https://app-feat.v4.grov.site  postgres on 20533
 ```
 
 No port in the URL, a real certificate your browser trusts, and one command to run anything inside that context:
@@ -44,11 +44,13 @@ Or, if you have Go: `go install github.com/grove-sh/cli/cmd/grove@latest`. Eithe
 grove install
 ```
 
-That generates a local certificate authority, adds it to your trust stores, and prints the one privileged step your platform needs. On Linux that is a sysctl lowering the port floor; on macOS it is a pf redirect, since nothing there can bind 443 as you. Grove prints those commands rather than running them, because they change the machine rather than your project.
+That generates a local certificate authority, adds it to your trust stores, and prints the one privileged step your platform needs. On Linux that is a sysctl lowering the port floor; on macOS it is a pf redirect and a loopback alias, since nothing there can bind 443 as you. Grove prints those commands rather than running them, because they change the machine rather than your project.
 
 It does not arrange for anything to run at boot. Grove is up while you are using it: `grove exec` starts a daemon when none is answering, and `grove start` does it on its own.
 
-On Linux nothing lingers afterwards, so `grove stop` hands port 443 back to lando or anything else that wants it. macOS is different, and worth knowing before you install: grove cannot bind 443 there, so the privileged step installs a pf rule that sends every loopback connection on 443 to the port grove can bind. That rule is machine wide and outlives `grove stop`, so while it is installed lando's proxy can still bind 443 and will never be reached, and stopping grove leaves the port going nowhere rather than handing it over. Remove the rule with `sudo pfctl -a grove -F nat` to give it back for the session, or delete `/etc/pf.anchors/grove` and the two lines grove added to `/etc/pf.conf` to give it back for good.
+Grove serves `127.0.0.4` rather than `127.0.0.1`, which is what lets it run beside anything else that wants port 443. Lando keeps `127.0.0.1:443` and grove takes `127.0.0.4:443`, both at once, and neither has to be stopped for the other. The wildcard DNS for the domain points at that address, so nothing about it is visible in a URL.
+
+Earlier versions took `127.0.0.1:443` and, on macOS, redirected the whole loopback interface, which meant a lando proxy could bind the port and never be reached. If you used one of those, `grove uninstall` prints the step that undoes it.
 
 Then check it:
 
@@ -112,7 +114,7 @@ export default defineConfig({
 
 ```
 ROUTE  URL                    PORT   STATE
-web    https://app.grov.site  20107  running
+web    https://app.v4.grov.site  20107  running
 db     -                      20402  claimed
 ```
 
@@ -150,7 +152,7 @@ Ports come from a hash of the context and the entry, so they are stable without 
 
 Leases live in the daemon's memory. An attached lease lasts as long as the command that took it; a detached one outlives it, because `supabase start` returns in seconds and holds its ports for hours. Nothing survives a daemon restart: the ports are derived from the context so they come back the same, but the hostnames have nowhere to route until something says the context exists. `grove hold` is that something. `grove restart` does it for you, since it reads the table a moment before dropping it and then asks each of those projects what it wants, so a planned restart costs nothing. `hold` is for the times nothing had the chance: a crash, a reboot, or a stop and a later start.
 
-On macOS the pf rules are the one thing that does need to survive a reboot, so `grove install` stages a small root-owned launchd job whose only work is reloading them. That is the firewall rule coming back, not grove.
+On macOS two things need to survive a reboot: the pf rules, and `127.0.0.4` itself, since macOS configures only `127.0.0.1` on the loopback interface. So `grove install` stages a small root-owned launchd job that puts back both. That is the address and the firewall rule coming back, not grove.
 
 Under CI, with no daemon answering, `grove exec` runs your command untouched. A build service is the authority on its own environment.
 

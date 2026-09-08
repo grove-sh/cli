@@ -18,8 +18,10 @@ import (
 //	go build -ldflags '-X main.customVersion=v0.1.0' ./cmd/grove
 var customVersion string
 
+// Paired with platform.Address, which its wildcard points at. See there.
+//
 // TODO: comes from ~/.config/grove/config.toml once config parsing lands.
-const defaultDomain = "grov.site"
+const defaultDomain = "v4.grov.site"
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))

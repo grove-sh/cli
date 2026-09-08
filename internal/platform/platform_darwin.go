@@ -59,7 +59,7 @@ func PrepareRedirect(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	staged, err := redirect.Stage(dir, merged)
+	staged, err := redirect.Stage(dir, Address, merged)
 	if err != nil {
 		return "", err
 	}
@@ -127,11 +127,12 @@ func RemoveRedirect(dir string) (string, error) {
 		"  sudo pfctl -a " + redirect.AnchorName + " -F nat",
 		"  sudo launchctl bootout system " + redirect.PlistPath,
 		"  sudo rm " + redirect.PlistPath + " " + redirect.AnchorPath,
+		"  sudo ifconfig lo0 -alias " + Address,
 		"",
 		"In that order: the first two take grove out of the machine's own rules,",
-		"the third clears what is still loaded, and only then do the files go. pf",
-		"itself is left enabled, since it may have been on before grove and other",
-		"rules may want it.",
+		"the third clears what is still loaded, then the files go, and the last",
+		"takes " + Address + " back off the loopback interface. pf itself is left",
+		"enabled, since it may have been on before grove and other rules may want it.",
 		"",
 		"pfctl warns that -f could flush rules the system added at startup. It says",
 		"that every time and it is not a failure; a real problem names a file and a",
@@ -146,9 +147,9 @@ func RemoveRedirect(dir string) (string, error) {
 
 // Where pf sends 443, since macOS will not allow binding it. Nothing reaches
 // here until the redirect is installed, which PrivilegedPorts reports on.
-func DefaultListen() string { return fmt.Sprintf("127.0.0.1:%d", redirect.Port) }
+func DefaultListen() string { return fmt.Sprintf("%s:%d", Address, redirect.Port) }
 
 func WSL() bool { return false }
 
 // The same arrangement for 80, out of the same anchor.
-func DefaultHTTPListen() string { return fmt.Sprintf("127.0.0.1:%d", redirect.HTTPPort) }
+func DefaultHTTPListen() string { return fmt.Sprintf("%s:%d", Address, redirect.HTTPPort) }

@@ -39,7 +39,7 @@ Releases are cut by pushing a `v*` tag. No version is written down in the repo: 
 
 ## How the pieces fit
 
-**One daemon serves the machine.** `grove daemon` is hidden and runs in the foreground; `grove start`, `restart`, and any `grove exec` spawn it detached by re-executing `os.Executable()` with `Setsid`, logging to `daemon.log` in the state directory. Nothing supervises it and nothing starts it at boot, which on Linux is what lets `grove stop` hand 443 back to lando. On macOS it does not: the pf rule is machine wide, nothing in grove removes it, and while it is loaded a lando proxy bound to 443 is never reached.
+**One daemon serves the machine.** `grove daemon` is hidden and runs in the foreground; `grove start`, `restart`, and any `grove exec` spawn it detached by re-executing `os.Executable()` with `Setsid`, logging to `daemon.log` in the state directory. Nothing supervises it and nothing starts it at boot.
 
 **The control protocol is one JSON request per unix-socket connection.** `daemon.Version` is checked both on the way in and on the way back, and must be bumped when the wire shape changes: a binary is rebuilt far more often than its daemon is restarted, so the mismatch has to name itself rather than surface as a missing field.
 
@@ -51,11 +51,15 @@ Releases are cut by pushing a `v*` tag. No version is written down in the repo: 
 
 **Templates are validated at load.** `checkTemplates` resolves every `{token}` against dummy bindings when the config is read, so a typo fails at load rather than at use. Unknown TOML keys are an error too, which is why `schema` exists in the file format before anything writes it.
 
-**Low ports differ by platform.** Linux lowers `ip_unprivileged_port_start` and binds 443 directly; macOS cannot lower anything, so the daemon binds 10443/10080 and pf redirects. Either way grove *prints* the privileged step rather than running it, and `redirect` is pure string manipulation so its tests run anywhere.
+**Grove serves `platform.Address`, not `127.0.0.1`.** That is the whole reason it can run beside lando: nothing contends for `127.0.0.1:443`, so neither has to be stopped for the other, and there is no port to hand back. The address and `defaultDomain` are one decision, since a hostname resolving somewhere grove does not serve reaches nothing, which is what doctor's DNS check reports when they disagree. Both are constants and neither is configurable alone.
+
+The four places still naming `127.0.0.1` are the other side of the proxy, where dev servers listen: `lease.freeOnLoopback`, `proxy.loopbackTransport`, the daemon's upstream, and `ls.answering`.
+
+**Low ports differ by platform.** Linux lowers `ip_unprivileged_port_start` and binds 443 on the address directly, since the floor is per-port not per-address, so nothing else was needed there. macOS cannot lower anything, so the daemon binds 10443/10080 and pf redirects, scoped `to <address>` rather than the whole interface: an earlier unscoped rule took every loopback connection on 443, so a lando proxy could bind the port and never be reached. macOS also needs the address itself, which it does not configure and a reboot removes, so the launchd job adds the `lo0` alias as well as reloading pf. That makes the job load-bearing for hostnames resolving at all, not just for the redirect. Either way grove *prints* the privileged step rather than running it, and `redirect` is pure string manipulation so its tests run anywhere.
 
 **What install prints is tested by pasting it.** The `macos-443` job greps `^[[:space:]]+sudo ` out of `grove install`'s output, runs those lines, and asserts `pf sends 443 to`. So the two-space indent in `platform_*.go` and that phrasing in `internal/redirect` are load-bearing with no Go test covering either: a job reconstructing the instructions could pass while the real ones were wrong. It points `GROVE_STATE_DIR` at a path containing a space on purpose, because splitting those paths into the wrong number of arguments once passed CI without one.
 
-`grov.site` is real wildcard DNS into loopback, so there are no hosts-file entries to manage. The domain is not a config key yet: `defaultDomain` in `cmd/grove/main.go` is a constant, and nothing in `internal/config` reads a domain.
+`v4.grov.site` is real wildcard DNS pointing at `platform.Address`, so there are no hosts-file entries to manage. `*.grov.site` still points at `127.0.0.1` for versions before this one, which is what makes the changeover something people can do when they want to rather than all at once. The domain is not a config key yet: `defaultDomain` in `cmd/grove/main.go` is a constant, and nothing in `internal/config` reads a domain.
 
 ## Conventions in this codebase
 

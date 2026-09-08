@@ -397,9 +397,9 @@ directory.`,
 func bindHint(address string, err error) error {
 	switch {
 	case errors.Is(err, syscall.EACCES):
-		return fmt.Errorf("%w\nBinding a port below 1024 needs privileges grove does not have yet. Try --listen 127.0.0.1:8443", err)
+		return fmt.Errorf("%w\nBinding a port below 1024 needs privileges grove does not have yet. Try --listen "+platform.Address+":8443", err)
 	case errors.Is(err, syscall.EADDRINUSE):
-		return fmt.Errorf("%w\nSomething already holds %s. If you use lando, 'lando poweroff' releases it, or try --listen 127.0.0.1:8443", err, address)
+		return fmt.Errorf("%w\nSomething already holds %s. If you use lando, 'lando poweroff' releases it, or try --listen "+platform.Address+":8443", err, address)
 	}
 	return err
 }
