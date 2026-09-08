@@ -28,14 +28,18 @@ func inspect() (redirect.State, error) {
 	if err != nil {
 		return redirect.State{}, fmt.Errorf("cannot read %s: %w", redirect.ConfPath, err)
 	}
-	exists := func(path string) bool {
-		_, err := os.Stat(path)
-		return err == nil
+	// What the files say, not whether they are there. A grove that changes the
+	// rules or the job finds the previous version's still installed, and an
+	// upgrade that reads those as ready installs nothing and then cannot bind
+	// the address the old job never created.
+	holds := func(path, want string) bool {
+		got, err := os.ReadFile(path)
+		return err == nil && string(got) == want
 	}
 	return redirect.State{
 		Referenced: redirect.Configured(string(conf)),
-		Anchor:     exists(redirect.AnchorPath),
-		Boot:       exists(redirect.PlistPath),
+		Anchor:     holds(redirect.AnchorPath, redirect.Anchor(Address, redirect.Port, redirect.HTTPPort)),
+		Boot:       holds(redirect.PlistPath, redirect.Plist(Address)),
 	}, nil
 }
 

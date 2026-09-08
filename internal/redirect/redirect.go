@@ -187,10 +187,10 @@ func Access(state State) (allowed bool, detail, advice string) {
 		missing = append(missing, "nothing redirects it yet")
 	}
 	if !state.Anchor {
-		missing = append(missing, AnchorPath+" is not there")
+		missing = append(missing, AnchorPath+" is missing or out of date")
 	}
 	if !state.Boot {
-		missing = append(missing, "nothing puts the rules back after a reboot")
+		missing = append(missing, "nothing current puts them back after a reboot")
 	}
 	if len(missing) == 0 {
 		return true, fmt.Sprintf("pf sends 443 to %d, so grove serves it without root", Port), ""

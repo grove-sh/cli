@@ -266,3 +266,18 @@ func TestWithoutLeavesAnUntouchedConfAlone(t *testing.T) {
 		t.Errorf("changed a file it had nothing to do with:\n%q", back)
 	}
 }
+
+// A grove that changes the rules finds the previous version's already installed.
+// Comparing what a file says rather than that it exists is what makes an
+// upgrade notice, and platform.inspect does the comparing against these.
+func TestAnchorAndPlistChangeWithTheAddress(t *testing.T) {
+	oldRules := redirect.Anchor("127.0.0.1", redirect.Port, redirect.HTTPPort)
+	newRules := redirect.Anchor("127.0.0.4", redirect.Port, redirect.HTTPPort)
+
+	if oldRules == newRules {
+		t.Error("the rules do not mention the address, so a stale anchor reads as current")
+	}
+	if redirect.Plist("127.0.0.1") == redirect.Plist("127.0.0.4") {
+		t.Error("the job does not mention the address, so a stale plist reads as current")
+	}
+}
