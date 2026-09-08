@@ -1,6 +1,21 @@
-# grove
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./docs/assets/grove-banner-dark.svg">
+    <img src="./docs/assets/grove-banner-light.svg" alt="grove" width="300">
+  </picture>
+</p>
 
-Local HTTPS hostnames, ports, and env vars, scoped per git worktree.
+<p align="center">
+  Local HTTPS hostnames, ports, and env vars, scoped per git worktree.
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@grove-sh/cli"><img alt="npm" src="https://img.shields.io/npm/v/@grove-sh/cli?style=flat-square&color=7FC96B"></a>
+  <a href="https://github.com/grove-sh/cli/actions/workflows/ci.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/grove-sh/cli/ci.yml?branch=main&label=build&style=flat-square&color=7FC96B"></a>
+  <a href="https://github.com/grove-sh/cli/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-7FC96B?style=flat-square"></a>
+</p>
+
+---
 
 Every worktree of a repository gets its own hostname, its own ports, and its own environment, so several checkouts run at the same time without colliding:
 
