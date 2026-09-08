@@ -127,9 +127,9 @@ jobs:
           # answered. --resolve rather than DNS, since the address and port are the
           # question. An HTTP status curl dislikes still means TLS completed.
           curl -sS --fail-with-body --cacert "$GROVE_STATE_DIR/root.crt" \
-            --resolve "ci.v4.grov.site:443:127.0.0.4" \
+            --resolve "ci.grov.site:443:127.0.0.4" \
             -o /dev/null -w 'reached grove on 443, http=%{http_code}\n' \
-            "https://ci.v4.grov.site/" || {
+            "https://ci.grov.site/" || {
               status=$?
               test "$status" = "22"
               echo "reached grove on 443, and it had nothing to route"

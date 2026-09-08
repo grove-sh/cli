@@ -93,14 +93,14 @@ func scaffold(root, project string) (string, []string) {
 	var notes []string
 	var b strings.Builder
 
-	b.WriteString(`# grove.toml
+	fmt.Fprintf(&b, `# grove.toml
 # Every route below gets its own hostname, one per worktree:
-#   <context>.grov.site, or <context>-<label>.grov.site
+#   <context>.%[1]s, or <context>-<label>.%[1]s
 #
 # The project name comes from this directory. Uncomment to override it, which
 # is worth doing when the directory and the project disagree.
 # name = "example"
-`)
+`, defaultDomain)
 
 	if _, err := os.Stat(filepath.Join(root, ".env")); err == nil {
 		b.WriteString("\nenv_files = [\".env\"]\n")

@@ -20,8 +20,8 @@
 Every worktree of a repository gets its own hostname, its own ports, and its own environment, so several checkouts run at the same time without colliding:
 
 ```
-~/work/app            https://app.v4.grov.site       postgres on 20402
-~/worktrees/app/feat  https://app-feat.v4.grov.site  postgres on 20533
+~/work/app            https://app.grov.site          postgres on 20402
+~/worktrees/app/feat  https://app-feat.grov.site     postgres on 20533
 ```
 
 No port in the URL, a real certificate your browser trusts, and one command to run anything inside that context:
@@ -114,7 +114,7 @@ export default defineConfig({
 
 ```
 ROUTE  URL                    PORT   STATE
-web    https://app.v4.grov.site  20107  running
+web    https://app.grov.site  20107  running
 db     -                      20402  claimed
 ```
 

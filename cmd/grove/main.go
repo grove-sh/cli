@@ -21,7 +21,7 @@ var customVersion string
 // Paired with platform.Address, which its wildcard points at. See there.
 //
 // TODO: comes from ~/.config/grove/config.toml once config parsing lands.
-const defaultDomain = "v4.grov.site"
+const defaultDomain = "grov.site"
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))

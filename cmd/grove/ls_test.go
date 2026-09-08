@@ -2,6 +2,7 @@ package main
 
 import (
 	"net"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -255,4 +256,27 @@ func lineFor(table, route, want string) bool {
 		}
 	}
 	return false
+}
+
+// The two listings are chosen by whether a grove.toml was found, so they used
+// to disagree about a stopped daemon: inside a project it was a state to
+// report, and one directory up it was an error.
+func TestLsTreatsAStoppedDaemonTheSameEitherWay(t *testing.T) {
+	socket := filepath.Join(socketDir(t), "nothing.sock")
+
+	inProject := tempRepo(t, "app1")
+	t.Chdir(inProject)
+	if code, _, stderr := exercise(t, "ls", "--socket", socket); code != 0 {
+		t.Errorf("ls inside a project exited %d: %s", code, stderr)
+	}
+
+	t.Chdir(t.TempDir())
+	code, _, stderr := exercise(t, "ls", "--socket", socket)
+
+	if code != 0 {
+		t.Errorf("ls outside a project exited %d: %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "not running") {
+		t.Errorf("it did not say the daemon is down: %q", stderr)
+	}
 }

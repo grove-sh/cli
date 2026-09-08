@@ -154,15 +154,30 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 }
 
 func listLeases(cmd *cobra.Command, socket string) error {
+	// Nothing running is a true answer here as much as it is for a project's
+	// own routes, and listing every lease on a machine that holds none is not
+	// a failure. These two paths are chosen by whether a grove.toml was found,
+	// so disagreeing about it made ls behave differently one directory apart.
 	client, err := daemon.Dial(socket)
 	if err != nil {
-		return err
+		var down *daemon.NotRunningError
+		if !errors.As(err, &down) {
+			return err
+		}
+		fmt.Fprintln(cmd.ErrOrStderr(), "grove is not running, so nothing is leased")
+		return nil
 	}
 	defer client.Close()
 
 	entries, err := client.List()
-	if err != nil || len(entries) == 0 {
+	if err != nil {
 		return err
+	}
+	if len(entries) == 0 {
+		// Saying so, because an empty table and a stopped daemon printed the
+		// same nothing.
+		fmt.Fprintln(cmd.ErrOrStderr(), "grove is running and holding nothing")
+		return nil
 	}
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)

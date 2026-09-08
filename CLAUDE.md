@@ -59,7 +59,7 @@ The four places still naming `127.0.0.1` are the other side of the proxy, where 
 
 **What install prints is tested by pasting it.** The `macos-443` job greps `^[[:space:]]+sudo ` out of `grove install`'s output, runs those lines, and asserts `pf sends 443 to`. So the two-space indent in `platform_*.go` and that phrasing in `internal/redirect` are load-bearing with no Go test covering either: a job reconstructing the instructions could pass while the real ones were wrong. It points `GROVE_STATE_DIR` at a path containing a space on purpose, because splitting those paths into the wrong number of arguments once passed CI without one.
 
-`v4.grov.site` is real wildcard DNS pointing at `platform.Address`, so there are no hosts-file entries to manage. `*.grov.site` still points at `127.0.0.1` for versions before this one, which is what makes the changeover something people can do when they want to rather than all at once. The domain is not a config key yet: `defaultDomain` in `cmd/grove/main.go` is a constant, and nothing in `internal/config` reads a domain.
+`grov.site` is real wildcard DNS pointing at `platform.Address`, so there are no hosts-file entries to manage. `*.v4.grov.site` also points there and is kept for the 0.3.0 betas, which shipped while `*.grov.site` still answered `127.0.0.1`: deleting it would break a published version. The domain is not a config key yet: `defaultDomain` in `cmd/grove/main.go` is a constant, and nothing in `internal/config` reads a domain.
 
 ## Conventions in this codebase
 
