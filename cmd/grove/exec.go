@@ -100,29 +100,23 @@ asks for the same tolerance anywhere.`,
 	return cmd
 }
 
-// announce names the hostname this command just took, which is the one thing
-// nobody discovers on their own: the dev server prints the port it was handed
-// and says nothing about the URL that reaches it.
-//
-// Only for a route, since a port has no URL, and only to a terminal, so that a
-// build's output stays exactly what the build wrote.
+// The dev server prints the port it was handed and never the URL that reaches
+// it. Only to a terminal, so a build's output stays what the build wrote.
 func announce(out io.Writer, active *config.Entry, grants map[string]daemon.Grant) {
 	line := routeLine(active, grants)
 	if line == "" || !isTerminal(out) {
 		return
 	}
-	// Naming a URL the browser will reject is worse than naming none: the
-	// hostname resolves and grove routes it, so the failure looks like grove
-	// working and the site being broken.
+	// A URL the browser rejects is worse than none: it resolves and routes, so
+	// the failure reads as grove working and the site being broken.
 	if urlProblem(daemon.StateDir()) != "" {
 		return
 	}
 	fmt.Fprintln(out, line)
 }
 
-// urlProblem says why https://<host> would not open, or nothing when it would.
-// Callers that already know the daemon is answering have only the root this
-// machine must trust and the port the URL implies left to worry about.
+// Empty when it would open. A caller holding a grant knows the daemon answered,
+// so what is left is the root being trusted and the port the URL implies.
 func urlProblem(stateDir string) string {
 	root, err := ca.Open(stateDir)
 	if errors.Is(err, ca.ErrNoAuthority) {

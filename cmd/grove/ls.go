@@ -78,17 +78,13 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 		fmt.Fprintln(cmd.ErrOrStderr(), "grove is not running, so nothing here is being served")
 	}
 
-	// The URL is the thing someone came to this table for, so it carries how
-	// much to believe it: green opens, yellow would open if something were
-	// listening, red will not open at all. The STATE column and the line under
-	// the table say the same in words, since piping keeps only those.
+	// The URL carries how much to believe it. The STATE column and the line
+	// under the table say the same in words, since piping keeps only those.
 	paint := styles(cmd.OutOrStdout())
 	problem := urlProblem(daemon.StateDir())
 
-	// Coloured after the table is laid out, not while writing it: a tabwriter
-	// measures a cell by the bytes in it, and there is no way to tell it an
-	// escape code takes no width. Padding first and painting into the result
-	// keeps the columns honest.
+	// Coloured after the layout, not during it: a tabwriter measures a cell by
+	// its bytes and cannot be told an escape code takes no width.
 	var table bytes.Buffer
 	painted := map[string]string{}
 	w := tabwriter.NewWriter(&table, 0, 0, 2, ' ', 0)
@@ -142,9 +138,8 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 	}
 	fmt.Fprint(cmd.OutOrStdout(), laid)
 
-	// A URL in a table reads as a promise. Saying nothing when the browser
-	// would refuse it leaves the reader to discover that themselves, and to
-	// conclude their app is broken rather than that grove is not finished.
+	// A URL in a table reads as a promise, and someone whose browser refuses it
+	// concludes their app is broken rather than that grove is unfinished.
 	if routed && problem != "" {
 		say := styles(cmd.ErrOrStderr())
 		fmt.Fprintln(cmd.ErrOrStderr(), say.warn(fmt.Sprintf("%s, so those URLs will not open. Run %s doctor.",
@@ -154,10 +149,8 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 }
 
 func listLeases(cmd *cobra.Command, socket string) error {
-	// Nothing running is a true answer here as much as it is for a project's
-	// own routes, and listing every lease on a machine that holds none is not
-	// a failure. These two paths are chosen by whether a grove.toml was found,
-	// so disagreeing about it made ls behave differently one directory apart.
+	// Nothing running is a true answer here too. Which listing runs depends on
+	// finding a grove.toml, so disagreeing made ls differ by one directory.
 	client, err := daemon.Dial(socket)
 	if err != nil {
 		var down *daemon.NotRunningError

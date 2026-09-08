@@ -47,9 +47,8 @@ func spawnDaemon(opts daemonOptions) error {
 	if err := child.Start(); err != nil {
 		return err
 	}
-	// Reaped here rather than left as a zombie, and the same wait is what says
-	// the daemon gave up: without it, a daemon that cannot start at all costs
-	// the full timeout in silence before saying why.
+	// Reaped rather than left a zombie, and the same wait says the daemon gave
+	// up: without it, one that cannot start costs the whole timeout in silence.
 	exited := make(chan struct{})
 	go func() {
 		child.Wait()
@@ -57,8 +56,7 @@ func spawnDaemon(opts daemonOptions) error {
 	}()
 
 	if err := waitForSocket(opts.socket, exited, 15*time.Second); err != nil {
-		// The daemon's own words if it managed any, since it knows what went
-		// wrong and this process only knows that nothing answered.
+		// The daemon's own words, since this process only knows nothing answered.
 		if said := linesSince(logPath, from); said != "" {
 			return errors.New(said)
 		}
@@ -96,8 +94,7 @@ func waitForSocketGone(path string, within time.Duration) {
 	}
 }
 
-// linesSince reports what the daemon wrote after the given offset, which is
-// this start and not any before it.
+// From the offset this start began at, not the whole appended log.
 func linesSince(path string, from int64) string {
 	file, err := os.Open(path)
 	if err != nil {

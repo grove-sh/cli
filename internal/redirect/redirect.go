@@ -79,10 +79,8 @@ func Conf(existing string) (string, bool, error) {
 	return out + loadLine + "\n", true, nil
 }
 
-// Without is the inverse of Conf: the machine's pf.conf with grove's two lines
-// taken out, and whether either was there to take. Apple's rules and anyone
-// else's are carried through, which is why this removes named lines rather
-// than restoring a copy of what pf.conf looked like before.
+// Without removes grove's two named lines rather than restoring a remembered
+// copy, since nothing says pf.conf has not been edited since by someone else.
 func Without(existing string) (string, bool) {
 	kept := make([]string, 0, len(existing))
 	removed := false

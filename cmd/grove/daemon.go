@@ -75,9 +75,8 @@ func connect(socket string, autostart, optional bool) (*daemon.Client, error) {
 	if !autostart {
 		return nil, err
 	}
-	// Knowable without starting anything, and worth saying in the words of
-	// someone who has never heard of grove: they ran a command in a project
-	// that happens to use it, and the daemon's own complaint about certificate
+	// Knowable without starting anything, and worth saying to someone who has
+	// never heard of grove: the daemon's complaint about certificate
 	// authorities explains nothing to them.
 	if _, caErr := ca.Open(daemon.StateDir()); errors.Is(caErr, ca.ErrNoAuthority) {
 		return nil, errors.New(notSetUp())

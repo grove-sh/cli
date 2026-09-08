@@ -133,8 +133,7 @@ step that undoes it, the same way install printed the one that set it up.`,
 				}
 			}
 
-			// After the trust store, because untrusting is what someone came
-			// for and it is the half that needs their attention now. The
+			// After the trust store, which is what someone came for. The
 			// redirect outlives this process either way.
 			advice, err := platform.RemoveRedirect(stateDir)
 			switch {
@@ -148,9 +147,9 @@ step that undoes it, the same way install printed the one that set it up.`,
 	}
 
 	cmd.Flags().StringVar(&stateDir, "state-dir", daemon.StateDir(), "directory holding the CA")
-	// Mirrors install's flag, and it is what lets CI check the printed removal
-	// by pasting it: untrusting a root asks macOS for authorization nobody can
-	// give on a runner, so the keychain half has to be skippable.
+	// Untrusting a root asks macOS for authorization nobody can give on a
+	// runner, so the keychain half has to be skippable for CI to paste and run
+	// the removal this prints.
 	cmd.Flags().BoolVar(&removeTrust, "trust", true, "remove the root from the system trust stores")
 	return cmd
 }

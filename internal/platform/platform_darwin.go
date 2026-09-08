@@ -28,10 +28,9 @@ func inspect() (redirect.State, error) {
 	if err != nil {
 		return redirect.State{}, fmt.Errorf("cannot read %s: %w", redirect.ConfPath, err)
 	}
-	// What the files say, not whether they are there. A grove that changes the
-	// rules or the job finds the previous version's still installed, and an
-	// upgrade that reads those as ready installs nothing and then cannot bind
-	// the address the old job never created.
+	// What the files say, not whether they are there: a grove that changes the
+	// rules finds the previous version's installed, and calling that ready
+	// installs nothing and then cannot bind an address no job created.
 	holds := func(path, want string) bool {
 		got, err := os.ReadFile(path)
 		return err == nil && string(got) == want
@@ -68,8 +67,6 @@ func PrepareRedirect(dir string) (string, error) {
 		return "", err
 	}
 
-	// Quoted, because this is pasted into a shell and the default state
-	// directory on macOS is ~/Library/Application Support/grove.
 	return strings.Join([]string{
 		fmt.Sprintf("The daemon listens on %d, and pf can send 443 there. The three files are", redirect.Port),
 		"written; installing them is one privileged step:",
@@ -89,12 +86,9 @@ func PrepareRedirect(dir string) (string, error) {
 	}, "\n"), nil
 }
 
-// RemoveRedirect stages a pf.conf without grove's lines and prints the step
-// that installs it, the same way PrepareRedirect does for putting them in.
-//
-// Uninstalling only the trust store used to leave the redirect and its boot job
-// behind, so a machine with no grove on it still sent every loopback
-// connection on 443 to a port nothing was listening to.
+// RemoveRedirect exists because untrusting the root used to leave the redirect
+// and its boot job behind, so a machine with no grove on it still sent every
+// loopback connection on 443 to a port nothing was listening to.
 func RemoveRedirect(dir string) (string, error) {
 	state, err := inspect()
 	if err != nil {
@@ -117,11 +111,10 @@ func RemoveRedirect(dir string) (string, error) {
 		return "", err
 	}
 
-	// The reference goes before the file it names, which is install's order
-	// reversed: pf.conf must never mention an anchor that is not there, or
-	// pfctl refuses the whole ruleset and the machine loses its own rules too.
-	// Someone pasting five lines does not stop at the first failure, so every
-	// prefix of this list has to leave pf loadable.
+	// The reference goes before the file it names: pf.conf mentioning an anchor
+	// that is gone makes pfctl refuse the whole ruleset, Apple's rules with it.
+	// Nobody pasting five lines stops at the first failure, so every prefix of
+	// this list has to leave pf loadable.
 	return strings.Join([]string{
 		"The redirect and the job that puts it back are still installed. Removing",
 		"them is one privileged step:",

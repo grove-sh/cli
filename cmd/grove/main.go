@@ -136,9 +136,8 @@ func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
 	}
 }
 
-// invocation names grove the way this caller can actually reach it. A project
-// that depends on @grove-sh/cli has no grove on PATH, so telling someone there
-// to run "grove install" is telling them to run a command they do not have.
+// A project depending on @grove-sh/cli has no grove on PATH, so naming one is
+// naming a command the reader does not have.
 func invocation() string {
 	self, err := os.Executable()
 	if err != nil {

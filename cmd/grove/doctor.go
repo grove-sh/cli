@@ -282,8 +282,8 @@ func checkPort443(running *daemon.Status, stateDir, domain string) finding {
 	return port443(running, stateDir, domain, platform.DefaultListen(), platform.PrivilegedPorts())
 }
 
-// port443 takes what the platform says rather than asking, so the answer for a
-// machine that redirects the port can be tested on one that binds it.
+// Takes the platform's answer rather than asking, so a machine that redirects
+// the port is testable on one that binds it.
 func port443(running *daemon.Status, stateDir, domain, listen string, access platform.PortAccess) finding {
 	f := finding{name: "Port 443"}
 
@@ -303,10 +303,9 @@ func port443(running *daemon.Status, stateDir, domain, listen string, access pla
 		return f
 	}
 
-	// Where grove would listen. When that is not 443, nothing binds 443 on this
-	// platform and trying would report permission denied however well the
-	// machine is arranged, so whether the redirect is in place is the question
-	// and the platform can answer it with no daemon running.
+	// When grove listens somewhere else, nothing binds 443 here and trying
+	// reports permission denied however well the machine is arranged. The
+	// redirect is the question, and the platform answers it with no daemon.
 	if listen != address {
 		f.state = ok
 		f.detail = access.Detail
