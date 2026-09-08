@@ -113,19 +113,29 @@ func RemoveRedirect(dir string) (string, error) {
 		return "", err
 	}
 
+	// The reference goes before the file it names, which is install's order
+	// reversed: pf.conf must never mention an anchor that is not there, or
+	// pfctl refuses the whole ruleset and the machine loses its own rules too.
+	// Someone pasting five lines does not stop at the first failure, so every
+	// prefix of this list has to leave pf loadable.
 	return strings.Join([]string{
 		"The redirect and the job that puts it back are still installed. Removing",
 		"them is one privileged step:",
 		"",
-		"  sudo launchctl bootout system " + redirect.PlistPath,
-		"  sudo rm " + redirect.PlistPath + " " + redirect.AnchorPath,
 		"  sudo cp " + shell.Quote(staged) + " " + redirect.ConfPath,
 		"  sudo pfctl -f " + redirect.ConfPath,
 		"  sudo pfctl -a " + redirect.AnchorName + " -F nat",
+		"  sudo launchctl bootout system " + redirect.PlistPath,
+		"  sudo rm " + redirect.PlistPath + " " + redirect.AnchorPath,
 		"",
-		"The last two reload the machine's own rules and clear grove's, which stay",
-		"loaded until something flushes them. pf itself is left enabled, since it",
-		"may have been on before grove and other rules may want it.",
+		"In that order: the first two take grove out of the machine's own rules,",
+		"the third clears what is still loaded, and only then do the files go. pf",
+		"itself is left enabled, since it may have been on before grove and other",
+		"rules may want it.",
+		"",
+		"pfctl warns that -f could flush rules the system added at startup. It says",
+		"that every time and it is not a failure; a real problem names a file and a",
+		"line. To read the file without loading it, add -n.",
 		"",
 		redirect.ConfPath + " is the machine's own, so grove took its two lines out of",
 		"the copy above rather than restoring one it remembered. Worth reading first:",
