@@ -57,7 +57,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
 
       - run: npm/rehearse.sh
 
@@ -260,6 +260,9 @@ jobs:
     # The install loop alone can spend ten minutes waiting on npm's mirrors.
     timeout-minutes: 25
     steps:
+      # 22, not 24, on purpose: this stands in for a user, and 22 is the oldest
+      # Node still supported. Nothing else exercises the shim on an older
+      # client, and the shim is the hand-written half.
       - uses: actions/setup-node@v6
         with:
           node-version: 22
