@@ -71,7 +71,7 @@ func TestOneRemedyIsSaidOnce(t *testing.T) {
 // Silent is not the same as unchecked. DNS passes for everyone until the day
 // it does not, and that day is the whole reason the check exists.
 func TestASilentCheckStillSpeaksWhenItFails(t *testing.T) {
-	quiet := checkDNS("grov.site")
+	quiet := checkDNS(defaultDomain)
 	if quiet.state != ok {
 		t.Skip("this machine cannot resolve the real domain, so the pair proves nothing")
 	}
