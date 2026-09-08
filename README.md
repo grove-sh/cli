@@ -17,7 +17,9 @@
 
 ---
 
-Every worktree of a repository gets its own hostname, its own ports, and its own environment, so several checkouts run at the same time without colliding:
+Two branches of the same app cannot both be running, not without juggling ports by hand and editing `.env` for each one, and then forgetting to change them back. So mostly you stop the first thing to look at the second.
+
+Grove makes a git worktree the unit. Every worktree of a repository gets its own hostname, its own ports, and its own environment, so several checkouts serve at the same time without colliding:
 
 ```
 ~/work/app            https://app.grov.site          postgres on 20402
@@ -29,6 +31,27 @@ No port in the URL, a real certificate your browser trusts, and one command to r
 ```sh
 grove exec -- pnpm dev
 ```
+
+Nothing is configured per worktree. Ports come from a hash of the worktree and the thing being served, so a new checkout is addressable the moment it exists. And because the worktree's name is a value you can template, `{context.slug}` in a database URL points each one at its own database on the server you already run.
+
+## It does not want your machine
+
+Grove serves `127.0.0.4`, not `127.0.0.1`, so it runs beside whatever else wants port 443. The wildcard DNS points there, so the address never shows up in a URL.
+
+```
+127.0.0.1:80    docker-proxy   <- lando
+127.0.0.1:443   docker-proxy   <- lando
+127.0.0.4:80    grove
+127.0.0.4:443   grove
+```
+
+Nothing to stop, nothing to hand back, no `poweroff` before you can use something else.
+
+The rest follows the same instinct. Grove prints the one privileged step your platform needs instead of running it. It registers nothing to start at boot. It derives its ports instead of storing them, and under CI it steps aside and runs your command untouched. `grove uninstall` returns everything it borrowed.
+
+## What it is not
+
+Grove does not run your services. It addresses the ones you already start, whether that is `pnpm dev`, a supabase stack, or docker compose. If you want something to build containers and manage a stack, you want lando or ddev, and grove is happy to sit next to either.
 
 Early development. Nothing here is stable yet.
 
@@ -46,11 +69,7 @@ grove install
 
 That generates a local certificate authority, adds it to your trust stores, and prints the one privileged step your platform needs. On Linux that is a sysctl lowering the port floor; on macOS it is a pf redirect and a loopback alias, since nothing there can bind 443 as you. Grove prints those commands rather than running them, because they change the machine rather than your project.
 
-It does not arrange for anything to run at boot. Grove is up while you are using it: `grove exec` starts a daemon when none is answering, and `grove start` does it on its own.
-
-Grove serves `127.0.0.4` rather than `127.0.0.1`, which is what lets it run beside anything else that wants port 443. Lando keeps `127.0.0.1:443` and grove takes `127.0.0.4:443`, both at once, and neither has to be stopped for the other. The wildcard DNS for the domain points at that address, so nothing about it is visible in a URL.
-
-Earlier versions took `127.0.0.1:443` and, on macOS, redirected the whole loopback interface, which meant a lando proxy could bind the port and never be reached. If you used one of those, `grove uninstall` prints the step that undoes it.
+Nothing runs at boot. Grove is up while you are using it. Any `grove exec` starts a daemon when none is answering, and `grove start` does it on its own.
 
 Then check it:
 
@@ -64,7 +83,7 @@ grove doctor
 grove init
 ```
 
-This writes a `grove.toml` from what it finds: a route per app, and the ports a supabase stack would publish. Read it before trusting it, since guessing which variable an app reads its URL from is exactly that.
+This writes a `grove.toml` from what it finds: a route per app, and the ports a supabase stack would publish. Read it before trusting it. Grove is guessing which variable each app reads its URL from, and it guesses from your dependencies.
 
 ```toml
 [env]
@@ -90,9 +109,9 @@ Grove loads your `env_files` too, so it replaces `dotenv-cli` rather than sittin
 
 ## Your dev server has to bind the port it is given
 
-This is the one thing that catches everybody. Grove leases a port and proxies the hostname to it, so a server that picks its own port is a server grove cannot reach, and you get a 503 from something that looks like it is running fine.
+Grove leases a port and proxies the hostname to it, so a server that picks its own port is a server grove cannot reach, and you get a 503 from something that looks like it is running fine.
 
-Next reads `PORT` on its own. Vite does not, and its preview server is configured separately from its dev server:
+Next.js reads `PORT` on its own. Vite does not, and you configure its preview server separately from its dev server:
 
 ```ts
 // vite.config.ts
@@ -106,7 +125,7 @@ export default defineConfig({
 });
 ```
 
-`allowedHosts` matters as much as the port: dev servers reject requests carrying a `Host` they do not recognise, and grove's whole point is a hostname they have never seen.
+`allowedHosts` matters as much as the port. Dev servers reject requests carrying a `Host` they do not recognise, and grove's whole point is a hostname they have never seen.
 
 ## When something does not answer
 
@@ -118,7 +137,7 @@ web    https://app.grov.site  20107  running
 db     -                      20402  claimed
 ```
 
-On a terminal a route's URL is coloured by how much to believe it: green opens, yellow would open if something were listening, and red will not open until grove is finished being set up, which the line under the table explains.
+On a terminal, grove colours each URL by how much to believe it. Green opens. Yellow would open if something were listening. Red will not open until grove is finished being set up, and the line under the table says what is missing.
 
 `idle` means nothing holds it, `claimed` means grove handed the port out and nothing answers on it, which is what a stopped stack looks like, and `running` means something is really there.
 
@@ -140,7 +159,7 @@ grove doctor                     DNS, trust, the daemon, and port 443
 grove start | stop | restart     the daemon, which is one process for the machine
 ```
 
-One daemon serves every context, so `grove stop` drops every context's leases rather than just this project's. It says so when it does.
+One daemon serves every context, so `grove stop` drops every context's leases and not just this project's. It tells you what it dropped.
 
 On macOS, `grove uninstall` asks for authorization before it will untrust the root, since removing a trust root is not something to do quietly. In a terminal with no way to show that prompt, over ssh for instance, it waits rather than failing.
 
@@ -148,9 +167,11 @@ On macOS, `grove uninstall` asks for authorization before it will untrust the ro
 
 A context is a worktree. Its name comes from the directory, or from `name` in `grove.toml`, and `GROVE_CONTEXT_OVERRIDE` replaces it outright.
 
-Ports come from a hash of the context and the entry, so they are stable without being stored, and two contexts that collide on one are resolved by walking to the next free port and writing that down.
+Ports come from a hash of the context and the entry, so they are stable without being stored. When two contexts collide on one, grove walks to the next free port and writes that down.
 
-Leases live in the daemon's memory. An attached lease lasts as long as the command that took it; a detached one outlives it, because `supabase start` returns in seconds and holds its ports for hours. Nothing survives a daemon restart: the ports are derived from the context so they come back the same, but the hostnames have nowhere to route until something says the context exists. `grove hold` is that something. `grove restart` does it for you, since it reads the table a moment before dropping it and then asks each of those projects what it wants, so a planned restart costs nothing. `hold` is for the times nothing had the chance: a crash, a reboot, or a stop and a later start.
+Leases live in the daemon's memory. An attached lease lasts as long as the command that took it. A detached one outlives it, because `supabase start` returns in seconds and holds its ports for hours.
+
+No lease survives a daemon restart. The ports come back the same, since they are derived from the context, but the hostnames have nowhere to route until something says the context exists. `grove hold` is that something. `grove restart` does it for you, reading the table a moment before it drops it and then asking each of those projects what it wants. So a planned restart costs nothing, and `hold` is for the times nothing had the chance. A crash, a reboot, or a stop and a later start.
 
 On macOS two things need to survive a reboot: the pf rules, and `127.0.0.4` itself, since macOS configures only `127.0.0.1` on the loopback interface. So `grove install` stages a small root-owned launchd job that puts back both. That is the address and the firewall rule coming back, not grove.
 
