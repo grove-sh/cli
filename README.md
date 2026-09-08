@@ -10,9 +10,9 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@grove-sh/cli"><img alt="npm" src="https://img.shields.io/npm/v/@grove-sh/cli?style=flat-square&color=7FC96B"></a>
-  <a href="https://github.com/grove-sh/cli/actions/workflows/ci.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/grove-sh/cli/ci.yml?branch=main&label=build&style=flat-square&color=7FC96B"></a>
-  <a href="https://github.com/grove-sh/cli/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-7FC96B?style=flat-square"></a>
+  <a href="https://www.npmjs.com/package/@grove-sh/cli"><img alt="npm" src="https://img.shields.io/npm/v/@grove-sh/cli?style=flat-square&color=3C782C"></a>
+  <a href="https://github.com/grove-sh/cli/actions/workflows/ci.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/grove-sh/cli/ci.yml?branch=main&label=build&style=flat-square&color=3C782C"></a>
+  <a href="https://github.com/grove-sh/cli/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-3C782C?style=flat-square"></a>
 </p>
 
 ---
@@ -46,7 +46,9 @@ grove install
 
 That generates a local certificate authority, adds it to your trust stores, and prints the one privileged step your platform needs. On Linux that is a sysctl lowering the port floor; on macOS it is a pf redirect, since nothing there can bind 443 as you. Grove prints those commands rather than running them, because they change the machine rather than your project.
 
-It does not arrange for anything to run at boot. Grove is up while you are using it: `grove exec` starts a daemon when none is answering, and `grove start` does it on its own. Nothing lingers afterwards, which is what lets `grove stop` hand port 443 back to lando or anything else that wants it.
+It does not arrange for anything to run at boot. Grove is up while you are using it: `grove exec` starts a daemon when none is answering, and `grove start` does it on its own.
+
+On Linux nothing lingers afterwards, so `grove stop` hands port 443 back to lando or anything else that wants it. macOS is different, and worth knowing before you install: grove cannot bind 443 there, so the privileged step installs a pf rule that sends every loopback connection on 443 to the port grove can bind. That rule is machine wide and outlives `grove stop`, so while it is installed lando's proxy can still bind 443 and will never be reached, and stopping grove leaves the port going nowhere rather than handing it over. Remove the rule with `sudo pfctl -a grove -F nat` to give it back for the session, or delete `/etc/pf.anchors/grove` and the two lines grove added to `/etc/pf.conf` to give it back for good.
 
 Then check it:
 

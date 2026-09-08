@@ -2,14 +2,16 @@ package main
 
 import (
 	"bytes"
-	"github.com/grove-sh/cli/internal/ca"
 	"strings"
 	"testing"
+
+	"github.com/grove-sh/cli/internal/ca"
+	"github.com/grove-sh/cli/internal/platform"
 )
 
-// The service runs a copy taken at install time, so an upgraded package leaves
-// the old daemon serving. Saying nothing when they match keeps doctor quiet in
-// the ordinary case.
+// A daemon outlives the command that started it, so an upgrade leaves the old
+// build serving. Saying nothing when they match keeps doctor quiet in the
+// ordinary case.
 func TestStaleDaemonSpeaksUpOnlyOnADifferentBuild(t *testing.T) {
 	if got := staleDaemon("v0.1.0", "v0.1.0"); got != "" {
 		t.Errorf("same build reported as stale: %q", got)
@@ -96,5 +98,40 @@ func TestTheAuthorityDateAppearsOnlyWhenItMatters(t *testing.T) {
 
 	if strings.Contains(f.detail, "expires") {
 		t.Errorf("a fresh authority advertised its expiry: %q", f.detail)
+	}
+}
+
+// Nothing binds 443 on macOS, so attempting it reports permission denied
+// however well the machine is set up. A correctly installed Mac with grove
+// stopped once read as a red failure, which is the state it is in for as long
+// as it is not running.
+func TestPort443TrustsTheRedirectWhenNothingBindsIt(t *testing.T) {
+	access := platform.PortAccess{
+		Allowed: true,
+		Detail:  "pf sends 443 to 10443, so grove serves it without root",
+	}
+
+	f := port443(nil, t.TempDir(), "grov.site", "127.0.0.1:10443", access)
+
+	if f.state != ok {
+		t.Errorf("state = %q with the redirect installed, want %q", f.state, ok)
+	}
+	if !strings.Contains(f.detail, "pf sends 443") {
+		t.Errorf("detail = %q, which does not report the redirect", f.detail)
+	}
+}
+
+// A Mac that never took the privileged step is a real failure, and the remedy
+// is the install that stages the pf files.
+func TestPort443ReportsAMissingRedirect(t *testing.T) {
+	access := platform.PortAccess{Detail: "443 needs root here, and nothing redirects it yet"}
+
+	f := port443(nil, t.TempDir(), "grov.site", "127.0.0.1:10443", access)
+
+	if f.state != bad {
+		t.Errorf("state = %q with no redirect, want %q", f.state, bad)
+	}
+	if f.fix != "grove install" {
+		t.Errorf("fix = %q, want the install that stages the pf files", f.fix)
 	}
 }

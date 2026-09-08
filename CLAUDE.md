@@ -39,7 +39,7 @@ Releases are cut by pushing a `v*` tag. No version is written down in the repo: 
 
 ## How the pieces fit
 
-**One daemon serves the machine.** `grove daemon` is hidden and runs in the foreground; `grove start`, `restart`, and any `grove exec` spawn it detached by re-executing `os.Executable()` with `Setsid`, logging to `daemon.log` in the state directory. Nothing supervises it and nothing starts it at boot, which is what lets `grove stop` hand 443 back to lando.
+**One daemon serves the machine.** `grove daemon` is hidden and runs in the foreground; `grove start`, `restart`, and any `grove exec` spawn it detached by re-executing `os.Executable()` with `Setsid`, logging to `daemon.log` in the state directory. Nothing supervises it and nothing starts it at boot, which on Linux is what lets `grove stop` hand 443 back to lando. On macOS it does not: the pf rule is machine wide, nothing in grove removes it, and while it is loaded a lando proxy bound to 443 is never reached.
 
 **The control protocol is one JSON request per unix-socket connection.** `daemon.Version` is checked both on the way in and on the way back, and must be bumped when the wire shape changes: a binary is rebuilt far more often than its daemon is restarted, so the mismatch has to name itself rather than surface as a missing field.
 
