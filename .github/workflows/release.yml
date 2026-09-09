@@ -214,14 +214,33 @@ jobs:
       # working. Provenance needs no flag either: trusted publishing signs.
       - name: Publish to npm
         if: steps.plan.outputs.dry_run == 'false'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          NPM_TAG: ${{ steps.plan.outputs.npm_tag }}
         run: |
           set -euo pipefail
           npm --version
-          tag=${{ steps.plan.outputs.npm_tag }}
-          for dir in "$RUNNER_TEMP"/packages/cli-*; do
-            (cd "$dir" && npm publish --access public --tag "$tag")
+
+          # The wrapper last: its optionalDependencies are pinned exactly, so
+          # publishing it before the four would name versions not yet there.
+          # The glob sorts, and cli-* cannot match cli itself.
+          for dir in "$RUNNER_TEMP"/packages/cli-* "$RUNNER_TEMP/packages/cli"; do
+            name=$(node -p 'require("'"$dir"'/package.json").name')
+
+            # Re-cutting a release whose publish failed partway is the recovery
+            # this workflow is built for, and npm refuses a version it already
+            # has. So what is already there counts as done rather than as a
+            # failure that blocks the packages after it.
+            if npm view "$name@$VERSION" version > /dev/null 2>&1; then
+              echo "$name@$VERSION is already on the registry"
+              continue
+            fi
+
+            if ! (cd "$dir" && npm publish --access public --tag "$NPM_TAG"); then
+              echo "::error::$name did not publish. Trusted publishing is per package, so each of the five needs its own trusted publisher on npmjs.com; a 404 on a package that plainly exists is npm declining the OIDC token rather than a missing name."
+              exit 1
+            fi
           done
-          (cd "$RUNNER_TEMP/packages/cli" && npm publish --access public --tag "$tag")
 
       # Last of all, so the release page appears only once the version it
       # describes is installable.
