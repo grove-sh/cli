@@ -70,6 +70,105 @@ jobs:
           ln -sfn /tmp/real-tmp /tmp/linked-tmp
           TMPDIR=/tmp/linked-tmp go test -count=1 ./...
 
+  # Upgrading grove leaves the previous release's daemon running, and the
+  # restart that replaces it is the path every user takes exactly once. No
+  # other job here exercises it: they all start from no daemon at all, which is
+  # why a restart that could not read an older daemon's lease table shipped.
+  #
+  # High ports throughout, so none of this needs the privileged setup that
+  # reaching 443 does.
+  upgrade:
+    runs-on: ubuntu-latest
+    env:
+      GROVE_STATE_DIR: ${{ github.workspace }}/upgrade-state
+      GROVE_SOCKET: /tmp/grove-upgrade.sock
+      GROVE_LISTEN: 127.0.0.4:18443
+      GROVE_HTTP_LISTEN: 127.0.0.4:18080
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Tags, to find the release being upgraded from.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      # The previous release built from its own source is the only honest old
+      # daemon. A binary from this tree with a flag flipped would not have the
+      # code that shipped.
+      - name: Build the previous release, and this one
+        run: |
+          set -euo pipefail
+          previous=$(git tag --sort=-v:refname | head -1)
+          test -n "$previous"
+          echo "upgrading from $previous"
+          git worktree add /tmp/previous "$previous"
+          (cd /tmp/previous && go build -o "$RUNNER_TEMP/grove-old" ./cmd/grove)
+          go build -o "$RUNNER_TEMP/grove-new" ./cmd/grove
+          "$RUNNER_TEMP/grove-old" --version
+          "$RUNNER_TEMP/grove-new" --version
+
+      # Two projects, because the bug this guards against lost every project
+      # but one and a single fixture could not tell the difference.
+      - name: An old daemon holding two projects' ports
+        run: |
+          set -euo pipefail
+          for name in one two; do
+            dir="$RUNNER_TEMP/$name"
+            mkdir -p "$dir"
+            git -C "$dir" init -q -b main
+            git -C "$dir" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+            # printf rather than a heredoc: the terminator would have to sit at
+            # a column this file's indentation does not leave available.
+            printf '%s\n' \
+              '[routes.web]' 'dir = "."' 'env.PORT = "{port}"' '' \
+              '[ports.db]' 'detached = true' 'env.DB_PORT = "{port}"' \
+              > "$dir/grove.toml"
+          done
+
+          "$RUNNER_TEMP/grove-old" install --trust=false > /dev/null
+          "$RUNNER_TEMP/grove-old" start
+          (cd "$RUNNER_TEMP/one" && "$RUNNER_TEMP/grove-old" hold)
+          (cd "$RUNNER_TEMP/two" && "$RUNNER_TEMP/grove-old" hold)
+
+          "$RUNNER_TEMP/grove-old" ls --all | tee "$RUNNER_TEMP/before.txt"
+          test "$(grep -c detached "$RUNNER_TEMP/before.txt")" = 2
+
+      # From the workspace, which is neither project. Restoring the context you
+      # happen to be standing in is what made a lost lease table look like a
+      # clean restart.
+      - name: This grove restarts it, from neither project
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/grove-new" restart
+          "$RUNNER_TEMP/grove-new" ls --all | tee "$RUNNER_TEMP/after.txt"
+
+          # Every project holds the ports it held, on the same numbers: a
+          # restart derives them again rather than replaying the old table.
+          for name in one two; do
+            dir="$RUNNER_TEMP/$name"
+            was=$(awk -v d="$dir" '$NF == d { print $2 }' "$RUNNER_TEMP/before.txt" | sort | tr '\n' ' ')
+            now=$(awk -v d="$dir" '$NF == d { print $2 }' "$RUNNER_TEMP/after.txt" | sort | tr '\n' ' ')
+            if [ -z "$now" ]; then
+              echo "$name lost every lease across the upgrade" >&2
+              exit 1
+            fi
+            if [ "$was" != "$now" ]; then
+              echo "$name held [$was] before and holds [$now] now" >&2
+              exit 1
+            fi
+          done
+
+          # The daemon has to be this build. Doctor names a mismatch, so an old
+          # daemon still serving would say so rather than read as running.
+          "$RUNNER_TEMP/grove-new" doctor | tee "$RUNNER_TEMP/doctor.txt" || true
+          if ! grep -Eq '^Grove +running$' "$RUNNER_TEMP/doctor.txt"; then
+            echo "the daemon is not this build, or not running" >&2
+            exit 1
+          fi
+
   # macOS is the platform where reaching 443 is not grove's own doing, so the
   # only honest test is to install it and ask for the port. This replaces the
   # spike that proved pf redirects local traffic: that answered a question about

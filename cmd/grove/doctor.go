@@ -333,7 +333,10 @@ func port443(running *daemon.Status, answered bool, stateDir, domain, listen str
 	case strings.Contains(err.Error(), "permission denied"):
 		f.advice = access.Advice
 	case strings.Contains(err.Error(), "address already in use"):
-		f.advice = holder(answered)
+		// Only an unreadable daemon leaves grove as the unnamed holder. One
+		// that answered said where it listens, and if that were this port the
+		// check would have finished above.
+		f.advice = holder(running == nil && answered)
 	}
 	return f
 }
