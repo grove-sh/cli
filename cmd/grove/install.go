@@ -106,7 +106,7 @@ func newUninstallCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "uninstall",
-		Short: "Remove grove's root from this machine's trust stores",
+		Short: "Stop grove and remove its root from this machine's trust stores",
 		Long: `Remove grove's root from this machine's trust stores.
 
 The CA files stay on disk, so a later 'grove install' trusts the same root

@@ -148,7 +148,7 @@ A 503 says which half is wrong. "No grove context is bound to this hostname" mea
 ```
 grove init                       write a grove.toml for this project
 grove install                    set this machine up: authority, trust, port 443
-grove uninstall                  remove grove's root from the trust stores
+grove uninstall                  stop grove and untrust its root
 grove exec [-s <name>] -- <cmd>  run a command in this context
 grove env [--format shell|json]  print that environment instead of running
 grove ls [--all]                 this context's routes, or every lease on the machine
@@ -159,7 +159,7 @@ grove doctor                     DNS, trust, the daemon, and port 443
 grove start | stop | restart     the daemon, which is one process for the machine
 ```
 
-One daemon serves every context, so `grove stop` drops every context's leases and not just this project's. It tells you what it dropped.
+One daemon serves every context, so `grove stop` drops every context's leases and not just this project's. It tells you what it dropped, and it refuses while anything is answering on a port grove leased, which `--force` overrides. `grove uninstall` stops grove too, since a root this machine no longer trusts leaves nothing worth serving.
 
 A route belongs to one command at a time, which is right for the thing that listens on the port and wrong for a test suite that only reads it. `grove exec --no-bind` reports the ports and takes no lease, so it runs alongside the dev server holding them and reports the port that dev server is on. Where nothing holds a port it reports the one a lease would get, and no hostname routes there.
 
