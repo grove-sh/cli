@@ -146,6 +146,10 @@ func invocation() string {
 	return invocationFrom(self)
 }
 
+// Both halves have to hold. A global "npm install -g" also lands under
+// node_modules, so the path alone does not mean grove is unreachable by name,
+// and an unset agent means no package manager ran us, which is the same as
+// saying whatever the reader typed was already on PATH.
 func invocationFrom(self string) string {
 	if !strings.Contains(self, "node_modules") {
 		return "grove"
@@ -157,8 +161,10 @@ func invocationFrom(self string) string {
 		return manager + " grove"
 	case "bun":
 		return "bunx grove"
+	case "npm":
+		return "npx grove"
 	}
-	return "npx grove"
+	return "grove"
 }
 
 // Go derives a version from VCS in a git checkout, so an unstamped build still
