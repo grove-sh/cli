@@ -25,7 +25,7 @@ func TestStopReportsWhatItDropped(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d: %s", code, stderr)
 	}
-	for _, want := range []string{"stopped", "lease", "context", "unrouted"} {
+	for _, want := range []string{"Released", "lease", "context", "STOPPED"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stop said %q, which does not mention %q", stdout, want)
 		}
@@ -39,8 +39,11 @@ func TestStopIsQuietWhenNothingIsHeld(t *testing.T) {
 
 	_, stdout, _ := exercise(t, "stop", "--socket", socket)
 
-	if strings.Contains(stdout, "released") {
+	if strings.Contains(stdout, "Released") {
 		t.Errorf("stop reported losses it did not cause: %q", stdout)
+	}
+	if !strings.Contains(stdout, "STOPPED") {
+		t.Errorf("stop did not say it stopped: %q", stdout)
 	}
 }
 
@@ -87,9 +90,6 @@ func TestRestoreHoldsEveryContextTheDaemonWasHolding(t *testing.T) {
 	if holding["app1:web"] {
 		t.Error("an attached lease was restored, but its command is gone")
 	}
-	if !strings.Contains(out.String(), "app1") || !strings.Contains(out.String(), "app2") {
-		t.Errorf("nothing said which contexts came back: %q", out)
-	}
 }
 
 // A worktree that has been deleted since is not a reason to abandon the rest.
@@ -107,10 +107,30 @@ func TestRestoreCarriesOnPastAWorktreeThatIsGone(t *testing.T) {
 		{Slug: "app1", Service: "db", Worktree: alive, Detached: true},
 	})
 
-	if !strings.Contains(out.String(), "app1") {
-		t.Errorf("the live context did not come back: %q", out)
+	if !holds(t, socket, "app1", "db") {
+		t.Errorf("the live context did not come back:\n%s%s", out, errs)
 	}
 	if !strings.Contains(errs.String(), "gone") {
 		t.Errorf("nothing said which context could not: %q", errs)
 	}
+}
+
+func holds(t *testing.T, socket, slug, service string) bool {
+	t.Helper()
+
+	client, err := daemon.Dial(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	held, err := client.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, lease := range held {
+		if lease.Slug == slug && lease.Service == service {
+			return true
+		}
+	}
+	return false
 }

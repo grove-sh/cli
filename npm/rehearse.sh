@@ -234,10 +234,13 @@ mkdir -p "$GROVE_STATE_DIR"
 
 "$bin" install --trust=false > /dev/null 2>&1 || true
 started=$("$bin" start 2>&1 || true)
-daemon_pid=$(printf '%s' "$started" | sed -n 's/.*pid \([0-9][0-9]*\).*/\1/p' | head -1)
+# From a second start, which reports the daemon it found. The first start's
+# report is written for a person and says nothing a script should depend on.
+found=$("$bin" start 2>&1 || true)
+daemon_pid=$(printf '%s' "$found" | sed -n 's/.*pid \([0-9][0-9]*\).*/\1/p' | head -1)
 
 if [ -z "$daemon_pid" ]; then
-  no "the daemon did not start: $started"
+  no "the daemon did not start: $started$found"
 else
   parent=$(ps -o ppid= -p "$daemon_pid" 2>/dev/null | tr -d ' ')
   if [ "$parent" = "1" ]; then
