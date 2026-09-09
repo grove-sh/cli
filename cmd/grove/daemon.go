@@ -288,11 +288,19 @@ it, and 'grove hold' is what puts a detached route back.`,
 
 // Nothing supervises the daemon, so stop-and-spawn is the whole of a restart.
 func restartDaemon(opts daemonOptions) error {
-	if client, err := daemon.Dial(opts.socket); err == nil {
-		client.Stop()
-		client.Close()
-		waitForSocketGone(opts.socket, 5*time.Second)
+	client, err := daemon.Dial(opts.socket)
+	if err != nil {
+		return spawnDaemon(opts)
 	}
+	stopped := client.Stop()
+	client.Close()
+
+	// Spawning a second daemon now would only fail to bind, and every line
+	// after it would describe a restart that did not happen.
+	if stopped != nil {
+		return fmt.Errorf("%w\nThe daemon is still running and nothing has been replaced.", stopped)
+	}
+	waitForSocketGone(opts.socket, 5*time.Second)
 	return spawnDaemon(opts)
 }
 

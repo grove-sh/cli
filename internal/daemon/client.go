@@ -12,6 +12,10 @@ type Client struct {
 	conn net.Conn
 	dec  *json.Decoder
 	enc  *json.Encoder
+
+	// Kept so Stop can ask again on a new connection: a daemon that refuses a
+	// request answers once and hangs up.
+	socket string
 }
 
 // Nothing usable answered, whether the socket was missing or left by a corpse.
@@ -31,7 +35,7 @@ func Dial(socket string) (*Client, error) {
 	if err != nil {
 		return nil, &NotRunningError{Socket: socket, Err: err}
 	}
-	return &Client{conn: conn, dec: json.NewDecoder(conn), enc: json.NewEncoder(conn)}, nil
+	return &Client{conn: conn, dec: json.NewDecoder(conn), enc: json.NewEncoder(conn), socket: socket}, nil
 }
 
 func (c *Client) Close() error { return c.conn.Close() }
@@ -45,6 +49,19 @@ func (c *Client) Acquire(slug, worktree string, entries []Entry) (map[string]Gra
 	}
 	if resp.Grants == nil {
 		return nil, errors.New("daemon: acquire returned no grants")
+	}
+	return resp.Grants, nil
+}
+
+// Resolve asks what Acquire would hand out, and takes nothing. Unlike Acquire
+// there is no lease riding on this connection, so closing it costs nothing.
+func (c *Client) Resolve(slug, worktree string, entries []Entry) (map[string]Grant, error) {
+	resp, err := c.roundTrip(Request{Op: OpResolve, Slug: slug, Worktree: worktree, Entries: entries})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Grants == nil {
+		return nil, errors.New("daemon: resolve returned no grants")
 	}
 	return resp.Grants, nil
 }
@@ -78,9 +95,56 @@ func (c *Client) Status() (Status, error) {
 }
 
 // Detached leases go too: nothing survives the process.
+//
+// A daemon refusing this because it speaks an older protocol is asked again in
+// that protocol. Upgrading grove is exactly how a mismatch arrives, and the old
+// daemon predates any agreement to exempt stopping from its own version check,
+// so without this every upgrade would end at killing a process by hand. Safe
+// because a stop has only ever carried a version, a pid and an op.
 func (c *Client) Stop() error {
-	_, err := c.roundTrip(Request{Op: OpStop})
-	return err
+	resp, err := c.exchange(Request{Op: OpStop, Version: Version})
+	if err != nil {
+		return err
+	}
+	if resp.Error == "" {
+		// It stopped. That it replied in its own version is not this caller's
+		// business, and comparing them here would report a failure that is not
+		// one.
+		return nil
+	}
+	if resp.Version == 0 || resp.Version >= Version {
+		return errors.New(resp.Error)
+	}
+
+	older, err := Dial(c.socket)
+	if err != nil {
+		// Gone between the refusal and now, which is the outcome anyway.
+		return nil
+	}
+	defer older.Close()
+
+	again, err := older.exchange(Request{Op: OpStop, Version: resp.Version})
+	if err != nil {
+		return err
+	}
+	if again.Error != "" {
+		return errors.New(again.Error)
+	}
+	return nil
+}
+
+// The wire without the reading of it, for a caller that needs the reply a
+// refusal carries rather than only the fact of one.
+func (c *Client) exchange(req Request) (Response, error) {
+	req.PID = os.Getpid()
+	if err := c.enc.Encode(req); err != nil {
+		return Response{}, err
+	}
+	var resp Response
+	if err := c.dec.Decode(&resp); err != nil {
+		return Response{}, err
+	}
+	return resp, nil
 }
 
 func (c *Client) roundTrip(req Request) (Response, error) {

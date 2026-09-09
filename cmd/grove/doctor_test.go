@@ -111,7 +111,7 @@ func TestPort443TrustsTheRedirectWhenNothingBindsIt(t *testing.T) {
 		Detail:  "pf sends 443 to 10443, so grove serves it without root",
 	}
 
-	f := port443(nil, t.TempDir(), "grov.site", "127.0.0.1:10443", access)
+	f := port443(nil, false, t.TempDir(), "grov.site", "127.0.0.1:10443", access)
 
 	if f.state != ok {
 		t.Errorf("state = %q with the redirect installed, want %q", f.state, ok)
@@ -126,12 +126,26 @@ func TestPort443TrustsTheRedirectWhenNothingBindsIt(t *testing.T) {
 func TestPort443ReportsAMissingRedirect(t *testing.T) {
 	access := platform.PortAccess{Detail: "443 needs root here, and nothing redirects it yet"}
 
-	f := port443(nil, t.TempDir(), "grov.site", "127.0.0.1:10443", access)
+	f := port443(nil, false, t.TempDir(), "grov.site", "127.0.0.1:10443", access)
 
 	if f.state != bad {
 		t.Errorf("state = %q with no redirect, want %q", f.state, bad)
 	}
 	if f.fix != "grove install" {
 		t.Errorf("fix = %q, want the install that stages the pf files", f.fix)
+	}
+}
+
+// A daemon that answers the socket but speaks another protocol version is
+// still what holds the port. Reporting an unknown process there sends someone
+// hunting for a culprit grove named a line above.
+func TestPortHolderNamesTheDaemonItCannotRead(t *testing.T) {
+	said := holder(true)
+
+	if !strings.Contains(said, "grove's own daemon") {
+		t.Errorf("advice = %q, which does not name the daemon that answered", said)
+	}
+	if !strings.Contains(said, "cannot speak to") {
+		t.Errorf("advice = %q, which does not say why it went unread", said)
 	}
 }

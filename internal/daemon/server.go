@@ -221,6 +221,14 @@ func (s *Server) handle(conn net.Conn) {
 	if err := json.NewDecoder(conn).Decode(&req); err != nil {
 		return
 	}
+	// Stopping is exempt, because restarting is how a version mismatch gets
+	// fixed and a daemon nothing can stop is a daemon nothing can replace.
+	// Every other op needs both sides to agree about the shapes on the wire.
+	if req.Op == OpStop {
+		enc.Encode(Response{Version: Version})
+		go s.Shutdown()
+		return
+	}
 	if req.Version != Version {
 		enc.Encode(Response{Version: Version, Error: (&VersionError{Daemon: Version, CLI: req.Version}).Error()})
 		return
@@ -233,14 +241,38 @@ func (s *Server) handle(conn net.Conn) {
 		enc.Encode(Response{Version: Version, Status: s.status()})
 	case OpRelease:
 		enc.Encode(Response{Version: Version, Released: s.release(req)})
-	case OpStop:
-		enc.Encode(Response{Version: Version})
-		go s.Shutdown()
 	case OpAcquire:
 		s.acquire(conn, enc, req)
+	case OpResolve:
+		s.resolve(enc, req)
 	default:
 		enc.Encode(Response{Version: Version, Error: fmt.Sprintf("daemon: unknown op %q", req.Op)})
 	}
+}
+
+// Deliberately not touching s.routed or syncRoutes: a resolved host is the one
+// this context would answer on, not one anything is answering on now.
+func (s *Server) resolve(enc *json.Encoder, req Request) {
+	grants := make(map[string]Grant, len(req.Entries))
+	for _, entry := range req.Entries {
+		found, err := s.registry.Resolve(lease.Request{
+			Slug:     req.Slug,
+			Service:  entry.Name,
+			Worktree: req.Worktree,
+			Detached: entry.Detached,
+		})
+		if err != nil {
+			enc.Encode(Response{Version: Version, Error: err.Error()})
+			return
+		}
+		grant := Grant{Port: found.Port}
+		if entry.Routed {
+			grant.Host = s.host(req.Slug, entry.Label)
+			grant.URL = "https://" + grant.Host
+		}
+		grants[entry.Name] = grant
+	}
+	enc.Encode(Response{Version: Version, Grants: grants})
 }
 
 func (s *Server) acquire(conn net.Conn, enc *json.Encoder, req Request) {

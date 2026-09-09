@@ -686,3 +686,93 @@ func TestURLProblemNamesAnUntrustedRoot(t *testing.T) {
 		t.Errorf("urlProblem = %q, which does not say the root is untrusted", problem)
 	}
 }
+
+// The case #7 is about: a suite that reads the port a dev server was given has
+// to run while that dev server is up, which is exactly when the lease is gone.
+func TestNoBindRunsWhileTheRouteIsHeld(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	t.Chdir(repo)
+
+	// A dev server is an attached lease living on an open connection.
+	holder, err := daemon.Dial(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Close()
+	grants, err := holder.Acquire("app1", repo, []daemon.Entry{{Name: "web", Routed: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := strconv.Itoa(grants["web"].Port)
+
+	if code, _, stderr := exercise(t, "exec", "--socket", socket, "--", "true"); code == 0 {
+		t.Fatal("a plain exec took a lease the holder already had")
+	} else if !strings.Contains(stderr, "already running") {
+		t.Errorf("refused for some other reason: %s", stderr)
+	}
+
+	// Through a file, since a child writes to the terminal grove inherited
+	// rather than to anything this test can capture.
+	code, _, stderr := exercise(t, "exec", "--socket", socket, "--no-bind", "--",
+		"sh", "-c", `printf '%s' "$PORT" > port.txt`)
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+
+	if got := readFile(t, repo, "port.txt"); got != held {
+		t.Errorf("PORT = %q, want the holder's %q", got, held)
+	}
+}
+
+// Reading a port must not claim it, or the next command to want it for real
+// would be refused by a lease nobody is using.
+func TestNoBindTakesNothing(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	t.Chdir(repo)
+
+	code, _, stderr := exercise(t, "exec", "--socket", socket, "--no-bind", "--",
+		"sh", "-c", `printf '%s' "$PORT" > reported.txt`)
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+	reported := readFile(t, repo, "reported.txt")
+	if reported == "" {
+		t.Fatal("no port was reported")
+	}
+	if held := whatItHolds(socket); len(held) != 0 {
+		t.Errorf("--no-bind left %d lease(s) behind", len(held))
+	}
+
+	// And the answer was the truth: a real lease lands on the same port.
+	code, _, stderr = exercise(t, "exec", "--socket", socket, "--",
+		"sh", "-c", `printf '%s' "$PORT" > leased.txt`)
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+	if got := readFile(t, repo, "leased.txt"); got != reported {
+		t.Errorf("a lease got port %q, but --no-bind promised %q", got, reported)
+	}
+}
+
+func readFile(t *testing.T, dir, name string) string {
+	t.Helper()
+
+	written, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(written))
+}
+
+// Nothing is served, so the line saying where to reach it would be a lie.
+func TestNoBindAnnouncesNothing(t *testing.T) {
+	socket := startDaemon(t)
+	t.Chdir(tempRepo(t, "app1"))
+
+	_, _, quiet := exercise(t, "exec", "--socket", socket, "--no-bind", "--", "true")
+	if strings.Contains(quiet, "is at") {
+		t.Errorf("--no-bind claimed a route was served: %q", quiet)
+	}
+}
