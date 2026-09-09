@@ -286,6 +286,55 @@ jobs:
         with:
           node-version: 22
 
+      # Before anything asks the way npm asks. A packument fetched while npm's
+      # own replication is still catching up gets cached at the CDN edge for
+      # max-age=300, so an early ask through the cache pins an answer that
+      # predates the publish and every later ask waits out the five minutes
+      # rather than the publish. Two of the four legs of one release spent 19
+      # and 20 attempts doing exactly that while the other two succeeded first
+      # time, which is the shape of a TTL and not of propagation.
+      #
+      # A query string takes the edge out of it: the same URL reports
+      # cf-cache-status HIT without one and MISS with one. So this asks the
+      # registry what it actually has, and only then lets npm ask, by which
+      # time the answer the edge caches is the right one.
+      #
+      # Both packages, because the wrapper reaching the registry ahead of the
+      # binary it depends on is the failure the loop below is built to survive.
+      - name: Wait for the registry itself, not for a cached answer
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          origin_has() { # package name without the scope
+            local doc="$RUNNER_TEMP/packument-$1.json"
+            curl -sf "https://registry.npmjs.org/@grove-sh%2F$1?cachebust=$RANDOM$RANDOM" \
+              -o "$doc" || return 1
+            node -e '
+              const doc = require(process.argv[1]);
+              process.exit(doc.versions && doc.versions[process.argv[2]] ? 0 : 1);
+            ' "$doc" "$VERSION"
+          }
+
+          served=false
+          for check in $(seq 1 40); do
+            if origin_has cli && origin_has "cli-$PLATFORM"; then
+              echo "the registry serves both after $check check(s)"
+              served=true
+              break
+            fi
+            echo "check $check: the registry does not serve both yet"
+            sleep 15
+          done
+
+          # A wait rather than a gate: the install below is what decides, and
+          # failing here would only report the same thing worse. But falling
+          # through in silence would leave the log looking like it passed.
+          if [ "$served" != "true" ]; then
+            echo "the registry never served both; the install will say what it finds"
+          fi
+
       - name: Install it the way a person would
         env:
           VERSION: ${{ needs.publish.outputs.version }}
