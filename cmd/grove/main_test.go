@@ -124,7 +124,10 @@ func TestInvocationFollowsHowGroveWasReached(t *testing.T) {
 		{"yarn", "yarn/4.6.0 npm/? node/v22.0.0 linux x64", "yarn grove"},
 		{"bun", "bun/1.2.0", "bunx grove"},
 		{"npm", "npm/10.9.0 node/v22.0.0 linux x64", "npx grove"},
-		{"nothing said", "", "npx grove"},
+		// A global install lives under node_modules too, and the reader who
+		// typed "grove" there does not want to be told to run npx.
+		{"nothing said", "", "grove"},
+		{"unknown manager", "deno/2.1.0", "grove"},
 	} {
 		t.Setenv("npm_config_user_agent", tc.agent)
 		if got := invocationFrom("/x/node_modules/@grove-sh/cli-linux-x64/bin/grove"); got != tc.want {
