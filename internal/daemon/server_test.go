@@ -548,3 +548,172 @@ func TestStatusReportsTheDaemonBuild(t *testing.T) {
 		t.Errorf("status.Grove = %q, want the build the daemon was given", status.Grove)
 	}
 }
+
+// Restarting is how a protocol mismatch gets fixed, so stopping has to survive
+// one. A daemon nothing can stop is a daemon nothing can replace.
+func TestStopWorksAcrossAProtocolVersion(t *testing.T) {
+	h := start(t)
+
+	resp := rawRequest(t, h.socket, daemon.Request{Version: daemon.Version + 1, Op: daemon.OpStop})
+	if resp.Error != "" {
+		t.Fatalf("a newer grove could not stop it: %s", resp.Error)
+	}
+
+	eventually(t, "the socket to stop answering", func() bool {
+		client, err := daemon.Dial(h.socket)
+		if err != nil {
+			return true
+		}
+		client.Close()
+		return false
+	})
+}
+
+// The exemption is for stopping alone. Anything else has to name the mismatch
+// rather than answer with shapes the caller may read wrongly.
+func TestOtherOpsStillRefuseAProtocolMismatch(t *testing.T) {
+	h := start(t)
+
+	resp := rawRequest(t, h.socket, daemon.Request{Version: daemon.Version + 1, Op: daemon.OpList})
+
+	if resp.Error == "" {
+		t.Error("list answered a grove speaking another protocol")
+	}
+}
+
+// A daemon that stopped answers in its own version, so the reply disagrees
+// with a caller built later. That is not a failure to stop.
+func TestStopAcceptsAReplyInAnotherVersion(t *testing.T) {
+	client := fakeDaemon(t, map[string]any{"version": daemon.Version - 1})
+
+	if err := client.Stop(); err != nil {
+		t.Errorf("Stop reported %v for a daemon that stopped", err)
+	}
+}
+
+// A refusal from a daemon that speaks this protocol is a real refusal: there is
+// no older language to ask again in.
+func TestStopReportsARefusal(t *testing.T) {
+	client := fakeDaemon(t, map[string]any{"version": daemon.Version, "error": "not today"})
+
+	err := client.Stop()
+
+	if err == nil {
+		t.Fatal("Stop called a refusal a success")
+	}
+	if !strings.Contains(err.Error(), "not today") {
+		t.Errorf("err = %v, want the daemon's own words", err)
+	}
+}
+
+// Upgrading grove is how a mismatch arrives, and the daemon already running
+// predates any agreement to exempt stopping from its version check. Without
+// asking again in its protocol, every upgrade would end at killing a process.
+func TestStopAsksAgainInAnOlderProtocol(t *testing.T) {
+	asked := make(chan int, 4)
+	socket := filepath.Join(socketDir(t), "older.sock")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				var req daemon.Request
+				if json.NewDecoder(conn).Decode(&req) != nil {
+					return
+				}
+				asked <- req.Version
+
+				// What a daemon one protocol behind does: refuse anything not
+				// in its own language, and name that language in the reply.
+				if req.Version != daemon.Version-1 {
+					json.NewEncoder(conn).Encode(daemon.Response{
+						Version: daemon.Version - 1,
+						Error:   "the running daemon speaks an older protocol",
+					})
+					return
+				}
+				json.NewEncoder(conn).Encode(daemon.Response{Version: daemon.Version - 1})
+			}()
+		}
+	}()
+
+	client, err := daemon.Dial(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	if err := client.Stop(); err != nil {
+		t.Fatalf("Stop = %v, want the older daemon to have taken it", err)
+	}
+
+	if first := <-asked; first != daemon.Version {
+		t.Errorf("asked first in v%d, want this build's v%d", first, daemon.Version)
+	}
+	if second := <-asked; second != daemon.Version-1 {
+		t.Errorf("asked again in v%d, want the daemon's v%d", second, daemon.Version-1)
+	}
+}
+
+func rawRequest(t *testing.T, socket string, req daemon.Request) daemon.Response {
+	t.Helper()
+
+	conn, err := net.Dial("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		t.Fatal(err)
+	}
+	var resp daemon.Response
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// Answers one request with whatever it is given, so a client can be tested
+// against a daemon this build could not otherwise produce.
+func fakeDaemon(t *testing.T, reply map[string]any) *daemon.Client {
+	t.Helper()
+
+	socket := filepath.Join(socketDir(t), "fake.sock")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// Each on its own connection, the way the daemon answers: one
+			// request, one reply, then hang up.
+			go func() {
+				defer conn.Close()
+				json.NewDecoder(conn).Decode(new(map[string]any))
+				json.NewEncoder(conn).Encode(reply)
+			}()
+		}
+	}()
+
+	client, err := daemon.Dial(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { client.Close() })
+	return client
+}

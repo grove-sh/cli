@@ -2,10 +2,11 @@ package daemon
 
 // A grove binary is rebuilt far more often than its daemon is restarted, so a
 // mismatch has to name itself rather than surface as a missing field.
-const Version = 2
+const Version = 3
 
 const (
 	OpAcquire = "acquire"
+	OpResolve = "resolve"
 	OpList    = "list"
 	OpRelease = "release"
 	OpStatus  = "status"

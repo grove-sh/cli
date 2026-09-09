@@ -55,7 +55,7 @@ script; a warning does not.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Grove's own check comes first so the port check can tell its
 			// listener apart from something else holding the address.
-			running, groveFinding := checkDaemon(socket)
+			running, answered, groveFinding := checkDaemon(socket)
 			findings := []finding{
 				groveFinding,
 				checkAuthority(stateDir),
@@ -64,7 +64,7 @@ script; a warning does not.`,
 			// Said only when not ordinary: a resolver that answers and a port
 			// grove holds are already implied above. With grove down there is
 			// nothing to ask port 80.
-			ports := []finding{checkDNS(domain), checkPort443(running, stateDir, domain)}
+			ports := []finding{checkDNS(domain), checkPort443(running, answered, stateDir, domain)}
 			if running != nil {
 				ports = append(ports, checkHTTPRedirect(running, domain))
 			}
@@ -237,7 +237,10 @@ func checkBundle(stateDir string) finding {
 	return f
 }
 
-func checkDaemon(socket string) (*daemon.Status, finding) {
+// The nil status and the bool are separate answers: a daemon can be running and
+// still be one this build cannot read, and then the port it holds has an owner
+// grove knows without having to go looking for it.
+func checkDaemon(socket string) (*daemon.Status, bool, finding) {
 	f := finding{name: "Grove"}
 
 	client, err := daemon.Dial(socket)
@@ -245,7 +248,7 @@ func checkDaemon(socket string) (*daemon.Status, finding) {
 		f.state = warn
 		f.detail = "not running"
 		f.fix = "grove start"
-		return nil, f
+		return nil, false, f
 	}
 	defer client.Close()
 
@@ -253,7 +256,7 @@ func checkDaemon(socket string) (*daemon.Status, finding) {
 	if err != nil {
 		f.state = bad
 		f.detail = err.Error()
-		return nil, f
+		return nil, true, f
 	}
 	f.state = ok
 	f.detail = "running"
@@ -262,7 +265,7 @@ func checkDaemon(socket string) (*daemon.Status, finding) {
 		f.detail += ", " + stale
 		f.fix = "grove restart"
 	}
-	return &status, f
+	return &status, true, f
 }
 
 // A daemon outlives the command that started it, so upgrading grove leaves the
@@ -278,13 +281,13 @@ func staleDaemon(daemonBuild, cliBuild string) string {
 	return "the one running was built from " + daemonBuild + ", and this one from " + cliBuild
 }
 
-func checkPort443(running *daemon.Status, stateDir, domain string) finding {
-	return port443(running, stateDir, domain, platform.DefaultListen(), platform.PrivilegedPorts())
+func checkPort443(running *daemon.Status, answered bool, stateDir, domain string) finding {
+	return port443(running, answered, stateDir, domain, platform.DefaultListen(), platform.PrivilegedPorts())
 }
 
 // Takes the platform's answer rather than asking, so a machine that redirects
 // the port is testable on one that binds it.
-func port443(running *daemon.Status, stateDir, domain, listen string, access platform.PortAccess) finding {
+func port443(running *daemon.Status, answered bool, stateDir, domain, listen string, access platform.PortAccess) finding {
 	f := finding{name: "Port 443"}
 
 	address := platform.Address + ":443"
@@ -330,7 +333,7 @@ func port443(running *daemon.Status, stateDir, domain, listen string, access pla
 	case strings.Contains(err.Error(), "permission denied"):
 		f.advice = access.Advice
 	case strings.Contains(err.Error(), "address already in use"):
-		f.advice = "Held by " + whoHolds(443) + "."
+		f.advice = holder(answered)
 	}
 	return f
 }
@@ -413,6 +416,17 @@ func answersOn443(stateDir, domain string) bool {
 
 // Asks docker, since ss cannot name a process owned by root and a container
 // publishing the port is the usual culprit.
+// Reported rather than looked up when a daemon answered the control socket:
+// grove is what holds the port, however little it could say about itself. Kept
+// apart from the bind attempt so the answer is testable on a machine whose 443
+// is already taken, which is the machine this matters on.
+func holder(answered bool) string {
+	if answered {
+		return "Held by grove's own daemon, which this build cannot speak to."
+	}
+	return "Held by " + whoHolds(443) + "."
+}
+
 func whoHolds(port int) string {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return "another process"

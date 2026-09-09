@@ -141,7 +141,7 @@ func (r *Registry) Acquire(req Request) (*Lease, error) {
 		}
 	}
 
-	port, err := r.pick(k, req.Detached)
+	port, err := r.pick(k, req.Detached, true)
 	if err != nil {
 		return nil, err
 	}
@@ -159,6 +159,47 @@ func (r *Registry) Acquire(req Request) (*Lease, error) {
 	r.ports[port] = k
 	r.owners[req.Slug] = req.Worktree
 	return l, nil
+}
+
+// Resolve reports the port an entry has, or the one it would get, and takes
+// nothing. A held entry answers with the port it is on, so a caller that only
+// wants the value agrees with whatever is already serving there.
+//
+// Nothing is recorded and nothing is reserved, so an unheld answer is a reading
+// rather than a promise: the same question can answer differently once someone
+// takes the port.
+func (r *Registry) Resolve(req Request) (Lease, error) {
+	if req.Slug == "" {
+		return Lease{}, errors.New("lease: resolve needs a slug")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Still a conflict when only reading: the answer would describe a port
+	// belonging to another worktree's context.
+	if held, ok := r.owners[req.Slug]; ok && req.Worktree != "" && held != req.Worktree {
+		return Lease{}, &CollisionError{Slug: req.Slug, Held: held, Wanted: req.Worktree}
+	}
+
+	k := key{slug: req.Slug, service: req.Service}
+	if existing, ok := r.leases[k]; ok {
+		found := *existing
+		found.registry = nil
+		return found, nil
+	}
+
+	port, err := r.pick(k, req.Detached, false)
+	if err != nil {
+		return Lease{}, err
+	}
+	return Lease{
+		Slug:     req.Slug,
+		Service:  req.Service,
+		Worktree: req.Worktree,
+		Port:     port,
+		Detached: req.Detached,
+	}, nil
 }
 
 // Release is safe more than once, and on the copies List returns it does nothing.
@@ -240,7 +281,10 @@ func hashOffset(rng PortRange, slug, service string) int {
 // running. It must still avoid a port another entry holds, and hashes collide
 // roughly once in a few hundred entries. Walking past one is only safe because
 // where it landed is written down: see Memory for what happens otherwise.
-func (r *Registry) pick(k key, detached bool) (int, error) {
+// record is false for a caller only asking what a port would be: writing down
+// an exception for a lease nobody took would make the answer to a question
+// outlive the asking.
+func (r *Registry) pick(k key, detached, record bool) (int, error) {
 	size := r.rng.size()
 	offset := hashOffset(r.rng, k.slug, k.service)
 
@@ -257,7 +301,7 @@ func (r *Registry) pick(k key, detached bool) (int, error) {
 			if _, taken := r.ports[port]; taken {
 				continue
 			}
-			if i > 0 {
+			if i > 0 && record {
 				// Failing to write down an exception costs a reshuffle next
 				// restart, which is worth less than refusing the lease.
 				_ = r.memory.Remember(k.slug, k.service, port)

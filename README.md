@@ -161,6 +161,8 @@ grove start | stop | restart     the daemon, which is one process for the machin
 
 One daemon serves every context, so `grove stop` drops every context's leases and not just this project's. It tells you what it dropped.
 
+A route belongs to one command at a time, which is right for the thing that listens on the port and wrong for a test suite that only reads it. `grove exec --no-bind` reports the ports and takes no lease, so it runs alongside the dev server holding them and reports the port that dev server is on. Where nothing holds a port it reports the one a lease would get, and no hostname routes there.
+
 On macOS, `grove uninstall` asks for authorization before it will untrust the root, since removing a trust root is not something to do quietly. In a terminal with no way to show that prompt, over ssh for instance, it waits rather than failing.
 
 ## How it decides things

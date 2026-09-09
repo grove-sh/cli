@@ -24,7 +24,7 @@ import (
 
 func newExecCommand() *cobra.Command {
 	var socket, service string
-	var autostart, optional bool
+	var autostart, optional, noBind bool
 
 	cmd := &cobra.Command{
 		Use:   "exec [flags] -- command [args...]",
@@ -39,7 +39,13 @@ command. Signals and the exit code pass through.
 With CI set in the environment and no daemon to talk to, the command runs with
 its environment untouched instead of failing, because a build service is the
 authority on its own environment and grove is not running there. --if-available
-asks for the same tolerance anywhere.`,
+asks for the same tolerance anywhere.
+
+--no-bind is for a command that reads this context's ports without listening on
+one, a test suite asserting on them being the usual case. It takes no lease, so
+it can run alongside the command that holds them, and it reports the port that
+command is on. Where nothing holds a port, the answer is the one a lease would
+get rather than one anything is serving, and no hostname routes to it.`,
 		Example: "  grove exec -- pnpm dev\n  grove exec -s admin -- pnpm dev",
 		Args:    usageArgs(cobra.MinimumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -76,7 +82,11 @@ asks for the same tolerance anywhere.`,
 			// elsewhere still has an environment.
 			var grants map[string]daemon.Grant
 			if entries := entriesToLease(cfg, active); len(entries) > 0 {
-				grants, err = client.Acquire(context.Slug, context.Root, entries)
+				if noBind {
+					grants, err = client.Resolve(context.Slug, context.Root, entries)
+				} else {
+					grants, err = client.Acquire(context.Slug, context.Root, entries)
+				}
 				if err != nil {
 					return err
 				}
@@ -86,7 +96,11 @@ asks for the same tolerance anywhere.`,
 			if err != nil {
 				return err
 			}
-			announce(cmd.ErrOrStderr(), active, grants)
+			// Nothing was taken, so there is no route to announce: saying one
+			// is served would be the one claim --no-bind cannot make.
+			if !noBind {
+				announce(cmd.ErrOrStderr(), active, grants)
+			}
 			return runChild(args, env)
 		},
 	}
@@ -97,6 +111,7 @@ asks for the same tolerance anywhere.`,
 	cmd.Flags().StringVar(&socket, "socket", daemon.DefaultSocket(), "control socket path")
 	cmd.Flags().BoolVar(&autostart, "autostart", true, "start a daemon if none is running")
 	cmd.Flags().BoolVar(&optional, "if-available", false, "run the command unchanged when grove is not running, rather than failing")
+	cmd.Flags().BoolVar(&noBind, "no-bind", false, "read this context's ports without leasing them, for a command that will not listen")
 	return cmd
 }
 

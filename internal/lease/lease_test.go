@@ -506,3 +506,96 @@ func (m *recorder) Remember(slug, service string, port int) error {
 	m.ports[slug+"\x00"+service] = port
 	return nil
 }
+
+// The value a caller needs to read a port it will not listen on.
+func TestResolveAnswersWithoutTakingTheLease(t *testing.T) {
+	r := registry(t, lease.Options{Free: allFree})
+
+	found, err := r.Resolve(lease.Request{Slug: "app1", Service: "web", Worktree: "/src/app1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.List()) != 0 {
+		t.Errorf("resolve took %d lease(s)", len(r.List()))
+	}
+
+	// The same port a real lease would land on, or the answer was useless.
+	held := acquire(t, r, "app1", "web", "/src/app1")
+	if held.Port != found.Port {
+		t.Errorf("resolve promised %d, acquire gave %d", found.Port, held.Port)
+	}
+}
+
+// Answering with the port something is already on is the whole point: a test
+// suite reading it wants the port the dev server was handed.
+func TestResolveReportsAHeldPort(t *testing.T) {
+	r := registry(t, lease.Options{Free: allFree})
+	held := acquire(t, r, "app1", "web", "/src/app1")
+
+	found, err := r.Resolve(lease.Request{Slug: "app1", Service: "web", Worktree: "/src/app1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if found.Port != held.Port {
+		t.Errorf("resolve = %d, want the held %d", found.Port, held.Port)
+	}
+	// A copy, so a caller cannot end someone else's lease through it.
+	found.Release()
+	if len(r.List()) != 1 {
+		t.Error("releasing the copy dropped the real lease")
+	}
+}
+
+// Where a detached lease landed is written down so a restart puts it back. A
+// reading is not a landing, so resolving must leave the file as it found it.
+func TestResolveRemembersNothing(t *testing.T) {
+	shared := &recorder{}
+	r := registry(t, lease.Options{Free: allFree, Memory: shared})
+
+	for _, detached := range []bool{true, false} {
+		if _, err := r.Resolve(lease.Request{
+			Slug: "app1", Service: "db", Worktree: "/src/app1", Detached: detached,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if len(shared.ports) != 0 {
+		t.Errorf("resolve wrote %v down", shared.ports)
+	}
+}
+
+// Resolve reads that file, so a detached port that moved once keeps answering
+// with where it moved to rather than with the hash it no longer uses.
+func TestResolveFollowsWhereADetachedPortLanded(t *testing.T) {
+	rng := lease.PortRange{Low: 20000, High: 20099}
+	shared := &recorder{}
+	if err := shared.Remember("app1", "db", 20077); err != nil {
+		t.Fatal(err)
+	}
+	r := registry(t, lease.Options{Range: rng, Free: allFree, Memory: shared})
+
+	found, err := r.Resolve(lease.Request{Slug: "app1", Service: "db", Worktree: "/src/app1", Detached: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if found.Port != 20077 {
+		t.Errorf("port = %d, want the remembered 20077", found.Port)
+	}
+}
+
+// A slug held by another worktree is a conflict whether or not a lease is
+// wanted: the port would belong to a different context.
+func TestResolveRefusesAnotherWorktreesSlug(t *testing.T) {
+	r := registry(t, lease.Options{Free: allFree})
+	acquire(t, r, "app1", "web", "/src/app1")
+
+	_, err := r.Resolve(lease.Request{Slug: "app1", Service: "api", Worktree: "/elsewhere/app1"})
+
+	var collision *lease.CollisionError
+	if !errors.As(err, &collision) {
+		t.Fatalf("err = %v, want a CollisionError", err)
+	}
+}
