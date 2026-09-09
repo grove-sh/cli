@@ -75,7 +75,7 @@ func waitForSocket(path string, exited <-chan struct{}, within time.Duration) er
 		}
 		select {
 		case <-exited:
-			return errors.New("grove stopped before it could serve")
+			return errors.New("the daemon stopped before it could serve")
 		case <-time.After(25 * time.Millisecond):
 		}
 	}

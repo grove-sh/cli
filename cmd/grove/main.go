@@ -47,6 +47,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return exit.code
 	}
 
+	var bare bareError
+	if errors.As(err, &bare) {
+		fmt.Fprintln(stderr, bare.said)
+		return 1
+	}
+
 	fmt.Fprintf(stderr, "grove: %v\n", err)
 	var usage usageError
 	if errors.As(err, &usage) {
@@ -116,6 +122,12 @@ func (e *exitError) Error() string {
 }
 
 func (e *exitError) Unwrap() error { return e.err }
+
+// A message already shaped as a paragraph. The "grove: " that suits a one-line
+// error would land on its first line alone, so run() prints this as it stands.
+type bareError struct{ said string }
+
+func (e bareError) Error() string { return e.said }
 
 type usageError struct{ err error }
 

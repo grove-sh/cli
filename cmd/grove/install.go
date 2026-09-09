@@ -101,8 +101,8 @@ func settleBundle(stateDir string, root *x509.Certificate, rootPEM []byte) strin
 }
 
 func newUninstallCommand() *cobra.Command {
-	var stateDir string
-	var removeTrust bool
+	var stateDir, socket string
+	var removeTrust, force bool
 
 	cmd := &cobra.Command{
 		Use:   "uninstall",
@@ -114,10 +114,21 @@ rather than generating another one. Certificates already issued keep working
 for anything that still trusts the root.
 
 Where a platform needed a privileged step to reach port 443, this prints the
-step that undoes it, the same way install printed the one that set it up.`,
+step that undoes it, the same way install printed the one that set it up.
+
+Grove is stopped too, since a root the machine no longer trusts leaves nothing
+worth serving. Every lease on the machine goes with it, so this refuses while
+anything is answering on a port grove leased.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
+			held := whatItHolds(socket)
+			if !force {
+				if refusal := refuseToUninstall(held); refusal != "" {
+					return bareError{refusal}
+				}
+			}
+
 			root, err := ca.Open(stateDir)
 			if err != nil {
 				return err
@@ -142,7 +153,17 @@ step that undoes it, the same way install printed the one that set it up.`,
 			case advice != "":
 				fmt.Fprintf(out, "\n%s\n", advice)
 			}
-			return nil
+
+			// Last, so a trust store that would not budge leaves grove serving
+			// rather than stopped for nothing. The guard above already refused
+			// if this would cost a running command its route.
+			client, err := daemon.Dial(socket)
+			if err != nil {
+				return nil
+			}
+			defer client.Close()
+			fmt.Fprintln(out)
+			return stopWith(out, client, socket, whatItHolds(socket))
 		},
 	}
 
@@ -151,6 +172,8 @@ step that undoes it, the same way install printed the one that set it up.`,
 	// runner, so the keychain half has to be skippable for CI to paste and run
 	// the removal this prints.
 	cmd.Flags().BoolVar(&removeTrust, "trust", true, "remove the root from the system trust stores")
+	cmd.Flags().StringVar(&socket, "socket", daemon.DefaultSocket(), "control socket path")
+	cmd.Flags().BoolVar(&force, "force", false, "untrust even while a running command is served over https")
 	return cmd
 }
 

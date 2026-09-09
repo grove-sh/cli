@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"slices"
-	"strings"
 	"syscall"
 	"time"
 
@@ -79,7 +78,7 @@ func connect(socket string, autostart, optional bool) (*daemon.Client, error) {
 	// never heard of grove: the daemon's complaint about certificate
 	// authorities explains nothing to them.
 	if _, caErr := ca.Open(daemon.StateDir()); errors.Is(caErr, ca.ErrNoAuthority) {
-		return nil, errors.New(notSetUp())
+		return nil, bareError{notSetUp()}
 	}
 	if err := ensureDaemon(socket); err != nil {
 		return nil, err
@@ -88,7 +87,7 @@ func connect(socket string, autostart, optional bool) (*daemon.Client, error) {
 }
 
 func notSetUp() string {
-	return fmt.Sprintf(`this project runs its commands through grove, which is not set up on this machine yet.
+	return fmt.Sprintf(`This project runs its commands through grove, which is not set up on this machine yet.
 
     %s install
 
@@ -191,19 +190,24 @@ bringing the proxy up without running anything: a hostname you have bookmarked
 answers again without touching the project it belongs to.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
 			if client, err := daemon.Dial(opts.socket); err == nil {
 				defer client.Close()
 				status, err := client.Status()
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "already running on %s, pid %d\n", status.Listen, status.PID)
+				fmt.Fprintf(out, "already running on %s, pid %d\n", status.Listen, status.PID)
 				return nil
 			}
-			if err := ensureDaemon(opts.socket); err != nil {
+
+			// Spawned from this command's own options: ensureDaemon rebuilds
+			// the defaults, which is right for exec's autostart and wrong here,
+			// where every flag but --socket would be dropped.
+			if err := spawnDaemon(opts); err != nil {
 				return err
 			}
-			return reportStatus(cmd, opts.socket)
+			return reportUp(cmd, opts.socket, nil, "STARTED")
 		},
 	}
 
@@ -211,7 +215,9 @@ answers again without touching the project it belongs to.`,
 	return cmd
 }
 
-func reportStatus(cmd *cobra.Command, socket string) error {
+// The address is read back from the daemon rather than echoed from the flags,
+// so a daemon that landed somewhere other than what was asked for says so.
+func reportUp(cmd *cobra.Command, socket string, detail []string, banner string) error {
 	client, err := daemon.Dial(socket)
 	if err != nil {
 		return err
@@ -222,12 +228,21 @@ func reportStatus(cmd *cobra.Command, socket string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "grove on %s, pid %d\n", status.Listen, status.PID)
+	out := cmd.OutOrStdout()
+	paint := styles(out)
+	for _, line := range detail {
+		if line != "" {
+			fmt.Fprintln(out, paint.dim(line))
+		}
+	}
+	fmt.Fprintln(out, paint.dim("Listening on "+status.Listen))
+	fmt.Fprintln(out, banner)
 	return nil
 }
 
 func newStopCommand() *cobra.Command {
 	var socket string
+	var force bool
 
 	cmd := &cobra.Command{
 		Use:   "stop",
@@ -235,7 +250,12 @@ func newStopCommand() *cobra.Command {
 		Long: `Stop the running daemon.
 
 Every lease goes with it, detached ones included, since nothing about them
-survives the process. Stopping a daemon that is not running is not an error.`,
+survives the process. Stopping a daemon that is not running is not an error.
+
+One daemon serves the machine, so this reaches projects other than the one you
+are standing in. It refuses while anything is answering on a port grove leased,
+since those routes go with the daemon. A port nothing answers on does not stop
+it, and 'grove hold' is what puts a detached route back.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			client, err := daemon.Dial(socket)
@@ -252,16 +272,17 @@ survives the process. Stopping a daemon that is not running is not an error.`,
 			// Read the table before ending it, so the report can say what a
 			// machine-wide act with a small name just cost.
 			held := whatItHolds(socket)
-			if err := client.Stop(); err != nil {
-				return err
+			if !force {
+				if refusal := refuseToStop(held); refusal != "" {
+					return bareError{refusal}
+				}
 			}
-			waitForSocketGone(socket, 5*time.Second)
-			fmt.Fprintln(cmd.OutOrStdout(), "stopped"+summarize(held))
-			return nil
+			return stopWith(cmd.OutOrStdout(), client, socket, held)
 		},
 	}
 
 	cmd.Flags().StringVar(&socket, "socket", daemon.DefaultSocket(), "control socket path")
+	cmd.Flags().BoolVar(&force, "force", false, "stop even while a running command holds a lease")
 	return cmd
 }
 
@@ -303,16 +324,10 @@ func restoreContexts(cmd *cobra.Command, socket string, before []daemon.Live) {
 	}
 	slices.Sort(dirs)
 
-	var restored []string
 	for _, dir := range dirs {
 		if err := holdContext(io.Discard, socket, dir, false); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "grove: %s did not come back: %v\n", worktrees[dir], err)
-			continue
 		}
-		restored = append(restored, worktrees[dir])
-	}
-	if len(restored) > 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "held again: %s\n", strings.Join(restored, ", "))
 	}
 }
 
@@ -334,7 +349,23 @@ func whatItHolds(socket string) []daemon.Live {
 
 // Nothing about a lease survives the process, so a running stack keeps its
 // ports and loses its hostname until something holds it again.
-func summarize(held []daemon.Live) string {
+// Shared with uninstall, which stops grove for the same reason and should not
+// describe it differently.
+func stopWith(out io.Writer, client *daemon.Client, socket string, held []daemon.Live) error {
+	if err := client.Stop(); err != nil {
+		return err
+	}
+	waitForSocketGone(socket, 5*time.Second)
+
+	paint := styles(out)
+	if line := leaseTally("Released", held); line != "" {
+		fmt.Fprintln(out, paint.dim(line))
+	}
+	fmt.Fprintln(out, "STOPPED")
+	return nil
+}
+
+func leaseTally(verb string, held []daemon.Live) string {
 	if len(held) == 0 {
 		return ""
 	}
@@ -342,9 +373,23 @@ func summarize(held []daemon.Live) string {
 	for _, lease := range held {
 		contexts[lease.Slug] = true
 	}
-	return fmt.Sprintf("; %s across %s released, and anything still running is unrouted until it holds again",
-		count(len(held), "lease"), count(len(contexts), "context"))
+	return fmt.Sprintf("%s %s across %s",
+		verb, count(len(held), "lease"), count(len(contexts), "context"))
 }
+
+// A restart is the one act that costs a running command its route without
+// refusing first, so it says which ones and leaves the rest to be counted.
+func droppedTally(before []daemon.Live) string {
+	gone := attachedLeases(before)
+	if len(gone) == 0 {
+		return ""
+	}
+	if len(gone) == 1 {
+		return "Dropped 1 lease whose command needs running again"
+	}
+	return fmt.Sprintf("Dropped %d leases whose commands need running again", len(gone))
+}
+
 func newRestartCommand() *cobra.Command {
 	var opts daemonOptions
 
@@ -355,7 +400,11 @@ func newRestartCommand() *cobra.Command {
 
 This is what to run after rebuilding grove, since the daemon keeps speaking the
 protocol it was built with. Its output goes to daemon.log in the state
-directory.`,
+directory.
+
+Detached ports are taken again on the far side. A lease held by a running
+command is not, since nothing reconnects that command to a new daemon, so it
+has to be run again.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// A snapshot this fresh cannot describe a stack that has since gone
@@ -366,18 +415,6 @@ directory.`,
 				return err
 			}
 
-			client, err := daemon.Dial(opts.socket)
-			if err != nil {
-				return err
-			}
-			defer client.Close()
-
-			status, err := client.Status()
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "grove on %s, pid %d\n", status.Listen, status.PID)
-
 			restoreContexts(cmd, opts.socket, before)
 
 			// And this one, which may have been holding nothing yet: restarting
@@ -385,7 +422,16 @@ directory.`,
 			if err := syncContext(cmd.OutOrStdout(), opts.socket, false); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "grove: could not restore this context: %v\n", err)
 			}
-			return nil
+
+			// Renewed is counted from what the daemon holds now, not from what
+			// it held before: attached leases do not come back, and each
+			// project is asked again, so what returns is not what went away.
+			// Dropped is the difference, and the only part anyone must act on.
+			detail := []string{
+				leaseTally("Renewed", whatItHolds(opts.socket)),
+				droppedTally(before),
+			}
+			return reportUp(cmd, opts.socket, detail, "RESTARTED")
 		},
 	}
 
