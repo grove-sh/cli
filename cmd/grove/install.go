@@ -122,8 +122,11 @@ anything is answering on a port grove leased.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
-			held := whatItHolds(socket)
+			held, unread := whatItHolds(socket)
 			if !force {
+				if unread != nil {
+					return bareError{cannotTell(unread, "uninstall")}
+				}
 				if refusal := refuseToUninstall(held); refusal != "" {
 					return bareError{refusal}
 				}
@@ -163,7 +166,8 @@ anything is answering on a port grove leased.`,
 			}
 			defer client.Close()
 			fmt.Fprintln(out)
-			return stopWith(out, client, socket, whatItHolds(socket))
+			dropping, _ := whatItHolds(socket)
+			return stopWith(out, client, socket, dropping)
 		},
 	}
 

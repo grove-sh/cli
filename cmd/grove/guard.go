@@ -57,6 +57,27 @@ func heldBy(leases []daemon.Live) string {
 	return out.String()
 }
 
+// A guard that cannot see is not a guard. Refusing is the conservative half of
+// the same judgement the guard makes: grove would rather be told to go ahead
+// than drop a route it could not check for.
+func cannotTell(why error, verb string) string {
+	return fmt.Sprintf(`%v
+
+Which leaves grove unable to say whether anything is serving, and %s drops every
+lease on the machine. %s anyway with '%s %s --force'.`,
+		why, verb, strings.ToUpper(verb[:1])+verb[1:], invocation(), verb)
+}
+
+// Restart is the command that fixes a mismatch, so it goes ahead. Saying what
+// it could not see is the difference between a restart that lost other
+// projects and one that lost them quietly.
+func unreadable(why error) string {
+	if why == nil {
+		return ""
+	}
+	return fmt.Sprintf("The old daemon's leases were unreadable, so '%s hold' is needed in every other project", invocation())
+}
+
 func refuseToStop(held []daemon.Live) string {
 	live := servingLeases(held)
 	if len(live) == 0 {
