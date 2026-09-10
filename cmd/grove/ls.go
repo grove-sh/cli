@@ -50,7 +50,14 @@ instead.`,
 
 			cfg, err := config.Load(dir)
 			switch {
-			case all, errors.Is(err, config.ErrNotFound):
+			case all:
+				return listLeases(cmd, socket)
+			case errors.Is(err, config.ErrNotFound):
+				// The same table --all prints, but nobody asked for it. Left
+				// unsaid, the columns change with the directory and nothing
+				// explains why, which is a fallback pretending to be an answer.
+				// On stderr, so a redirected table stays a table.
+				fmt.Fprintln(cmd.ErrOrStderr(), "grove: no grove.toml here, so this is every lease on the machine")
 				return listLeases(cmd, socket)
 			case err != nil:
 				return err
