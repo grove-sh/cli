@@ -3,10 +3,12 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/grove-sh/cli/internal/config"
+	"github.com/grove-sh/cli/internal/identity"
 )
 
 func writeApp(t *testing.T, dir, manifest string) {
@@ -220,9 +222,11 @@ func TestInitNamesNoSupabaseURLForADisabledAPI(t *testing.T) {
 	}
 }
 
-// Both mail spellings are emitted, since the key was renamed at CLI 2.108 and
-// each version binds only the one it knows.
-func TestInitEmitsBothMailBindings(t *testing.T) {
+// A detached entry's env block applies whatever the caller is running, which
+// reads as scoped and is not. So the stack's port variables are written into
+// [env], where being always set is what the section means, and the entries are
+// left declaring a port and nothing else.
+func TestInitPutsDetachedPortsInEnv(t *testing.T) {
 	repo := tempRepo(t, "app1")
 	os.Remove(filepath.Join(repo, config.FileName))
 	writeStack(t, filepath.Join(repo, "supabase"), "project_id = \"x\"\n")
@@ -234,14 +238,57 @@ func TestInitEmitsBothMailBindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mail := cfg.Routes["mail"]
-	if mail == nil {
-		t.Fatal("no mail route")
-	}
-	for _, name := range []string{"SUPABASE_INBUCKET_PORT", "SUPABASE_LOCAL_SMTP_PORT"} {
-		if mail.Env[name] == "" {
-			t.Errorf("mail route does not set %s: %v", name, mail.Env)
+
+	// Named per entry rather than self-referential, since [env] has no self.
+	for name, want := range map[string]string{
+		"SUPABASE_LOCAL_SMTP_PORT": "{mail.port}",
+		"SUPABASE_DB_PORT":         "{db.port}",
+		"SUPABASE_API_PORT":        "{api.port}",
+	} {
+		if got := cfg.Env[name]; got != want {
+			t.Errorf("[env] %s = %q, want %q", name, got, want)
 		}
+	}
+
+	// And nothing was left behind on the entries to be misread as scoped.
+	for _, entry := range cfg.All() {
+		if entry.Detached && len(entry.Env) > 0 {
+			t.Errorf("%s carries env that applies everywhere: %v", entry.Ref(), entry.Env)
+		}
+	}
+
+	// The spelling supabase dropped is gone rather than emitted alongside.
+	if _, still := cfg.Env["SUPABASE_INBUCKET_PORT"]; still {
+		t.Error("[env] still sets the renamed inbucket variable")
+	}
+}
+
+// A route's env applies only while that route is bound, so its own port is the
+// one variable that belongs on the entry rather than above it.
+func TestInitLeavesARoutesOwnPortOnTheRoute(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	os.Remove(filepath.Join(repo, config.FileName))
+	if err := os.WriteFile(filepath.Join(repo, "package.json"),
+		[]byte(`{"name":"web","dependencies":{"next":"15"},"scripts":{"dev":"next dev"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+
+	exercise(t, "init")
+
+	cfg, err := config.Load(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := cfg.Routes["web"]
+	if web == nil {
+		t.Fatalf("no web route: %v", cfg.Routes)
+	}
+	if got := web.Env["PORT"]; got != "{port}" {
+		t.Errorf("route PORT = %q, want the self-reference {port}", got)
+	}
+	if _, hoisted := cfg.Env["PORT"]; hoisted {
+		t.Error("[env] sets PORT, which would hand every command the web server's port")
 	}
 }
 
@@ -441,4 +488,88 @@ func exported(stdout string) map[string]string {
 		}
 	}
 	return out
+}
+
+// The comment above a route is the only place its hostname appears before
+// anything runs, so it has to be the hostname the route will really answer on.
+// One pointing somewhere nothing serves is worse than no comment at all.
+func TestInitCommentsEachRouteWithItsHostname(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	os.Remove(filepath.Join(repo, config.FileName))
+	writeApp(t, filepath.Join(repo, "apps", "web"), `{"scripts":{"dev":"next dev"},"dependencies":{"next":"15"}}`)
+	writeStack(t, filepath.Join(repo, "supabase"), "project_id = \"x\"\n")
+	t.Chdir(repo)
+
+	exercise(t, "init")
+
+	cfg, err := config.Load(repo)
+	if err != nil {
+		t.Fatalf("what init wrote does not load: %v\n%s", err, generated(t, repo))
+	}
+	lines := strings.Split(generated(t, repo), "\n")
+	// The one app takes the bare hostname and the stack's services take a
+	// suffix, so both shapes are covered here.
+	for name, route := range cfg.Routes {
+		header := "[routes." + name + "]"
+		at := slices.Index(lines, header)
+		if at < 1 {
+			t.Errorf("no %s in what init wrote:\n%s", header, generated(t, repo))
+			continue
+		}
+		want := "# https://" + identity.ComposeLabel("<context>", route.Label) + "." + defaultDomain
+		if lines[at-1] != want {
+			t.Errorf("above %s: %q, want %q", header, lines[at-1], want)
+		}
+	}
+	// A port never gets a hostname, so nothing above one may offer it a URL.
+	for name := range cfg.Ports {
+		at := slices.Index(lines, "[ports."+name+"]")
+		if at > 0 && strings.HasPrefix(lines[at-1], "# https://") {
+			t.Errorf("[ports.%s] is promised a hostname it will never have: %q", name, lines[at-1])
+		}
+	}
+}
+
+// "studio" is supabase's word for it. Someone opening the hostname is looking
+// for supabase, so the route says so rather than making them learn the
+// difference.
+func TestInitLabelsStudioAsSupabase(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	os.Remove(filepath.Join(repo, config.FileName))
+	writeStack(t, filepath.Join(repo, "supabase"), "project_id = \"x\"\n")
+	t.Chdir(repo)
+
+	exercise(t, "init")
+
+	cfg, err := config.Load(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	studio := cfg.Routes["studio"]
+	if studio == nil {
+		t.Fatalf("no studio route: %v", cfg.Routes)
+	}
+	if studio.Label != "supabase" {
+		t.Errorf("studio label = %q, want %q", studio.Label, "supabase")
+	}
+}
+
+// A service the stack turns off becomes a bare port, and grove refuses a label
+// on one, so the label has to go with the hostname rather than the entry.
+func TestInitDropsTheLabelWithTheHostname(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	os.Remove(filepath.Join(repo, config.FileName))
+	writeStack(t, filepath.Join(repo, "supabase"), "project_id = \"x\"\n[studio]\nenabled = false\n")
+	t.Chdir(repo)
+
+	exercise(t, "init")
+
+	// Loading is the assertion: a label under [ports.studio] is a config error.
+	cfg, err := config.Load(repo)
+	if err != nil {
+		t.Fatalf("the generated config does not load: %v", err)
+	}
+	if cfg.Ports["studio"] == nil {
+		t.Errorf("a disabled studio kept its hostname: %v", cfg.Routes)
+	}
 }

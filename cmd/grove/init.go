@@ -93,17 +93,12 @@ func scaffold(root, project string) (string, []string) {
 	var notes []string
 	var b strings.Builder
 
-	fmt.Fprintf(&b, `# grove.toml
-# Every route below gets its own hostname, one per worktree:
-#   <context>.%[1]s, or <context>-<label>.%[1]s
-#
-# The project name comes from this directory. Uncomment to override it, which
-# is worth doing when the directory and the project disagree.
+	b.WriteString(`# The project name comes from this directory. This overrides it
 # name = "example"
-`, defaultDomain)
+`)
 
 	if _, err := os.Stat(filepath.Join(root, ".env")); err == nil {
-		b.WriteString("\nenv_files = [\".env\"]\n")
+		b.WriteString("\n# Loaded before the dynamic overrides below\nenv_files = [\".env\"]\n")
 		notes = append(notes, ".env, which grove will load in place of dotenv")
 	}
 
@@ -127,8 +122,13 @@ func scaffold(root, project string) (string, []string) {
 		return false
 	}
 
-	// URLs go in [env] because a route's own variables apply only while that
-	// route is bound, and a build binds nothing. Ports stay on the route.
+	// Everything that is always set goes in [env], and only what is scoped
+	// stays on an entry. An env block on a route applies while that route is
+	// bound and a build binds nothing, which is why URLs cannot live there. An
+	// env block on a detached entry applies always, which reads as scoped and
+	// is not, so those go up too and leave the entry declaring a port and
+	// nothing else. What is left on a route is its own port, which is the one
+	// variable that really does belong to one command.
 	urls := map[string]string{}
 	shared := map[string]bool{}
 	claim := func(name, template string) {
@@ -153,12 +153,17 @@ func scaffold(root, project string) (string, []string) {
 	}
 
 	if stack || len(urls) > 0 {
-		b.WriteString("\n[env]\n")
+		b.WriteString("\n# Set for every command in this project, whatever it runs\n[env]\n")
 	}
 	if stack {
 		b.WriteString(`SUPABASE_PROJECT_ID = "{context.slug}"
 POSTGRES_URL = "postgres://postgres:postgres@localhost:{db.port}/postgres"
 `)
+		for _, service := range services {
+			for _, name := range service.ports {
+				fmt.Fprintf(&b, "%s = %q\n", name, "{"+service.name+".port}")
+			}
+		}
 		notes = append(notes, "a supabase stack in "+stackDir+", whose ports grove will allocate")
 		if len(demoted) > 0 {
 			notes = append(notes, "no hostname for "+strings.Join(demoted, ", ")+", which the stack has turned off")
@@ -172,7 +177,13 @@ POSTGRES_URL = "postgres://postgres:postgres@localhost:{db.port}/postgres"
 	}
 
 	for _, found := range apps {
-		fmt.Fprintf(&b, "\n[routes.%s]\n", found.name)
+		// The only app takes the context's own hostname; two of them cannot.
+		label := found.name
+		if len(apps) == 1 {
+			label = ""
+		}
+		b.WriteString("\n" + routeURL(label))
+		fmt.Fprintf(&b, "[routes.%s]\n", found.name)
 		if found.dir != "." {
 			fmt.Fprintf(&b, "dir = %q\n", found.dir)
 		}
@@ -196,14 +207,15 @@ POSTGRES_URL = "postgres://postgres:postgres@localhost:{db.port}/postgres"
 
 	for _, dir := range unsure {
 		fmt.Fprintf(&b, "\n# %s has a dev script, but nothing grove recognises as a server. If it listens:\n", dir)
+		b.WriteString(routeURL(filepath.Base(dir)))
 		fmt.Fprintf(&b, "# [routes.%s]\n# dir = %q\n# env.PORT = \"{port}\"\n", filepath.Base(dir), dir)
 		notes = append(notes, dir+", which grove could not identify, left commented out")
 	}
 
 	if len(apps) == 0 && len(unsure) == 0 {
-		b.WriteString(`
-# No app turned up, so here is the shape of one.
-# [routes.web]
+		b.WriteString("\n# No app turned up, so here is the shape of one.\n")
+		b.WriteString(routeURL(""))
+		b.WriteString(`# [routes.web]
 # dir = "."
 # label = ""
 # env.PORT = "{port}"
@@ -215,6 +227,14 @@ POSTGRES_URL = "postgres://postgres:postgres@localhost:{db.port}/postgres"
 		b.WriteString(supabaseEntries(services))
 	}
 	return b.String(), notes
+}
+
+// The hostname a route will answer on, written above it. The context is the
+// one part init cannot fill in, since every worktree gets its own; the rest is
+// composed the way exec composes it, so the comment cannot promise a URL that
+// differs from the one the route answers on.
+func routeURL(label string) string {
+	return fmt.Sprintf("# https://%s.%s\n", identity.ComposeLabel("<context>", label), defaultDomain)
 }
 
 func sortedKeys(m map[string]string) []string {
@@ -337,8 +357,15 @@ func findSupabase(root string) (found bool, dir string) {
 type supabaseService struct {
 	name   string
 	routed bool
-	note   string
-	env    []string
+
+	// The hostname this service answers on, where the entry name would read
+	// worse. Empty means the entry name, which is what grove defaults to.
+	label string
+
+	// Variable names only. Every one of these takes this entry's port, and the
+	// entries are all detached, so they are written into [env] rather than onto
+	// the entry: see the note there about which scope an env block has.
+	ports []string
 }
 
 // Every port is allocated even for a service the config disables: kong
@@ -346,21 +373,15 @@ type supabaseService struct {
 // than a collision. Hostnames are the reverse, so a disabled service loses one.
 func supabaseServices(flags supabaseFlags) (services []supabaseService, demoted []string) {
 	services = []supabaseService{
-		{name: "api", routed: true, env: []string{`SUPABASE_API_PORT = "{port}"`}},
-		{name: "studio", routed: true, env: []string{`SUPABASE_STUDIO_PORT = "{port}"`}},
-		{
-			name:   "mail",
-			routed: true,
-			note:   `# Renamed at CLI 2.108. Each version binds only the one it knows.`,
-			env: []string{
-				`SUPABASE_INBUCKET_PORT = "{port}"`,
-				`SUPABASE_LOCAL_SMTP_PORT = "{port}"`,
-			},
-		},
-		{name: "db", env: []string{`SUPABASE_DB_PORT = "{port}"`}},
-		{name: "shadow", env: []string{`SUPABASE_DB_SHADOW_PORT = "{port}"`}},
-		{name: "pooler", env: []string{`SUPABASE_DB_POOLER_PORT = "{port}"`}},
-		{name: "analytics", env: []string{`SUPABASE_ANALYTICS_PORT = "{port}"`}},
+		{name: "api", routed: true, ports: []string{"SUPABASE_API_PORT"}},
+		// "studio" is what supabase calls it; "supabase" is what someone
+		// opening the hostname is looking for.
+		{name: "studio", routed: true, label: "supabase", ports: []string{"SUPABASE_STUDIO_PORT"}},
+		{name: "mail", routed: true, ports: []string{"SUPABASE_LOCAL_SMTP_PORT"}},
+		{name: "db", ports: []string{"SUPABASE_DB_PORT"}},
+		{name: "shadow", ports: []string{"SUPABASE_DB_SHADOW_PORT"}},
+		{name: "pooler", ports: []string{"SUPABASE_DB_POOLER_PORT"}},
+		{name: "analytics", ports: []string{"SUPABASE_ANALYTICS_PORT"}},
 	}
 
 	for i := range services {
@@ -404,21 +425,25 @@ func readSupabaseFlags(path string) supabaseFlags {
 
 func supabaseEntries(services []supabaseService) string {
 	b := &strings.Builder{}
-	b.WriteString(`
-# Every port the stack can publish, including services its config disables:
-# supabase publishes some of those anyway, and a spare port beats a collision.
-`)
 	for _, service := range services {
 		section := "ports"
 		if service.routed {
 			section = "routes"
 		}
-		fmt.Fprintf(b, "\n[%s.%s]\ndetached = true\n", section, service.name)
-		if service.note != "" {
-			fmt.Fprintln(b, service.note)
+		// A label only means anything on a route: a demoted service has no
+		// hostname, and grove rejects one that claims a label anyway.
+		label := service.label
+		if label == "" {
+			label = service.name
 		}
-		for _, line := range service.env {
-			fmt.Fprintf(b, "env.%s\n", line)
+
+		b.WriteString("\n")
+		if service.routed {
+			b.WriteString(routeURL(label))
+		}
+		fmt.Fprintf(b, "[%s.%s]\ndetached = true\n", section, service.name)
+		if service.routed && service.label != "" {
+			fmt.Fprintf(b, "label = %q\n", service.label)
 		}
 	}
 	return b.String()

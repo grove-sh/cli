@@ -88,15 +88,17 @@ This writes a `grove.toml` from what it finds: a route per app, and the ports a 
 ```toml
 [env]
 POSTGRES_URL = "postgres://postgres@localhost:5432/{context.slug}"
+NEXT_PUBLIC_SITE_URL = "{web.url}"
 
 [routes.web]
 dir = "apps/web"
 label = ""
 env.PORT = "{port}"
-env.NEXT_PUBLIC_SITE_URL = "{url}"
 ```
 
-`{port}` and `{url}` are this entry's own. `{db.port}` names another entry, whichever section it lives in, and `{context.slug}` is the worktree's name, which is how one shared database server gives every worktree its own database.
+`{port}` and `{url}` are this entry's own, so they only mean anything on an entry. `{db.port}` names another entry, whichever section it lives in, and `{context.slug}` is the worktree's name, which is how one shared database server gives every worktree its own database.
+
+Where a variable sits decides when it is set. `[env]` is set for every command in the project. An env block on a route is set only while that route is bound, which is why a URL belongs in `[env]` even though it describes the route: a build needs it, and a build binds nothing. An env block on a **detached** entry is set always, exactly like `[env]`, so it reads as scoped while behaving as global, and belongs in `[env]` where the section already says so.
 
 Then run your commands through it:
 
