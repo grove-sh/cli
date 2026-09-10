@@ -117,7 +117,7 @@ func TestLsShowsAPortItIsHolding(t *testing.T) {
 	}
 	// The port it was handed is the one to act on, so it has to be the real
 	// one rather than the prediction.
-	if got := portOf(t, stdout, "db"); got != portOf(t, mustAll(t, socket), "app1:db") {
+	if got := portOf(t, stdout, "db"); got != portOf(t, mustAll(t, socket), "app1", "db") {
 		t.Errorf("ls shows %d, not the port the daemon handed out", got)
 	}
 }
@@ -158,8 +158,8 @@ func TestLsAllReportsEveryContext(t *testing.T) {
 
 	_, stdout, _ := exercise(t, "ls", "--socket", socket, "--all")
 
-	// The cross-context view is keyed by worktree, not by route name.
-	if !strings.Contains(stdout, "WORKTREE") {
+	// The cross-context view is keyed by directory, not by route name.
+	if !strings.Contains(stdout, "DIRECTORY") {
 		t.Errorf("--all did not switch views:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, repo) {
@@ -208,7 +208,7 @@ func TestLsTellsAClaimedPortFromARunningOne(t *testing.T) {
 	}
 
 	_, held, _ := exercise(t, "ls", "--socket", socket, "--all")
-	port := portOf(t, held, "app1:db")
+	port := portOf(t, held, "app1", "db")
 
 	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
@@ -231,20 +231,36 @@ func TestLsTellsAClaimedPortFromARunningOne(t *testing.T) {
 	}
 }
 
-func portOf(t *testing.T, table, route string) int {
+// Matched on a row's leading cells, because the two tables legitimately start
+// with different things: the project listing with the route, the machine
+// listing with the context that owns it.
+func portOf(t *testing.T, table string, cells ...string) int {
 	t.Helper()
 	for _, line := range strings.Split(table, "\n") {
-		if !strings.HasPrefix(line, route+" ") {
+		fields := strings.Fields(line)
+		if !leads(fields, cells) {
 			continue
 		}
-		for _, field := range strings.Fields(line) {
+		for _, field := range fields {
 			if port, err := strconv.Atoi(field); err == nil {
 				return port
 			}
 		}
 	}
-	t.Fatalf("no port for %q in:\n%s", route, table)
+	t.Fatalf("no port for %v in:\n%s", cells, table)
 	return 0
+}
+
+func leads(fields, cells []string) bool {
+	if len(fields) < len(cells) {
+		return false
+	}
+	for i, cell := range cells {
+		if fields[i] != cell {
+			return false
+		}
+	}
+	return true
 }
 
 // An empty want asks only whether the row is there at all, which is now half of
@@ -319,5 +335,150 @@ func TestLsKeepsTheFallbackNoteOffStdout(t *testing.T) {
 
 	if strings.Contains(stdout, "grove.toml") {
 		t.Errorf("stdout carries the note: %q", stdout)
+	}
+}
+
+// A dash inside a hostname is not a placeholder, and taking one apart would be
+// the cost of dimming by search rather than by column.
+func TestDimQuietLeavesHostnameDashesAlone(t *testing.T) {
+	mark := func(s string) string { return "<" + s + ">" }
+	laid := "studio     https://app-supabase.grov.site  20246  running\n" +
+		"nextjs     https://app.grov.site             -      idle\n" +
+		"mail       -                                 20047  claimed\n"
+
+	plain := func(s string) string { return s }
+	got := styleCells(laid, mark, plain)
+
+	if !strings.Contains(got, "https://app-supabase.grov.site") {
+		t.Errorf("a dash inside a hostname was dimmed:\n%s", got)
+	}
+	if strings.Count(got, "<->") != 2 {
+		t.Errorf("dimmed %d placeholder(s), want 2:\n%s", strings.Count(got, "<->"), got)
+	}
+	for _, want := range []string{"<idle>", "<claimed>"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%s was not dimmed:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "<running>") {
+		t.Error("running was dimmed, which is the one state worth reading")
+	}
+}
+
+// Nothing is said in colour alone, so a pipe keeps the facts and loses only the
+// emphasis. An escape would corrupt anything reading the table.
+func TestLsWritesNoEscapesOffATerminal(t *testing.T) {
+	socket := startDaemon(t)
+	t.Chdir(tempRepo(t, "app1"))
+
+	_, stdout, _ := exercise(t, "ls", "--socket", socket)
+
+	if strings.Contains(stdout, "\x1b[") {
+		t.Errorf("stdout carries an escape sequence: %q", stdout)
+	}
+	if !strings.Contains(stdout, "idle") {
+		t.Errorf("the state was lost with the colour: %q", stdout)
+	}
+}
+
+// Every row in that column tends to share the prefix, so the shell's own
+// shorthand for it is worth more than the characters it costs.
+func TestShortenHome(t *testing.T) {
+	for _, tc := range []struct {
+		name, dir, home, want string
+	}{
+		{"under home", "/home/c/git/app", "/home/c", "~/git/app"},
+		{"home itself", "/home/c", "/home/c", "~"},
+		{"elsewhere", "/srv/app", "/home/c", "/srv/app"},
+		// The one that a plain prefix test gets wrong: another user whose name
+		// starts with this one's.
+		{"a sibling with a longer name", "/home/christine/app", "/home/chris", "/home/christine/app"},
+		{"no home to compare", "/home/c/git/app", "", "/home/c/git/app"},
+		{"nothing to shorten", "", "/home/c", ""},
+	} {
+		if got := shortenHome(tc.dir, tc.home); got != tc.want {
+			t.Errorf("%s: shortenHome(%q, %q) = %q, want %q", tc.name, tc.dir, tc.home, got, tc.want)
+		}
+	}
+}
+
+// Both tables say running and claimed, and they have to mean the same thing in
+// each: an attached lease is running whatever the port says, and a detached one
+// is only running while something answers.
+func TestLeaseStateAgreesAcrossBothTables(t *testing.T) {
+	quiet := freePort(t)
+	if got := leaseState(true, quiet); got != stateClaimed {
+		t.Errorf("a detached lease nothing answers on = %q, want %q", got, stateClaimed)
+	}
+	if got := leaseState(false, quiet); got != stateRunning {
+		t.Errorf("an attached lease = %q, want %q; its command is what holds it", got, stateRunning)
+	}
+	if got := leaseState(true, listeningPort(t)); got != stateRunning {
+		t.Errorf("a detached lease something answers on = %q, want %q", got, stateRunning)
+	}
+}
+
+// Found by the padding around it rather than by the end of the line, so a
+// table that puts the state anywhere but last still styles it.
+func TestStyleStateFindsAStateMidRow(t *testing.T) {
+	mark := func(s string) string { return "<" + s + ">" }
+	line := "app:mail  20047  claimed  ~/git/app"
+
+	if got := styleState(line, stateClaimed, mark); !strings.Contains(got, "<claimed>") {
+		t.Errorf("a state before another column was not styled: %s", got)
+	}
+	// A directory that contains the word is not a state, and single spaces are
+	// what tell one apart from a padded cell.
+	quiet := "app:db  20402  running  ~/my claimed things"
+	if got := styleState(quiet, stateClaimed, mark); strings.Contains(got, "<") {
+		t.Errorf("styled a word inside a directory: %s", got)
+	}
+}
+
+// The state worth acting on is the one that reads loudest, in both tables.
+func TestStyleCellsBoldsRunning(t *testing.T) {
+	dim := func(s string) string { return "<dim:" + s + ">" }
+	bold := func(s string) string { return "<bold:" + s + ">" }
+	laid := "app:db    20402  running\napp:mail  20047  claimed\n"
+
+	got := styleCells(laid, dim, bold)
+
+	if !strings.Contains(got, "<bold:running>") {
+		t.Errorf("running was not bolded:\n%s", got)
+	}
+	if !strings.Contains(got, "<dim:claimed>") {
+		t.Errorf("claimed was not dimmed:\n%s", got)
+	}
+	if strings.Contains(got, "<dim:running>") || strings.Contains(got, "<bold:claimed>") {
+		t.Errorf("the two states were styled the same way:\n%s", got)
+	}
+}
+
+// One column held either a slug:service pair or a bare hostname, so it was
+// sized by the longest hostname while half its rows were half that long. The
+// context and the entry get a column each, and ROUTE is then the same column
+// the project listing has.
+func TestLsAllSeparatesTheContextFromTheRoute(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	t.Chdir(repo)
+	if code, _, stderr := exercise(t, "hold", "--socket", socket); code != 0 {
+		t.Fatal(stderr)
+	}
+
+	_, stdout, _ := exercise(t, "ls", "--socket", socket, "--all")
+
+	for _, want := range []string{"CONTEXT", "ROUTE"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("no %s column:\n%s", want, stdout)
+		}
+	}
+	// The two used to be one cell joined by a colon, which is what made the
+	// column as wide as a hostname.
+	if strings.Contains(stdout, "app1:db") {
+		t.Errorf("the context is still glued to the route:\n%s", stdout)
+	}
+	if portOf(t, stdout, "app1", "db") == 0 {
+		t.Errorf("no row with the context and route as separate cells:\n%s", stdout)
 	}
 }

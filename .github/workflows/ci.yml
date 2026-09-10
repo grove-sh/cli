@@ -135,11 +135,16 @@ jobs:
 
       # Two projects, because the bug this guards against lost every project
       # but one and a single fixture could not tell the difference.
+      # Outside $HOME on purpose. Grove abbreviates a path under home to ~, and
+      # the runner's temp directory is under it, so a fixture there would be
+      # printed one way by a version that abbreviates and another by a version
+      # that does not.
       - name: An old daemon holding two projects' ports
         run: |
           set -euo pipefail
+          mkdir -p /tmp/grove-upgrade
           for name in one two; do
-            dir="$RUNNER_TEMP/$name"
+            dir="/tmp/grove-upgrade/$name"
             mkdir -p "$dir"
             git -C "$dir" init -q -b main
             git -C "$dir" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
@@ -153,11 +158,13 @@ jobs:
 
           "$RUNNER_TEMP/grove-old" install --trust=false > /dev/null
           "$RUNNER_TEMP/grove-old" start
-          (cd "$RUNNER_TEMP/one" && "$RUNNER_TEMP/grove-old" hold)
-          (cd "$RUNNER_TEMP/two" && "$RUNNER_TEMP/grove-old" hold)
+          (cd /tmp/grove-upgrade/one && "$RUNNER_TEMP/grove-old" hold)
+          (cd /tmp/grove-upgrade/two && "$RUNNER_TEMP/grove-old" hold)
 
           "$RUNNER_TEMP/grove-old" ls --all | tee "$RUNNER_TEMP/before.txt"
-          test "$(grep -c detached "$RUNNER_TEMP/before.txt")" = 2
+          for name in one two; do
+            grep -q "/tmp/grove-upgrade/$name" "$RUNNER_TEMP/before.txt"
+          done
 
       # From the workspace, which is neither project. Restoring the context you
       # happen to be standing in is what made a lost lease table look like a
@@ -170,10 +177,17 @@ jobs:
 
           # Every project holds the ports it held, on the same numbers: a
           # restart derives them again rather than replaying the old table.
+          #
+          # The two files come from two different builds, so nothing here may
+          # depend on where a column sits or what it is called. A row is found
+          # by the directory it names and a port is the five-digit number on
+          # it, both of which survive the table being rearranged.
+          ports_for() { # file, project
+            grep -F "/tmp/grove-upgrade/$2" "$1" | grep -oE '[0-9]{5}' | sort | tr '\n' ' '
+          }
           for name in one two; do
-            dir="$RUNNER_TEMP/$name"
-            was=$(awk -v d="$dir" '$NF == d { print $2 }' "$RUNNER_TEMP/before.txt" | sort | tr '\n' ' ')
-            now=$(awk -v d="$dir" '$NF == d { print $2 }' "$RUNNER_TEMP/after.txt" | sort | tr '\n' ' ')
+            was=$(ports_for "$RUNNER_TEMP/before.txt" "$name")
+            now=$(ports_for "$RUNNER_TEMP/after.txt" "$name")
             if [ -z "$now" ]; then
               echo "$name lost every lease across the upgrade" >&2
               exit 1
