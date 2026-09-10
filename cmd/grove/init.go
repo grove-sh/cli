@@ -155,10 +155,31 @@ func scaffold(root, project string) (string, []string) {
 	if stack || len(urls) > 0 {
 		b.WriteString("\n# Set for every command in this project, whatever it runs\n[env]\n")
 	}
+
+	// Two groups, because they are read by different things. These are the
+	// project's own variables, the ones its code goes looking for, and they say
+	// nothing about which tool publishes the ports behind them.
+	mine := map[string]string{}
 	if stack {
-		b.WriteString(`SUPABASE_PROJECT_ID = "{context.slug}"
-POSTGRES_URL = "postgres://postgres:postgres@localhost:{db.port}/postgres"
-`)
+		mine["POSTGRES_URL"] = "postgres://postgres:postgres@localhost:{db.port}/postgres"
+	}
+	for name, template := range urls {
+		if !shared[name] {
+			mine[name] = template
+		}
+	}
+	for _, name := range sortedKeys(mine) {
+		fmt.Fprintf(&b, "%s = %q\n", name, mine[name])
+	}
+
+	// And these are the supabase CLI's, which nothing in the project reads:
+	// they are how the stack is told which ports to publish. Kept in the order
+	// the entries appear below, so the two halves of the file agree.
+	if stack {
+		if len(mine) > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("SUPABASE_PROJECT_ID = \"{context.slug}\"\n")
 		for _, service := range services {
 			for _, name := range service.ports {
 				fmt.Fprintf(&b, "%s = %q\n", name, "{"+service.name+".port}")
@@ -168,12 +189,6 @@ POSTGRES_URL = "postgres://postgres:postgres@localhost:{db.port}/postgres"
 		if len(demoted) > 0 {
 			notes = append(notes, "no hostname for "+strings.Join(demoted, ", ")+", which the stack has turned off")
 		}
-	}
-	for _, name := range sortedKeys(urls) {
-		if shared[name] {
-			continue
-		}
-		fmt.Fprintf(&b, "%s = %q\n", name, urls[name])
 	}
 
 	for _, found := range apps {
