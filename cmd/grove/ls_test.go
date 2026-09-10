@@ -280,3 +280,44 @@ func TestLsTreatsAStoppedDaemonTheSameEitherWay(t *testing.T) {
 		t.Errorf("it did not say the daemon is down: %q", stderr)
 	}
 }
+
+// Outside a project this prints the machine's leases rather than a context's
+// routes: different columns, and nobody asked for them. Saying so is what
+// separates a fallback from a surprise.
+func TestLsSaysWhenItFellBackToTheMachine(t *testing.T) {
+	socket := startDaemon(t)
+	t.Chdir(t.TempDir())
+
+	code, _, stderr := exercise(t, "ls", "--socket", socket)
+
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "no grove.toml here") {
+		t.Errorf("stderr does not explain which table this is: %q", stderr)
+	}
+}
+
+// Asking for the machine is not a surprise, so it goes unremarked.
+func TestLsAllExplainsNothing(t *testing.T) {
+	socket := startDaemon(t)
+	t.Chdir(t.TempDir())
+
+	_, _, stderr := exercise(t, "ls", "--all", "--socket", socket)
+
+	if strings.Contains(stderr, "no grove.toml") {
+		t.Errorf("--all explained itself to someone who asked: %q", stderr)
+	}
+}
+
+// The note goes to stderr so a redirected table is still only a table.
+func TestLsKeepsTheFallbackNoteOffStdout(t *testing.T) {
+	socket := startDaemon(t)
+	t.Chdir(t.TempDir())
+
+	_, stdout, _ := exercise(t, "ls", "--socket", socket)
+
+	if strings.Contains(stdout, "grove.toml") {
+		t.Errorf("stdout carries the note: %q", stdout)
+	}
+}
