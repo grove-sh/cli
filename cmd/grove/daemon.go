@@ -271,8 +271,11 @@ it, and 'grove hold' is what puts a detached route back.`,
 
 			// Read the table before ending it, so the report can say what a
 			// machine-wide act with a small name just cost.
-			held := whatItHolds(socket)
+			held, unread := whatItHolds(socket)
 			if !force {
+				if unread != nil {
+					return bareError{cannotTell(unread, "stop")}
+				}
 				if refusal := refuseToStop(held); refusal != "" {
 					return bareError{refusal}
 				}
@@ -341,18 +344,20 @@ func restoreContexts(cmd *cobra.Command, socket string, before []daemon.Live) {
 
 // On a connection of its own, since one connection carries exactly one request
 // and the caller's is about to carry the stop.
-func whatItHolds(socket string) []daemon.Live {
+// The error is the point as much as the table is. An empty table because
+// nothing is held and an empty table because the daemon could not be read look
+// identical, and acting on the second as though it were the first is how a
+// guard stops guarding and a report stops reporting.
+func whatItHolds(socket string) ([]daemon.Live, error) {
 	client, err := daemon.Dial(socket)
 	if err != nil {
-		return nil
+		// Nothing answered, so nothing is held. That is an answer, not a
+		// failure to get one.
+		return nil, nil
 	}
 	defer client.Close()
 
-	held, err := client.List()
-	if err != nil {
-		return nil
-	}
-	return held
+	return client.List()
 }
 
 // Nothing about a lease survives the process, so a running stack keeps its
@@ -417,7 +422,7 @@ has to be run again.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// A snapshot this fresh cannot describe a stack that has since gone
 			// away, which is the objection to writing leases down at all.
-			before := whatItHolds(opts.socket)
+			before, unread := whatItHolds(opts.socket)
 
 			if err := restartDaemon(opts); err != nil {
 				return err
@@ -435,9 +440,11 @@ has to be run again.`,
 			// it held before: attached leases do not come back, and each
 			// project is asked again, so what returns is not what went away.
 			// Dropped is the difference, and the only part anyone must act on.
+			now, _ := whatItHolds(opts.socket)
 			detail := []string{
-				leaseTally("Renewed", whatItHolds(opts.socket)),
+				leaseTally("Renewed", now),
 				droppedTally(before),
+				unreadable(unread),
 			}
 			return reportUp(cmd, opts.socket, detail, "RESTARTED")
 		},

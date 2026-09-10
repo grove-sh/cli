@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"net"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -92,7 +95,7 @@ func TestStopRefusesWithoutWearingThePrefix(t *testing.T) {
 	if code, _, stderr := exercise(t, "hold", "--socket", socket); code != 0 {
 		t.Fatal(stderr)
 	}
-	held := whatItHolds(socket)
+	held, _ := whatItHolds(socket)
 	if len(held) == 0 {
 		t.Fatal("nothing was held, so there is nothing to answer on")
 	}
@@ -215,5 +218,88 @@ func TestRestartSaysWhichLeasesWillNotComeBack(t *testing.T) {
 		if got := droppedTally(before); got != tc.want {
 			t.Errorf("%s: droppedTally = %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+// A daemon this build cannot read, which is what every upgrade meets once.
+func unreadableDaemon(t *testing.T) string {
+	t.Helper()
+
+	socket := filepath.Join(socketDir(t), "unreadable.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				if json.NewDecoder(conn).Decode(new(map[string]any)) != nil {
+					return
+				}
+				json.NewEncoder(conn).Encode(daemon.Response{
+					Version: daemon.Version - 1,
+					Error:   "the running daemon speaks an older protocol",
+				})
+			}()
+		}
+	}()
+	return socket
+}
+
+// An empty lease table because nothing is held and an empty one because the
+// daemon could not be read look identical. Acting on the second as the first
+// is how the guard stopped guarding: something was serving, and stop went
+// ahead and said nothing about what it dropped.
+func TestStopRefusesWhenItCannotReadTheTable(t *testing.T) {
+	socket := unreadableDaemon(t)
+
+	code, stdout, stderr := exercise(t, "stop", "--socket", socket)
+
+	if code == 0 {
+		t.Fatalf("stop went ahead without being able to check: %s%s", stdout, stderr)
+	}
+	for _, want := range []string{"unable to say whether anything is serving", "--force"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr does not mention %q:\n%s", want, stderr)
+		}
+	}
+	// The daemon's own words first, so the reason is not grove's paraphrase.
+	if !strings.HasPrefix(stderr, "the running daemon speaks an older protocol") {
+		t.Errorf("the refusal does not lead with why:\n%s", stderr)
+	}
+}
+
+func TestUninstallRefusesWhenItCannotReadTheTable(t *testing.T) {
+	socket := unreadableDaemon(t)
+	dir := t.TempDir()
+	if _, _, stderr := exercise(t, "install", "--state-dir", dir, "--trust=false"); stderr != "" {
+		t.Fatal(stderr)
+	}
+
+	code, _, stderr := exercise(t, "uninstall", "--state-dir", dir, "--trust=false", "--socket", socket)
+
+	if code == 0 {
+		t.Fatal("uninstall untrusted a root without being able to check")
+	}
+	if !strings.Contains(stderr, "uninstall drops every") {
+		t.Errorf("the refusal does not name what it would cost:\n%s", stderr)
+	}
+}
+
+// Restart is how a mismatch gets fixed, so it goes ahead. Silence is the part
+// that made the loss invisible.
+func TestUnreadableSaysNothingWhenTheTableWasReadable(t *testing.T) {
+	if said := unreadable(nil); said != "" {
+		t.Errorf("unreadable(nil) = %q, want nothing", said)
+	}
+	if said := unreadable(errors.New("older protocol")); !strings.Contains(said, "hold") {
+		t.Errorf("unreadable(err) = %q, which does not name the way back", said)
 	}
 }

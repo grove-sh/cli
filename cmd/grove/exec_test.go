@@ -741,7 +741,7 @@ func TestNoBindTakesNothing(t *testing.T) {
 	if reported == "" {
 		t.Fatal("no port was reported")
 	}
-	if held := whatItHolds(socket); len(held) != 0 {
+	if held, _ := whatItHolds(socket); len(held) != 0 {
 		t.Errorf("--no-bind left %d lease(s) behind", len(held))
 	}
 
