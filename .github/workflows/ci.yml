@@ -78,6 +78,24 @@ jobs:
   # High ports throughout, so none of this needs the privileged setup that
   # reaching 443 does.
   upgrade:
+    name: upgrade from ${{ matrix.label }}
+    strategy:
+      # One of these failing says something different from the other, so
+      # neither should hide it.
+      fail-fast: false
+      matrix:
+        include:
+          # The ordinary upgrade, whatever the last release happens to be.
+          - from: newest
+            label: the previous release
+          # The oldest protocol grove still claims to speak. Once the newest
+          # tag is a protocol ahead of this one, the leg above covers the same
+          # ground and this pin can go. Until then it is the only place the
+          # cross-version machinery runs against a daemon that really is old:
+          # the version-exempt stop, the downgrade retry that replaces it, and
+          # the tolerant read a restore needs to see what it held.
+          - from: v0.3.0
+            label: protocol v2
     runs-on: ubuntu-latest
     env:
       GROVE_STATE_DIR: ${{ github.workspace }}/upgrade-state
@@ -101,8 +119,13 @@ jobs:
       - name: Build the previous release, and this one
         run: |
           set -euo pipefail
-          previous=$(git tag --sort=-v:refname | head -1)
+          if [ "${{ matrix.from }}" = "newest" ]; then
+            previous=$(git tag --sort=-v:refname | head -1)
+          else
+            previous="${{ matrix.from }}"
+          fi
           test -n "$previous"
+          git rev-parse -q --verify "refs/tags/$previous" > /dev/null
           echo "upgrading from $previous"
           git worktree add /tmp/previous "$previous"
           (cd /tmp/previous && go build -o "$RUNNER_TEMP/grove-old" ./cmd/grove)
