@@ -66,6 +66,40 @@ func (c *Client) Resolve(slug, worktree string, entries []Entry) (map[string]Gra
 	return resp.Grants, nil
 }
 
+// ListAnyVersion reads the table even from a daemon speaking an older protocol,
+// which List is right to refuse. Safe here because of what the caller does
+// with it: an older payload decodes into this struct with whatever it does not
+// carry left zero, so a field that moved between versions costs entries rather
+// than meaning them wrongly, and a restore that puts back fewer projects is
+// what already happens when the table cannot be read at all.
+func (c *Client) ListAnyVersion() ([]Live, error) {
+	resp, err := c.exchange(Request{Op: OpList, Version: Version})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error == "" {
+		return resp.Leases, nil
+	}
+	if resp.Version == 0 || resp.Version >= Version {
+		return nil, errors.New(resp.Error)
+	}
+
+	older, err := Dial(c.socket)
+	if err != nil {
+		return nil, err
+	}
+	defer older.Close()
+
+	again, err := older.exchange(Request{Op: OpList, Version: resp.Version})
+	if err != nil {
+		return nil, err
+	}
+	if again.Error != "" {
+		return nil, errors.New(again.Error)
+	}
+	return again.Leases, nil
+}
+
 func (c *Client) List() ([]Live, error) {
 	resp, err := c.roundTrip(Request{Op: OpList})
 	if err != nil {

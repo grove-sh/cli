@@ -348,6 +348,21 @@ func restoreContexts(cmd *cobra.Command, socket string, before []daemon.Live) {
 // nothing is held and an empty table because the daemon could not be read look
 // identical, and acting on the second as though it were the first is how a
 // guard stops guarding and a report stops reporting.
+// What a restart works from, and tolerant on purpose. A restore can only put
+// leases back, so a partial reading of an older daemon's table beats the empty
+// one that made a lost project invisible. Stop and uninstall keep the strict
+// read below: dropping every lease on the machine is a decision, and a
+// decision resting on a best-effort reading is better refused than taken.
+func whatItHeld(socket string) ([]daemon.Live, error) {
+	client, err := daemon.Dial(socket)
+	if err != nil {
+		return nil, nil
+	}
+	defer client.Close()
+
+	return client.ListAnyVersion()
+}
+
 func whatItHolds(socket string) ([]daemon.Live, error) {
 	client, err := daemon.Dial(socket)
 	if err != nil {
@@ -422,7 +437,7 @@ has to be run again.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// A snapshot this fresh cannot describe a stack that has since gone
 			// away, which is the objection to writing leases down at all.
-			before, unread := whatItHolds(opts.socket)
+			before, unread := whatItHeld(opts.socket)
 
 			if err := restartDaemon(opts); err != nil {
 				return err

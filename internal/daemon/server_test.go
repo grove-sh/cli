@@ -717,3 +717,89 @@ func fakeDaemon(t *testing.T, reply map[string]any) *daemon.Client {
 	t.Cleanup(func() { client.Close() })
 	return client
 }
+
+// Reading the table across a protocol change is what lets a restart put back
+// every project rather than only the one the caller happens to stand in. List
+// is right to refuse it; the restore is the caller that can afford a partial
+// answer, because putting back fewer leases is what already happens when it
+// gets none.
+func TestListAnyVersionAsksAgainInAnOlderProtocol(t *testing.T) {
+	asked := make(chan int, 4)
+	socket := filepath.Join(socketDir(t), "older-list.sock")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				var req daemon.Request
+				if json.NewDecoder(conn).Decode(&req) != nil {
+					return
+				}
+				asked <- req.Version
+
+				if req.Version != daemon.Version-1 {
+					json.NewEncoder(conn).Encode(daemon.Response{
+						Version: daemon.Version - 1,
+						Error:   "the running daemon speaks an older protocol",
+					})
+					return
+				}
+				json.NewEncoder(conn).Encode(daemon.Response{
+					Version: daemon.Version - 1,
+					Leases: []daemon.Live{
+						{Slug: "one", Service: "db", Worktree: "/w/one", Port: 20001, Detached: true},
+						{Slug: "two", Service: "db", Worktree: "/w/two", Port: 20002, Detached: true},
+					},
+				})
+			}()
+		}
+	}()
+
+	// A connection carries one request, so each read gets its own, the way
+	// every caller in grove already dials per question.
+	strict, err := daemon.Dial(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strict.Close()
+	if _, err := strict.List(); err == nil {
+		t.Error("List read a daemon speaking another protocol")
+	}
+	<-asked
+
+	tolerant, err := daemon.Dial(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tolerant.Close()
+
+	held, err := tolerant.ListAnyVersion()
+	if err != nil {
+		t.Fatalf("ListAnyVersion = %v", err)
+	}
+
+	if len(held) != 2 {
+		t.Fatalf("read %d lease(s), want 2", len(held))
+	}
+	// The fields a restore needs, which have been there as long as Live has.
+	for _, lease := range held {
+		if lease.Worktree == "" || !lease.Detached {
+			t.Errorf("lease %+v is missing what a restore reads", lease)
+		}
+	}
+	if first := <-asked; first != daemon.Version {
+		t.Errorf("asked first in v%d, want this build's v%d", first, daemon.Version)
+	}
+	if second := <-asked; second != daemon.Version-1 {
+		t.Errorf("asked again in v%d, want the daemon's v%d", second, daemon.Version-1)
+	}
+}
