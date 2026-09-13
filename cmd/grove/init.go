@@ -32,14 +32,21 @@ variable an app reads its URL from is exactly that.`,
 			if err != nil {
 				return err
 			}
-			root, project := projectRoot(dir)
+			context := initContext(dir)
 
-			path := filepath.Join(root, config.FileName)
+			path := filepath.Join(context.Root, config.FileName)
 			if _, err := os.Stat(path); err == nil && !force {
 				return fmt.Errorf("%s already exists; pass --force to overwrite it", path)
 			}
 
-			contents, found := scaffold(root, project)
+			contents, found := scaffold(context.Root, context.Project)
+			// Silent where this worktree is already the one, there being
+			// nothing to move then.
+			if context.BareRoot != "" && !context.IsMain {
+				found = append(found, fmt.Sprintf(
+					"a bare repository, where the worktree on the default branch serves the plain hostname; git config grove.mainWorktree %s moves it here",
+					filepath.Base(context.Root)))
+			}
 			if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 				return err
 			}
@@ -58,13 +65,14 @@ variable an app reads its URL from is exactly that.`,
 	return cmd
 }
 
-// The worktree root, so init from a subdirectory writes where relative paths resolve.
-func projectRoot(dir string) (root, project string) {
+// Read for its root, so init from a subdirectory writes where relative paths
+// resolve, and for the layout, which decides what init has to say about it.
+func initContext(dir string) identity.Context {
 	context, err := identity.Resolve(dir)
 	if err != nil || context.Root == "" {
-		return dir, filepath.Base(dir)
+		return identity.Context{Root: dir, Project: filepath.Base(dir)}
 	}
-	return context.Root, context.Project
+	return context
 }
 
 type app struct {

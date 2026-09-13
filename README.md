@@ -171,6 +171,14 @@ On macOS, `grove uninstall` asks for authorization before it will untrust the ro
 
 A context is a worktree. Its name comes from the directory, or from `name` in `grove.toml`, and `GROVE_CONTEXT_OVERRIDE` replaces it outright.
 
+A linked worktree appends its directory to that name and the main clone does not, which is what keeps `app` and `app-feat` apart. A bare repository has no main clone to be the project itself, so the worktree on the default branch is, and the others keep their suffix. Grove reads `origin/HEAD` for that, falling back to the repository's own `HEAD`, and `grove doctor` says which of them it went by. Both are guesses, and the branch a repository defaults to is often not the one you work in, so name the worktree that is the project:
+
+```sh
+git config grove.mainWorktree dev
+```
+
+That lives in the repository's config, which every worktree reads and no branch carries, so there is one answer and two worktrees cannot both claim it. A repository with a main clone ignores it, since the main clone is always the context that is the project.
+
 Ports come from a hash of the context and the entry, so they are stable without being stored. When two contexts collide on one, grove walks to the next free port and writes that down.
 
 Leases live in the daemon's memory. An attached lease lasts as long as the command that took it. A detached one outlives it, because `supabase start` returns in seconds and holds its ports for hours.

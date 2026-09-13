@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"slices"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/grove-sh/cli/internal/ca"
 	"github.com/grove-sh/cli/internal/daemon"
+	"github.com/grove-sh/cli/internal/identity"
 	"github.com/grove-sh/cli/internal/platform"
 	"github.com/grove-sh/cli/internal/trust"
 )
@@ -53,6 +55,10 @@ Each check reports on its own. A failure exits non-zero so this can gate a
 script; a warning does not.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			dir, err := os.Getwd()
+			if err != nil {
+				return err
+			}
 			// Grove's own check comes first so the port check can tell its
 			// listener apart from something else holding the address.
 			running, answered, groveFinding := checkDaemon(socket)
@@ -62,16 +68,21 @@ script; a warning does not.`,
 				checkBundle(stateDir),
 			}
 			// Said only when not ordinary: a resolver that answers and a port
-			// grove holds are already implied above. With grove down there is
-			// nothing to ask port 80.
-			ports := []finding{checkDNS(domain), checkPort443(running, answered, stateDir, domain)}
+			// grove holds are already implied above, and with grove down there
+			// is nothing to ask port 80.
+			quiet := []finding{checkDNS(domain), checkPort443(running, answered, stateDir, domain)}
 			if running != nil {
-				ports = append(ports, checkHTTPRedirect(running, domain))
+				quiet = append(quiet, checkHTTPRedirect(running, domain))
 			}
-			for _, f := range ports {
+			for _, f := range quiet {
 				if f.state != ok {
 					findings = append(findings, f)
 				}
+			}
+			// Reported even when fine, unlike those: which worktree is the
+			// project answers why a hostname is what it is.
+			if f, worth := checkMainWorktree(dir); worth {
+				findings = append(findings, f)
 			}
 
 			out := cmd.OutOrStdout()
@@ -135,6 +146,41 @@ func platformName() string {
 		arch = "x64"
 	}
 	return runtime.GOOS + "-" + arch
+}
+
+// The one check about the repository the caller stands in rather than the
+// machine. False where there is nothing to say at all, as in a repository with
+// a main clone, which is always the project itself.
+func checkMainWorktree(dir string) (finding, bool) {
+	f := finding{name: "Main worktree", state: ok}
+	m := identity.ReadMainWorktree(dir)
+
+	switch {
+	case !m.Bare:
+		if !m.Ignored {
+			return f, false
+		}
+		f.state = warn
+		f.detail = fmt.Sprintf("grove.mainWorktree names %q, and is ignored here", m.Setting)
+		f.advice = "It picks which worktree of a bare repository serves the hostname with no suffix. This repository has a main clone, which is always the one."
+	case m.Worktree != "":
+		f.detail = m.Worktree + ", from " + m.From
+	case len(m.Candidates) == 0:
+		// No worktrees at all: nothing is the project, and nothing to name.
+		return f, false
+	case m.Setting != "":
+		f.state = warn
+		f.detail = fmt.Sprintf("grove.mainWorktree names %q, which is not a worktree here", m.Setting)
+		f.advice = "Worktrees to name instead: " + strings.Join(m.Candidates, ", ") + ". Until it names one, every worktree keeps its suffix."
+	default:
+		f.state = warn
+		f.detail = "none, since no worktree is on the branch " + m.From + " names"
+		if m.From == "" {
+			f.detail = "none, since nothing here names a default branch"
+		}
+		f.advice = "Nothing serves the hostname with no suffix. Name the worktree that should with git config grove.mainWorktree, from: " + strings.Join(m.Candidates, ", ") + "."
+	}
+	return f, true
 }
 
 func checkDNS(domain string) finding {

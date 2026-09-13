@@ -11,6 +11,16 @@ import (
 	"github.com/grove-sh/cli/internal/identity"
 )
 
+// grove.mainWorktree is meant to be set once for a machine, so a maintainer
+// who uses the feature has it in their own config, where these tests would
+// read it and resolve a different worktree than they built. Every commit below
+// passes its identity with -c, so nothing here needs a real config to exist.
+func TestMain(m *testing.M) {
+	os.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	os.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	os.Exit(m.Run())
+}
+
 func gitRepo(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -32,6 +42,16 @@ func addWorktree(t *testing.T, repo, path, branch string) {
 	cmd := exec.Command("git", "-C", repo, "worktree", "add", "-q", "-b", branch, path)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("worktree add: %v\n%s", err, out)
+	}
+}
+
+// The default branch is already checked out nowhere, so a worktree can take it
+// without -b, which is how a bare layout gets a worktree that is the project.
+func addWorktreeOn(t *testing.T, repo, path, branch string) {
+	t.Helper()
+	cmd := exec.Command("git", "-C", repo, "worktree", "add", "-q", path, branch)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("worktree add %s: %v\n%s", branch, err, out)
 	}
 }
 
@@ -275,6 +295,146 @@ func TestDotBareLayout(t *testing.T) {
 
 	if ctx := resolve(t, wt); ctx.Slug != "app1-feat1" {
 		t.Errorf("slug = %q, want app1-feat1", ctx.Slug)
+	}
+}
+
+// A bare layout has no main clone, so the worktree on the default branch
+// stands in for one and takes the plain hostname. A --bare clone writes no
+// remote-tracking refs, so this one falls back to the repository's own HEAD.
+func TestBareDefaultBranchWorktreeTakesNoSuffix(t *testing.T) {
+	base := t.TempDir()
+	bare := filepath.Join(base, "app1.git")
+	bareClone(t, bare)
+	wt := filepath.Join(base, "main")
+	addWorktreeOn(t, bare, wt, "main")
+
+	ctx := resolve(t, wt)
+
+	if ctx.Variant != "" || ctx.Slug != "app1" {
+		t.Errorf("variant = %q, slug = %q, want the default branch to serve app1", ctx.Variant, ctx.Slug)
+	}
+	if !ctx.IsMain {
+		t.Error("IsMain = false on the worktree that is the project")
+	}
+}
+
+// A branch grove cannot name is not the default branch, and the sha it has
+// instead would only ever be guessed at.
+func TestDetachedWorktreeKeepsItsSuffix(t *testing.T) {
+	base := t.TempDir()
+	bare := filepath.Join(base, "app1.git")
+	bareClone(t, bare)
+	wt := filepath.Join(base, "main")
+	addWorktreeOn(t, bare, wt, "main")
+	if out, err := exec.Command("git", "-C", wt, "checkout", "-q", "--detach").CombinedOutput(); err != nil {
+		t.Fatalf("detach: %v\n%s", err, out)
+	}
+
+	if ctx := resolve(t, wt); ctx.Slug != "app1-main" {
+		t.Errorf("slug = %q, want app1-main", ctx.Slug)
+	}
+}
+
+// HEAD is the branch this repository was left on, which a conversion in place
+// makes an accident. origin/HEAD is the branch the remote calls its default,
+// so it is the better guess and wins where both are there.
+func TestOriginHeadOutranksTheRepositoryHead(t *testing.T) {
+	base := t.TempDir()
+	bare := filepath.Join(base, "app1.git")
+	bareClone(t, bare)
+	onHead := filepath.Join(base, "main")
+	addWorktreeOn(t, bare, onHead, "main")
+	dev := filepath.Join(base, "dev")
+	addWorktree(t, bare, dev, "dev")
+	for _, args := range [][]string{
+		{"update-ref", "refs/remotes/origin/dev", "refs/heads/dev"},
+		{"symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/dev"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", bare}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	if ctx := resolve(t, dev); ctx.Slug != "app1" || !ctx.IsMain {
+		t.Errorf("slug = %q, is_main = %v, want the remote's default branch to decide", ctx.Slug, ctx.IsMain)
+	}
+	if ctx := resolve(t, onHead); ctx.Slug != "app1-main" {
+		t.Errorf("slug = %q, want the branch HEAD names to lose to origin/HEAD", ctx.Slug)
+	}
+}
+
+func setMainWorktree(t *testing.T, dir, name string) {
+	t.Helper()
+	if out, err := exec.Command("git", "-C", dir, "config", "grove.mainWorktree", name).CombinedOutput(); err != nil {
+		t.Fatalf("git config: %v\n%s", err, out)
+	}
+}
+
+// The default branch is a guess; grove.mainWorktree is the answer. Whoever
+// works out of a branch the repository does not default to says so once, and
+// gets the plain hostname for it.
+func TestMainWorktreeSettingOverridesTheDefaultBranch(t *testing.T) {
+	base := t.TempDir()
+	bare := filepath.Join(base, "app1.git")
+	bareClone(t, bare)
+	onDefault := filepath.Join(base, "main")
+	addWorktreeOn(t, bare, onDefault, "main")
+	chosen := filepath.Join(base, "dev")
+	addWorktree(t, bare, chosen, "dev")
+
+	// Set from one worktree, and read the same from every worktree: that is
+	// the whole reason this is a git setting and not a file in one of them.
+	setMainWorktree(t, chosen, "dev")
+
+	picked := resolve(t, chosen)
+	if picked.Variant != "" || picked.Slug != "app1" {
+		t.Errorf("variant = %q, slug = %q, want dev to be the project itself", picked.Variant, picked.Slug)
+	}
+	if !picked.IsMain {
+		t.Error("IsMain = false on the worktree grove.mainWorktree names")
+	}
+
+	// And the one the default branch had picked takes its suffix back, or the
+	// two would share a slug, and with it a set of ports.
+	demoted := resolve(t, onDefault)
+	if demoted.Slug != "app1-main" {
+		t.Errorf("slug = %q, want app1-main", demoted.Slug)
+	}
+	if demoted.IsMain {
+		t.Error("IsMain = true on a worktree grove.mainWorktree did not name")
+	}
+}
+
+// It names a directory, so it reaches the variant the way a directory does,
+// rather than being held to what a hostname allows.
+func TestMainWorktreeSettingIsSlugified(t *testing.T) {
+	base := t.TempDir()
+	bare := filepath.Join(base, "app1.git")
+	bareClone(t, bare)
+	wt := filepath.Join(base, "v1.2")
+	addWorktree(t, bare, wt, "release")
+	setMainWorktree(t, wt, "v1.2")
+
+	if ctx := resolve(t, wt); ctx.Slug != "app1" {
+		t.Errorf("slug = %q, want v1.2 to be read as the v1-2 worktree", ctx.Slug)
+	}
+}
+
+// A repository with a main clone already has a context that is the project,
+// and promoting a second one would hand them one slug between them.
+func TestMainWorktreeSettingIsIgnoredWithoutABareRepository(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "app1")
+	gitRepo(t, repo)
+	wt := filepath.Join(base, "feat1")
+	addWorktree(t, repo, wt, "feat1")
+	setMainWorktree(t, wt, "feat1")
+
+	if linked := resolve(t, wt); linked.Slug != "app1-feat1" {
+		t.Errorf("slug = %q, want the main clone to keep app1 to itself", linked.Slug)
+	}
+	if main := resolve(t, repo); main.Slug != "app1" || !main.IsMain {
+		t.Errorf("slug = %q, is_main = %v, want the main clone untouched", main.Slug, main.IsMain)
 	}
 }
 
