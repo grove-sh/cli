@@ -14,6 +14,13 @@ import (
 // autostart re-executes. Without it, os.Executable() under go test points at
 // the test binary and the spawned "daemon" is parsed as test flags.
 func TestMain(m *testing.M) {
+	// Set before the re-exec so the spawned CLI reads the same nothing.
+	// grove.mainWorktree is meant to be set once for a machine, so a
+	// maintainer who uses the feature would otherwise have their own config
+	// answering for the repository under test.
+	os.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	os.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+
 	if os.Getenv("GROVE_TEST_RUN_CLI") == "1" {
 		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 	}
@@ -111,6 +118,52 @@ func TestContextJSONInAWorktree(t *testing.T) {
 	}
 	if got.Variant != "feat1" || got.IsMain {
 		t.Errorf("variant = %q, is_main = %v", got.Variant, got.IsMain)
+	}
+}
+
+// A bare layout picks the worktree on the default branch, and grove.mainWorktree
+// picks a different one. No grove.toml is involved, which is the point: the
+// setting is the repository's, so it answers before a project is configured.
+func TestContextJSONHonoursTheMainWorktreeSetting(t *testing.T) {
+	base := t.TempDir()
+	seed := filepath.Join(base, "seed")
+	if err := os.MkdirAll(seed, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bare := filepath.Join(base, "app1.git")
+	dev := filepath.Join(base, "dev")
+	for _, args := range [][]string{
+		{"-C", seed, "init", "-q", "-b", "main"},
+		{"-C", seed, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"},
+		{"clone", "-q", "--bare", seed, bare},
+		{"-C", bare, "worktree", "add", "-q", filepath.Join(base, "main"), "main"},
+		{"-C", bare, "worktree", "add", "-q", "-b", "dev", dev},
+		{"-C", dev, "config", "grove.mainWorktree", "dev"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	t.Chdir(dev)
+
+	code, stdout, stderr := exercise(t, "context", "--json")
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+
+	var got struct {
+		Slug   string `json:"slug"`
+		Host   string `json:"host"`
+		IsMain bool   `json:"is_main"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("%v\n%s", err, stdout)
+	}
+	if got.Slug != "app1" || !got.IsMain {
+		t.Errorf("slug = %q, is_main = %v, want dev to be the project itself", got.Slug, got.IsMain)
+	}
+	if got.Host != "app1."+defaultDomain {
+		t.Errorf("host = %q", got.Host)
 	}
 }
 

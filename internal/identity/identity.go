@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -33,8 +34,12 @@ type Context struct {
 	Root     string `json:"root"`
 	MainRoot string `json:"main_root,omitempty"`
 	BareRoot string `json:"bare_root,omitempty"`
-	IsMain   bool   `json:"is_main"`
-	Source   Source `json:"source"`
+
+	// The context that is the project itself: the main clone where there is
+	// one, a worktree of a bare layout where there is not. A main_root does
+	// not follow from it; the dir and override sources have none either.
+	IsMain bool   `json:"is_main"`
+	Source Source `json:"source"`
 }
 
 func (c Context) Host(domain string) string {
@@ -119,8 +124,8 @@ func Resolve(dir string) (Context, error) {
 		Root:     repo.current,
 		MainRoot: repo.main,
 		BareRoot: repo.bare,
-		// A bare repository has no worktree of its own, so every one hanging
-		// off it is linked and carries a variant.
+		// A bare repository owns no worktree, so which linked one stands in
+		// for the main one is settled below.
 		IsMain: repo.bare == "" && repo.current == repo.main,
 		Source: FromGit,
 	}
@@ -128,6 +133,10 @@ func Resolve(dir string) (Context, error) {
 		ctx.Variant = slugify(filepath.Base(repo.current))
 		if ctx.Variant == "" {
 			return Context{}, fmt.Errorf("identity: %q does not slugify to a usable worktree name", repo.current)
+		}
+		if repo.bare != "" && isTheProjectItself(repo) {
+			ctx.Variant = ""
+			ctx.IsMain = true
 		}
 	}
 	ctx.Slug = composeSlug(project, ctx.Variant)
@@ -158,25 +167,36 @@ func findRepo(dir string) (repo, error) {
 	if err != nil {
 		return repo{}, err
 	}
-
-	// The main worktree is listed first. A bare repository takes that slot too,
-	// marked "bare", and owns no working tree.
-	first, _, _ := strings.Cut(list, "\n\n")
-	rest, ok := strings.CutPrefix(first, "worktree ")
-	if !ok {
+	found := parseWorktrees(list)
+	if len(found) == 0 {
 		return repo{}, errors.New("identity: git worktree list named no worktree")
 	}
-	path, _, _ := strings.Cut(rest, "\n")
-	root := filepath.Clean(path)
-
-	for line := range strings.SplitSeq(first, "\n") {
-		if line == "bare" {
-			r.bare = root
-			return r, nil
-		}
+	if first := found[0]; first.bare {
+		r.bare = first.path
+	} else {
+		r.main = first.path
 	}
-	r.main = root
 	return r, nil
+}
+
+type worktree struct {
+	path string
+	bare bool
+}
+
+// The main worktree comes first in git worktree list --porcelain, and a bare
+// repository takes that slot while owning no working tree, which bare marks.
+func parseWorktrees(list string) []worktree {
+	var found []worktree
+	for _, block := range strings.Split(strings.TrimSpace(list), "\n\n") {
+		lines := strings.Split(block, "\n")
+		path, ok := strings.CutPrefix(lines[0], "worktree ")
+		if !ok {
+			continue
+		}
+		found = append(found, worktree{path: filepath.Clean(path), bare: slices.Contains(lines, "bare")})
+	}
+	return found
 }
 
 // projectFromBareDir handles both layouts in the wild, which put the name one
@@ -187,6 +207,127 @@ func projectFromBareDir(dir string) string {
 		name = filepath.Base(filepath.Dir(dir))
 	}
 	return slugify(name)
+}
+
+// A bare layout has no main clone to be the project itself, so one of its
+// worktrees is. grove.mainWorktree names it, and lives in the repository's
+// config rather than a file in one of them: every worktree reads the one value
+// there, where a grove.toml committed to two branches could name two different
+// worktrees and hand both one hostname and one set of ports.
+func isTheProjectItself(r repo) bool {
+	chosen, err := git(r.current, "config", "--get", "grove.mainWorktree")
+	if err != nil || chosen == "" {
+		return onDefaultBranch(r.bare, r.current)
+	}
+	// Slugified, not validated: it names a directory, and a worktree called
+	// v1.2 is a real one whose variant is v1-2.
+	return slugify(chosen) == slugify(filepath.Base(r.current))
+}
+
+// MainWorktree describes which worktree of a bare layout is the project itself
+// and what is wrong with that. Resolve asks the narrower question of whether
+// the worktree it stands in is the one, and answers it without listing
+// anything.
+type MainWorktree struct {
+	// False for a repository with a main clone, which is always the project.
+	Bare bool
+
+	// grove.mainWorktree, empty when it is not set.
+	Setting string
+
+	// The directory that is the project. Empty when none is: a setting naming
+	// no worktree, or a default branch checked out in none of them.
+	Worktree string
+
+	// The worktree directories, listed only when none of them is the project,
+	// since naming one is the fix.
+	Candidates []string
+
+	// What decided it: grove.mainWorktree, origin/HEAD, or HEAD.
+	From string
+
+	// A setting in this repository's own config that it has a main clone and
+	// so never reads. Not said of a global one, which is a preference about
+	// bare layouts rather than a mistake about this repository.
+	Ignored bool
+}
+
+// ReadMainWorktree resolves every worktree rather than re-deciding which is
+// the project, so what doctor reports cannot drift from what grove does.
+func ReadMainWorktree(dir string) MainWorktree {
+	var m MainWorktree
+
+	list, err := git(dir, "worktree", "list", "--porcelain")
+	if err != nil {
+		return m
+	}
+	m.Setting, _ = git(dir, "config", "--get", "grove.mainWorktree")
+
+	var paths []string
+	bare := ""
+	for _, w := range parseWorktrees(list) {
+		if w.bare {
+			m.Bare = true
+			bare = w.path
+			continue
+		}
+		paths = append(paths, w.path)
+	}
+
+	if !m.Bare {
+		local, err := git(dir, "config", "--local", "--get", "grove.mainWorktree")
+		m.Ignored = err == nil && local != ""
+		return m
+	}
+
+	m.From = "grove.mainWorktree"
+	if m.Setting == "" {
+		_, m.From = defaultBranch(bare)
+	}
+
+	for _, path := range paths {
+		// FromGit only: under GROVE_CONTEXT_OVERRIDE every directory resolves
+		// to the same pinned context, which would name the first one asked.
+		if ctx, err := Resolve(path); err == nil && ctx.Source == FromGit && ctx.IsMain {
+			m.Worktree = filepath.Base(path)
+			return m
+		}
+	}
+	for _, path := range paths {
+		m.Candidates = append(m.Candidates, filepath.Base(path))
+	}
+	return m
+}
+
+func onDefaultBranch(bare, worktree string) bool {
+	branch, _ := defaultBranch(bare)
+	if branch == "" {
+		return false
+	}
+	// --quiet: a detached worktree is not on the default branch, which is an
+	// answer rather than a failure worth a line on stderr.
+	current, err := git(worktree, "symbolic-ref", "--quiet", "HEAD")
+	return err == nil && current == branch
+}
+
+// defaultBranch names the branch a bare repository defaults to, and what said
+// so. origin/HEAD is the remote's default as the clone recorded it, and costs
+// no network call. HEAD is only loosely the same thing: git clone --bare
+// copies it from the remote, but a repository converted in place keeps
+// whatever its working checkout was on, so it is the fallback and not the
+// answer.
+func defaultBranch(bare string) (branch, source string) {
+	const remote = "refs/remotes/origin/"
+	if ref, err := git(bare, "symbolic-ref", "--quiet", remote+"HEAD"); err == nil {
+		if name, ok := strings.CutPrefix(ref, remote); ok {
+			return "refs/heads/" + name, "origin/HEAD"
+		}
+	}
+	head, err := git(bare, "symbolic-ref", "--quiet", "HEAD")
+	if err != nil {
+		return "", ""
+	}
+	return head, "HEAD"
 }
 
 func git(dir string, args ...string) (string, error) {

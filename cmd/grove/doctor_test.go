@@ -2,10 +2,14 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/grove-sh/cli/internal/ca"
+	"github.com/grove-sh/cli/internal/identity"
 	"github.com/grove-sh/cli/internal/platform"
 )
 
@@ -24,6 +28,143 @@ func TestStaleDaemonSpeaksUpOnlyOnADifferentBuild(t *testing.T) {
 	if got := staleDaemon("", "v0.2.0"); got == "" {
 		t.Error("a daemon that reports no build should still be called out")
 	}
+}
+
+// The row is there while it is going well, since which worktree is the project
+// is a choice. It is also the one thing here that can be wrong with nothing
+// else noticing: a setting matching no worktree leaves every worktree with the
+// suffix it was set to drop, and no error anywhere.
+func TestMainWorktreeCheckReportsWhoTheProjectIs(t *testing.T) {
+	base := t.TempDir()
+	bare := filepath.Join(base, "app1.git")
+	seed := filepath.Join(base, "seed")
+	main := filepath.Join(base, "main")
+	dev := filepath.Join(base, "dev")
+	for _, args := range [][]string{
+		{"-C", mkdir(t, seed), "init", "-q", "-b", "main"},
+		{"-C", seed, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"},
+		{"clone", "-q", "--bare", seed, bare},
+		{"-C", bare, "worktree", "add", "-q", main, "main"},
+		{"-C", bare, "worktree", "add", "-q", "-b", "dev", dev},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	config := func(t *testing.T, dir, value string) {
+		t.Helper()
+		args := []string{"-C", dir, "config", "grove.mainWorktree", value}
+		if value == "" {
+			args = []string{"-C", dir, "config", "--unset", "grove.mainWorktree"}
+		}
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git config: %v\n%s", err, out)
+		}
+	}
+
+	// Asked from the worktree that is not the one: the row names the worktree
+	// that is, not whichever the caller happens to stand in.
+	f, worth := checkMainWorktree(dev)
+	if !worth || f.state != ok {
+		t.Fatalf("worth = %v, state = %q, want it reported as fine", worth, f.state)
+	}
+	if !strings.Contains(f.detail, "main") || !strings.Contains(f.detail, "HEAD") {
+		t.Errorf("detail = %q, want main, from the repository's HEAD", f.detail)
+	}
+	if f.advice != "" {
+		t.Errorf("advice = %q, want nothing said below the table while it is fine", f.advice)
+	}
+
+	// origin/HEAD is the remote's default branch, and outranks whatever this
+	// repository was left on, so the row has to say which of them it read.
+	for _, args := range [][]string{
+		{"update-ref", "refs/remotes/origin/dev", "refs/heads/dev"},
+		{"symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/dev"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", bare}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if f, _ := checkMainWorktree(dev); f.state != ok || !strings.Contains(f.detail, "dev, from origin/HEAD") {
+		t.Errorf("state = %q, detail = %q, want dev named along with origin/HEAD", f.state, f.detail)
+	}
+
+	config(t, dev, "dev")
+	if f, _ := checkMainWorktree(dev); f.state != ok || !strings.Contains(f.detail, "dev, from grove.mainWorktree") {
+		t.Errorf("state = %q, detail = %q, want dev named along with what decided it", f.state, f.detail)
+	}
+
+	config(t, dev, "devv")
+	f, _ = checkMainWorktree(dev)
+	if f.state == ok {
+		t.Fatal("a setting naming no worktree was not reported")
+	}
+	if !strings.Contains(f.detail, "devv") || !strings.Contains(f.advice, "dev, main") {
+		t.Errorf("detail = %q, advice = %q, want the typo and the worktrees to name instead", f.detail, f.advice)
+	}
+
+	// A repository with a main clone ignores the setting, and being ignored is
+	// worth a word: it is why nothing changed.
+	plain := filepath.Join(base, "app2")
+	for _, args := range [][]string{
+		{"-C", mkdir(t, plain), "init", "-q", "-b", "main"},
+		{"-C", plain, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if f, worth := checkMainWorktree(plain); worth {
+		t.Errorf("detail = %q, want nothing said where there is a main clone", f.detail)
+	}
+	config(t, plain, "app2")
+	if f, worth := checkMainWorktree(plain); !worth || f.state == ok || !strings.Contains(f.advice, "main clone") {
+		t.Errorf("state = %q, advice = %q, want the setting called out as ignored", f.state, f.advice)
+	}
+
+	// A bare repository with no worktrees has nothing to choose between, and
+	// an empty list is not advice.
+	lonely := filepath.Join(base, "app3.git")
+	if out, err := exec.Command("git", "init", "-q", "--bare", lonely).CombinedOutput(); err != nil {
+		t.Fatalf("init --bare: %v\n%s", err, out)
+	}
+	if f, worth := checkMainWorktree(lonely); worth {
+		t.Errorf("detail = %q, advice = %q, want nothing said where there are no worktrees", f.detail, f.advice)
+	}
+
+	// Set globally it means "my bare layouts call it dev", and repeating that
+	// it does nothing here, in every plain clone on the machine, is noise.
+	global := filepath.Join(base, "gitconfig")
+	if err := os.WriteFile(global, []byte("[grove]\n\tmainWorktree = dev\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	// Put the default branch back to the one HEAD names, so what follows is
+	// the global setting deciding and not origin/HEAD agreeing by accident.
+	if out, err := exec.Command("git", "-C", bare, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("delete origin/HEAD: %v\n%s", err, out)
+	}
+	config(t, plain, "")
+	config(t, dev, "")
+	if f, worth := checkMainWorktree(plain); worth {
+		t.Errorf("detail = %q, want a global setting to pass without comment", f.detail)
+	}
+	// And it still decides a bare layout, which is the whole point of setting
+	// it once for the machine.
+	if ctx, err := identity.Resolve(dev); err != nil {
+		t.Fatal(err)
+	} else if ctx.Slug != "app1" {
+		t.Errorf("slug = %q, want the global setting to name dev the project", ctx.Slug)
+	}
+}
+
+func mkdir(t *testing.T, dir string) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 // Colour is emphasis, never the message: piping has to keep every state, since
