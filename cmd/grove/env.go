@@ -58,9 +58,11 @@ being.`,
 				return err
 			}
 
+			waiting, shadowed := answered(append(skipped, unbound(active, applied.env)...), applied)
+
 			// Both on stderr, since stdout here is written to be eval'd.
-			reportSkipped(cmd.ErrOrStderr(), append(skipped, unbound(active, applied.env)...))
-			reportShadowed(cmd.ErrOrStderr(), applied.shadowed)
+			reportSkipped(cmd.ErrOrStderr(), waiting)
+			reportShadowed(cmd.ErrOrStderr(), shadowed)
 			return writeEnv(cmd.OutOrStdout(), format, applied.env)
 		},
 	}
@@ -69,6 +71,27 @@ being.`,
 	cmd.Flags().StringVar(&format, "format", "shell", "shell or json")
 	cmd.Flags().StringVar(&socket, "socket", daemon.DefaultSocket(), "control socket path")
 	return cmd
+}
+
+// A name the override file supplied is not waiting on anything. Saying it is
+// promises a value that is never coming: grove resolves that variable only
+// where nothing above it already answered, and the override file is above
+// everything. It moves to the line that says what actually happened.
+func answered(skipped []config.Skipped, applied layered) ([]config.Skipped, []string) {
+	var waiting []config.Skipped
+	// Cloned, since appending to the slice layer returned would reach into it.
+	took := slices.Clone(applied.shadowed)
+	for _, miss := range skipped {
+		if !applied.supplied[miss.Name] {
+			waiting = append(waiting, miss)
+			continue
+		}
+		took = append(took, miss.Name)
+	}
+	// One source can resolve a name another could not, so a name can arrive
+	// from both lists.
+	slices.Sort(took)
+	return waiting, slices.Compact(took)
 }
 
 // One unheld entry is usually several unset variables, and the same sentence
