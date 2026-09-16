@@ -3,8 +3,13 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/grove-sh/cli/internal/config"
 )
 
 func TestEnvReportsWhatIsLeased(t *testing.T) {
@@ -231,5 +236,53 @@ func TestAnUnheldPortIsNotReportedAsMissing(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "ports.db") {
 		t.Errorf("stderr does not name the entry being waited on:\n%s", stderr)
+	}
+}
+
+// PORT was listed as waiting on a lease while .env.local already held it, so
+// the one report that exists to say what is missing promised a value grove was
+// never going to set.
+func TestEnvDoesNotWaitOnWhatTheOverrideFileAnswered(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	writeConfig(t, repo, "[routes.web]\nenv = { PORT = \"{port}\" }\n")
+	if err := os.WriteFile(filepath.Join(repo, config.OverrideName), []byte("PORT=3000\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+
+	_, stdout, stderr := exercise(t, "env", "--socket", "/nonexistent/grove.sock")
+
+	if !strings.Contains(stderr, config.OverrideName+" overrides PORT") {
+		t.Errorf("stderr does not say the override took PORT:\n%s", stderr)
+	}
+	for _, line := range strings.Split(stderr, "\n") {
+		_, names, grouped := strings.Cut(line, "routes.web")
+		if !grouped {
+			continue
+		}
+		if slices.Contains(strings.Split(strings.TrimSpace(names), ", "), "PORT") {
+			t.Errorf("PORT is still waiting on a lease that would not set it:\n%s", stderr)
+		}
+	}
+	if !strings.Contains(stdout, "export PORT='3000'") {
+		t.Errorf("stdout does not carry the override:\n%s", stdout)
+	}
+}
+
+// One source can resolve a name another could not, so the same name reaches
+// answered from both lists. Saying it twice would read as two things happening.
+func TestTheOverrideIsNamedOnceWhenItAnswersBothLists(t *testing.T) {
+	applied := layered{
+		shadowed: []string{"API_URL"},
+		supplied: map[string]bool{"API_URL": true},
+	}
+
+	waiting, took := answered([]config.Skipped{{Name: "API_URL", Ref: "ports.api"}}, applied)
+
+	if len(waiting) != 0 {
+		t.Errorf("waiting = %v, want nothing left waiting", waiting)
+	}
+	if want := []string{"API_URL"}; !slices.Equal(took, want) {
+		t.Errorf("took = %v, want %v", took, want)
 	}
 }

@@ -263,6 +263,11 @@ type layered struct {
 	// whole point of the tier. The caller says it, since grove env writes its
 	// environment to a stdout that gets eval'd.
 	shadowed []string
+
+	// Every name an override file supplied, whether or not grove.toml also
+	// resolved one. grove env needs the wider set: a variable grove could not
+	// resolve is not in shadowed, and is still answered.
+	supplied map[string]bool
 }
 
 // layer puts grove's own values above the caller's environment, because a port
@@ -315,11 +320,12 @@ func layer(cfg *config.Config, context identity.Context, resolved map[string]str
 	// went on beating that environment, then exporting a name in your shell
 	// would hand it back to grove and the .env.local line would silently stop
 	// applying. Nobody can reason about that.
-	out := layered{env: env}
+	out := layered{env: env, supplied: make(map[string]bool, len(overrides))}
 	for name, value := range overrides {
 		if _, took := resolved[name]; took {
 			out.shadowed = append(out.shadowed, name)
 		}
+		out.supplied[name] = true
 		env[name] = value
 	}
 	slices.Sort(out.shadowed)
