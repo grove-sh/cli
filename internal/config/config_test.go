@@ -534,3 +534,75 @@ func TestPointerFieldsStillRejectOnlyRealTypos(t *testing.T) {
 		t.Errorf("error does not name the key: %v", err)
 	}
 }
+
+// A project that lists .env.local itself has said which tier it belongs in, so
+// grove leaves it there rather than promoting it and changing what a file
+// already in use means.
+func TestAnOverrideFileTheProjectListsIsNotPromoted(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, config.FileName, "env_files = [\".env\", \".env.local\"]\n")
+	write(t, dir, ".env.local", "API_KEY=from-file\n")
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names := cfg.OverrideFiles(); len(names) != 0 {
+		t.Errorf("OverrideFiles = %v, want none", names)
+	}
+
+	overrides, err := cfg.LoadOverrideEnvFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overrides) != 0 {
+		t.Errorf("override tier = %v, want nothing", overrides)
+	}
+	files, err := cfg.LoadEnvFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files["API_KEY"] != "from-file" {
+		t.Errorf("API_KEY = %q, want the env_files tier to still read it", files["API_KEY"])
+	}
+}
+
+// Nobody is required to have one, so its absence reads like a missing .env.
+func TestAMissingOverrideFileIsNotAnError(t *testing.T) {
+	cfg := load(t, myappConfig)
+
+	overrides, err := cfg.LoadOverrideEnvFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overrides) != 0 {
+		t.Errorf("override tier = %v, want nothing", overrides)
+	}
+}
+
+// Forging one of grove's own names in the tier that beats grove would have
+// grove report a lease it does not hold, so the file is refused rather than
+// half applied.
+func TestTheOverrideFileCannotSetGrovesOwnNames(t *testing.T) {
+	for _, name := range config.ReservedNames {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			write(t, dir, config.FileName, "")
+			write(t, dir, config.OverrideName, name+"=forged\n")
+
+			cfg, err := config.Load(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = cfg.LoadOverrideEnvFiles()
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			for _, want := range []string{config.OverrideName, name} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error does not name %s: %v", want, err)
+				}
+			}
+		})
+	}
+}

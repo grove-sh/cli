@@ -109,6 +109,8 @@ grove exec -- psql "$POSTGRES_URL"
 
 Grove loads your `env_files` too, so it replaces `dotenv-cli` rather than sitting beside it. Values from those files yield to your shell; grove's own resolved values win over both, since a route pointing at a port it did not lease would be a lie.
 
+To bend one of those values for an afternoon, put it in `.env.local` beside your `grove.toml`. That file is the top of the chain and yields to nothing, not even a variable you exported, and grove names on stderr whatever it took over. `GROVE_CONTEXT`, `GROVE_PORT`, `GROVE_HOST` and `GROVE_URL` are grove's own, so setting one there is an error rather than a lie about a lease. If your `env_files` already lists `.env.local`, it stays where you put it and grove leaves it in that lower tier.
+
 ## Your dev server has to bind the port it is given
 
 Grove leases a port and proxies the hostname to it, so a server that picks its own port is a server grove cannot reach, and you get a 503 from something that looks like it is running fine.

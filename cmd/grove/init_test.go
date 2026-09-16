@@ -573,3 +573,34 @@ func TestInitDropsTheLabelWithTheHostname(t *testing.T) {
 		t.Errorf("a disabled studio kept its hostname: %v", cfg.Routes)
 	}
 }
+
+// Nothing else the person reads at this point says the file exists, and it is
+// the one tier above everything the file they are being handed resolves.
+func TestInitSaysWhereTheOverrideFileSits(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	os.Remove(filepath.Join(repo, config.FileName))
+	t.Chdir(repo)
+
+	exercise(t, "init")
+
+	if !strings.Contains(generated(t, repo), config.OverrideName) {
+		t.Errorf("the written config never names %s:\n%s", config.OverrideName, generated(t, repo))
+	}
+}
+
+// A Next or Vite project usually has one already, and init is the moment its
+// meaning changes: those values now beat the ports and URLs grove leases.
+func TestInitReportsAnOverrideFileAlreadyThere(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	os.Remove(filepath.Join(repo, config.FileName))
+	if err := os.WriteFile(filepath.Join(repo, config.OverrideName), []byte("API_KEY=mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+
+	_, stdout, _ := exercise(t, "init")
+
+	if !strings.Contains(stdout, config.OverrideName) {
+		t.Errorf("output does not report the file it found:\n%s", stdout)
+	}
+}

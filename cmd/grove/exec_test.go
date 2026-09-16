@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -15,6 +18,8 @@ import (
 	"github.com/grove-sh/cli/internal/ca"
 	"github.com/grove-sh/cli/internal/config"
 	"github.com/grove-sh/cli/internal/daemon"
+	"github.com/grove-sh/cli/internal/identity"
+	"github.com/grove-sh/cli/internal/trust"
 )
 
 // socketDir is a short directory, because t.TempDir on macOS returns a
@@ -774,5 +779,190 @@ func TestNoBindAnnouncesNothing(t *testing.T) {
 	_, _, quiet := exercise(t, "exec", "--socket", socket, "--no-bind", "--", "true")
 	if strings.Contains(quiet, "is at") {
 		t.Errorf("--no-bind claimed a route was served: %q", quiet)
+	}
+}
+
+// A project directory with only the files a layering test needs. layer reads
+// the config and the env files and nothing else, so there is no repository and
+// no daemon here.
+func project(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// resolved stands in for what grove worked out from grove.toml, which is what
+// layer is handed.
+func layerIn(t *testing.T, dir string, resolved map[string]string) layered {
+	t.Helper()
+	got, err := layerErr(t, dir, resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func layerErr(t *testing.T, dir string, resolved map[string]string) (layered, error) {
+	t.Helper()
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return layer(cfg, identity.Context{Slug: "app1"}, resolved, nil, nil)
+}
+
+// os/exec keeps the last of a repeated name, so the last occurrence is the one
+// the child reads.
+func lastValue(env []string, name string) string {
+	value := ""
+	for _, entry := range env {
+		if after, found := strings.CutPrefix(entry, name+"="); found {
+			value = after
+		}
+	}
+	return value
+}
+
+func TestTheOverrideFileBeatsWhatGroveResolved(t *testing.T) {
+	dir := project(t, map[string]string{
+		"grove.toml":        "",
+		config.OverrideName: "DATABASE_URL=postgres://127.0.0.1:5432/scratch\n",
+	})
+
+	got := layerIn(t, dir, map[string]string{"DATABASE_URL": "postgres://127.0.0.1:20001/app"})
+
+	if got.env["DATABASE_URL"] != "postgres://127.0.0.1:5432/scratch" {
+		t.Errorf("DATABASE_URL = %q, want the override file's value", got.env["DATABASE_URL"])
+	}
+}
+
+// The one tier that does not yield to the environment grove was invoked from.
+// If it did, exporting the name would hand it back to grove and the file's
+// line would silently stop applying.
+func TestTheOverrideFileBeatsTheInvokingEnvironment(t *testing.T) {
+	dir := project(t, map[string]string{
+		"grove.toml":        "",
+		config.OverrideName: "API_KEY=from-override\n",
+	})
+	t.Setenv("API_KEY", "from-shell")
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, _, err := environment(cfg, identity.Context{Slug: "app1"}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := lastValue(env, "API_KEY"); got != "from-override" {
+		t.Errorf("API_KEY = %q, want the override file's value", got)
+	}
+}
+
+func TestTheOverrideFileBeatsAnEnvFile(t *testing.T) {
+	dir := project(t, map[string]string{
+		"grove.toml":        "env_files = [\".env\"]\n",
+		".env":              "API_KEY=from-file\n",
+		config.OverrideName: "API_KEY=from-override\n",
+	})
+
+	got := layerIn(t, dir, nil)
+
+	if got.env["API_KEY"] != "from-override" {
+		t.Errorf("API_KEY = %q, want the override file's value", got.env["API_KEY"])
+	}
+	if len(got.shadowed) != 0 {
+		t.Errorf("shadowed = %v, want nothing: an env_file is not grove's own value", got.shadowed)
+	}
+}
+
+// Listed in env_files, it is the project's file rather than a personal one, so
+// grove's resolved values go on beating it exactly as they did before.
+func TestAnOverrideFileTheProjectListsLosesToGrove(t *testing.T) {
+	dir := project(t, map[string]string{
+		"grove.toml":        "env_files = [\".env.local\"]\n",
+		config.OverrideName: "PORT=3000\n",
+	})
+
+	got := layerIn(t, dir, map[string]string{"PORT": "20001"})
+
+	if got.env["PORT"] != "20001" {
+		t.Errorf("PORT = %q, want the leased one", got.env["PORT"])
+	}
+	if len(got.shadowed) != 0 {
+		t.Errorf("shadowed = %v, want nothing", got.shadowed)
+	}
+}
+
+// The common case: no such file, and nothing about the environment differs.
+func TestNoOverrideFileChangesNothing(t *testing.T) {
+	dir := project(t, map[string]string{"grove.toml": ""})
+	resolved := map[string]string{"PORT": "20001"}
+
+	got := layerIn(t, dir, resolved)
+
+	if len(got.shadowed) != 0 {
+		t.Errorf("shadowed = %v, want nothing", got.shadowed)
+	}
+	// What is left once the tiers that were always there are taken out.
+	delete(got.env, "GROVE_CONTEXT")
+	for _, entry := range trust.Env(daemon.StateDir()) {
+		name, _, _ := strings.Cut(entry, "=")
+		delete(got.env, name)
+	}
+	if !maps.Equal(got.env, resolved) {
+		t.Errorf("env = %v, want only %v", got.env, resolved)
+	}
+}
+
+func TestTheOverrideFileCannotForgeGrovesOwnNames(t *testing.T) {
+	for _, name := range config.ReservedNames {
+		t.Run(name, func(t *testing.T) {
+			dir := project(t, map[string]string{
+				"grove.toml":        "",
+				config.OverrideName: name + "=forged\n",
+			})
+
+			_, err := layerErr(t, dir, nil)
+
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			for _, want := range []string{config.OverrideName, name} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error does not name %s: %v", want, err)
+				}
+			}
+		})
+	}
+}
+
+// Only what grove itself had resolved is reported: a name the file adds is not
+// overriding anything, and naming it would read as a complaint.
+func TestTheShadowReportNamesOnlyWhatItTookOver(t *testing.T) {
+	dir := project(t, map[string]string{
+		"grove.toml":        "",
+		config.OverrideName: "SITE_URL=https://example.test\nLOG_LEVEL=debug\nDATABASE_URL=postgres://127.0.0.1:5432/scratch\n",
+	})
+
+	got := layerIn(t, dir, map[string]string{
+		"DATABASE_URL": "postgres://127.0.0.1:20001/app",
+		"SITE_URL":     "https://app1.grov.site",
+	})
+
+	if want := []string{"DATABASE_URL", "SITE_URL"}; !slices.Equal(got.shadowed, want) {
+		t.Errorf("shadowed = %v, want %v", got.shadowed, want)
+	}
+
+	var out bytes.Buffer
+	reportShadowed(&out, got.shadowed)
+	if want := "grove: .env.local overrides DATABASE_URL, SITE_URL\n"; out.String() != want {
+		t.Errorf("report = %q, want %q", out.String(), want)
 	}
 }

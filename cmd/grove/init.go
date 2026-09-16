@@ -110,6 +110,14 @@ func scaffold(root, project string) (string, []string) {
 		notes = append(notes, ".env, which grove will load in place of dotenv")
 	}
 
+	// Written whether or not the file exists, since this is the file whose
+	// values it beats and nowhere else says so. A tracked one is doctor's to
+	// complain about.
+	fmt.Fprintf(&b, "\n# %s beside this file overrides anything set here, for your machine only. Keep it out of git\n", config.OverrideName)
+	if _, err := os.Stat(filepath.Join(root, config.OverrideName)); err == nil {
+		notes = append(notes, config.OverrideName+", whose values will now beat what grove resolves")
+	}
+
 	notes = append(notes, "the name "+project+", from this directory")
 
 	apps, unsure := findApps(root)

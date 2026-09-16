@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/grove-sh/cli/internal/ca"
+	"github.com/grove-sh/cli/internal/config"
 	"github.com/grove-sh/cli/internal/identity"
 	"github.com/grove-sh/cli/internal/platform"
 )
@@ -288,5 +289,83 @@ func TestPortHolderNamesTheDaemonItCannotRead(t *testing.T) {
 	}
 	if !strings.Contains(said, "cannot speak to") {
 		t.Errorf("advice = %q, which does not say why it went unread", said)
+	}
+}
+
+// An override file is one person's, and untracked it stays that way, which is
+// every project that has not made the mistake. Tracked, it is on its way to
+// overriding for everyone, so that is the only version worth a row: git add is
+// where the mistake is made, and the commit is too late to warn about.
+func TestTheOverrideCheckSpeaksOnlyForATrackedFile(t *testing.T) {
+	dir := mkdir(t, filepath.Join(t.TempDir(), "app1"))
+	if out, err := exec.Command("git", "-C", dir, "init", "-q", "-b", "main").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	for name, body := range map[string]string{"grove.toml": "", ".env.local": "DATABASE_URL=postgres://127.0.0.1:5432/scratch\n"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, worth := checkOverrideFile(loadProject(t, dir)); worth {
+		t.Error("an untracked override file was reported")
+	}
+
+	if out, err := exec.Command("git", "-C", dir, "add", ".env.local").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v\n%s", err, out)
+	}
+
+	f, worth := checkOverrideFile(loadProject(t, dir))
+	if !worth {
+		t.Fatal("a tracked override file was not reported")
+	}
+	if f.state != warn {
+		t.Errorf("state = %q, want %q", f.state, warn)
+	}
+	if !strings.Contains(f.detail, ".env.local") || f.advice == "" {
+		t.Errorf("finding does not say what is wrong or what to do: %+v", f)
+	}
+}
+
+func loadProject(t *testing.T, dir string) *config.Config {
+	t.Helper()
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+// Nothing to say where there is no project at all, which is most directories
+// doctor is run in.
+func TestTheProjectChecksAreQuietWithoutAProject(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := config.Load(dir)
+	if _, worth := checkProject(err); worth {
+		t.Error("a directory with no grove.toml was reported on")
+	}
+	if _, worth := checkOverrideFile(cfg); worth {
+		t.Error("a directory with no grove.toml was reported on")
+	}
+}
+
+// The other half of that: nothing grove does in this directory works, so a run
+// that said only that DNS resolves would read as a clean bill of health.
+func TestAConfigThatWillNotLoadFailsTheRun(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, config.FileName), []byte("routes.web = \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := config.Load(dir)
+	f, worth := checkProject(err)
+	if !worth {
+		t.Fatal("a config that will not load was not reported")
+	}
+	if f.state != bad {
+		t.Errorf("state = %q, want %q: nothing here runs", f.state, bad)
+	}
+	if f.detail == "" || !strings.Contains(f.advice, config.FileName) {
+		t.Errorf("finding does not say what is wrong or which file: %+v", f)
 	}
 }
