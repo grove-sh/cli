@@ -53,13 +53,15 @@ being.`,
 			}
 
 			resolved, skipped := cfg.EnvironmentSkipping(active, valuesFrom(cfg, context, live))
-			layered, err := layer(cfg, context, resolved, active, grantsFrom(live))
+			applied, err := layer(cfg, context, resolved, active, grantsFrom(live))
 			if err != nil {
 				return err
 			}
 
-			reportSkipped(cmd.ErrOrStderr(), append(skipped, unbound(active, layered)...))
-			return writeEnv(cmd.OutOrStdout(), format, layered)
+			// Both on stderr, since stdout here is written to be eval'd.
+			reportSkipped(cmd.ErrOrStderr(), append(skipped, unbound(active, applied.env)...))
+			reportShadowed(cmd.ErrOrStderr(), applied.shadowed)
+			return writeEnv(cmd.OutOrStdout(), format, applied.env)
 		},
 	}
 

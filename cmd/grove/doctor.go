@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/grove-sh/cli/internal/ca"
+	"github.com/grove-sh/cli/internal/config"
 	"github.com/grove-sh/cli/internal/daemon"
 	"github.com/grove-sh/cli/internal/identity"
 	"github.com/grove-sh/cli/internal/platform"
@@ -82,6 +84,17 @@ script; a warning does not.`,
 			// Reported even when fine, unlike those: which worktree is the
 			// project answers why a hostname is what it is.
 			if f, worth := checkMainWorktree(dir); worth {
+				findings = append(findings, f)
+			}
+			// Read here rather than inside the check that wants it: a check
+			// loading its own config cannot tell a directory with no project
+			// from a project whose config will not parse, and goes quiet for
+			// both. Quiet is right for one and a lie about the other.
+			cfg, cfgErr := config.Load(dir)
+			if f, worth := checkProject(cfgErr); worth {
+				findings = append(findings, f)
+			}
+			if f, worth := checkOverrideFile(cfg); worth {
 				findings = append(findings, f)
 			}
 
@@ -181,6 +194,58 @@ func checkMainWorktree(dir string) (finding, bool) {
 		f.advice = "Nothing serves the hostname with no suffix. Name the worktree that should with git config grove.mainWorktree, from: " + strings.Join(m.Candidates, ", ") + "."
 	}
 	return f, true
+}
+
+// No grove.toml is the ordinary case, doctor being mostly about the machine.
+// One that will not parse is the opposite: every grove command in this
+// directory reads it first, so none of them run at all, and a run that only
+// reported on DNS and trust would look like a clean bill of health.
+func checkProject(err error) (finding, bool) {
+	if err == nil || errors.Is(err, config.ErrNotFound) {
+		return finding{}, false
+	}
+	return finding{
+		name:   "Project",
+		state:  bad,
+		detail: err.Error(),
+		advice: "Every grove command here reads " + config.FileName + ", and " + config.LocalName + " beside it, before it does anything else. Nothing in this directory runs until that parses.",
+	}, true
+}
+
+// The override file is one person's, so a tracked one overrides for everyone:
+// the drift grove exists to remove, wearing the clothes of a fix. Nothing to
+// say where there is no project, no such file, or an untracked one, which is
+// every project that has not made the mistake.
+func checkOverrideFile(cfg *config.Config) (finding, bool) {
+	if cfg == nil {
+		return finding{}, false
+	}
+	for _, name := range cfg.OverrideFiles() {
+		if _, err := os.Stat(filepath.Join(cfg.Dir, name)); err != nil {
+			continue
+		}
+		if !trackedByGit(cfg.Dir, name) {
+			continue
+		}
+		return finding{
+			name:   "Env override",
+			state:  warn,
+			detail: name + " is tracked by git, so it overrides for everyone",
+			advice: "That file is the one tier above everything grove resolves, and a shared one hides the values grove leased. Untrack it with git rm --cached " + name + " and gitignore it, or move what the whole project needs into grove.toml.",
+		}, true
+	}
+	return finding{}, false
+}
+
+// A zero exit means git knows the path, staged as much as committed, which is
+// why the finding says tracked rather than committed: git add is where the
+// mistake is made, and the warning is worth more before the push than after.
+// Run in the project directory, since that is where the file is and where git
+// has to be asked about it.
+func trackedByGit(dir, name string) bool {
+	cmd := exec.Command("git", "ls-files", "--error-unmatch", "--", name)
+	cmd.Dir = dir
+	return cmd.Run() == nil
 }
 
 func checkDNS(domain string) finding {

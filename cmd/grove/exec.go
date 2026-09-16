@@ -92,10 +92,14 @@ get rather than one anything is serving, and no hostname routes to it.`,
 				}
 			}
 
-			env, err := environment(cfg, context, active, grants)
+			env, shadowed, err := environment(cfg, context, active, grants)
 			if err != nil {
 				return err
 			}
+			// Unlike announce, said to a pipe as well as a terminal: a URL is
+			// decoration, and which of the project's values stopped applying
+			// is not.
+			reportShadowed(cmd.ErrOrStderr(), shadowed)
 			// Nothing was taken, so there is no route to announce: saying one
 			// is served would be the one claim --no-bind cannot make.
 			if !noBind {
@@ -225,43 +229,59 @@ func bindings(grants map[string]daemon.Grant) map[string]config.Binding {
 	return out
 }
 
-func environment(cfg *config.Config, context identity.Context, active *config.Entry, grants map[string]daemon.Grant) ([]string, error) {
+func environment(cfg *config.Config, context identity.Context, active *config.Entry, grants map[string]daemon.Grant) (env []string, shadowed []string, err error) {
 	values := valuesFrom(cfg, context, bindings(grants))
 
 	resolved, err := cfg.Environment(active, values)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	layered, err := layer(cfg, context, resolved, active, grants)
+	applied, err := layer(cfg, context, resolved, active, grants)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	env := os.Environ()
-	names := make([]string, 0, len(layered))
-	for name := range layered {
+	env = os.Environ()
+	names := make([]string, 0, len(applied.env))
+	for name := range applied.env {
 		names = append(names, name)
 	}
 	slices.Sort(names)
 	for _, name := range names {
-		env = append(env, name+"="+layered[name])
+		env = append(env, name+"="+applied.env[name])
 	}
-	return env, nil
+	return env, applied.shadowed, nil
 }
 
-// layer puts grove's own values last, because a port hand copied into a
-// checked-in .env is the drift grove exists to remove.
-func layer(cfg *config.Config, context identity.Context, resolved map[string]string, active *config.Entry, grants map[string]daemon.Grant) (map[string]string, error) {
+// What layer worked out, for the two commands that build an environment.
+type layered struct {
+	env map[string]string
+
+	// The names an override file took over from grove.toml, sorted. Reported
+	// rather than refused: pointing DATABASE_URL at another database is the
+	// whole point of the tier. The caller says it, since grove env writes its
+	// environment to a stdout that gets eval'd.
+	shadowed []string
+}
+
+// layer puts grove's own values above the caller's environment, because a port
+// hand copied into a checked-in .env is the drift grove exists to remove, and
+// an override file above those, because that is what an override is.
+func layer(cfg *config.Config, context identity.Context, resolved map[string]string, active *config.Entry, grants map[string]daemon.Grant) (layered, error) {
 	fromFiles, err := cfg.LoadEnvFiles()
 	if err != nil {
-		return nil, err
+		return layered{}, err
+	}
+	overrides, err := cfg.LoadOverrideEnvFiles()
+	if err != nil {
+		return layered{}, err
 	}
 
-	layered := make(map[string]string, len(fromFiles)+len(resolved)+4)
+	env := make(map[string]string, len(fromFiles)+len(resolved)+len(overrides)+4)
 	for _, entry := range trust.Env(daemon.StateDir()) {
 		name, value, _ := strings.Cut(entry, "=")
-		layered[name] = value
+		env[name] = value
 	}
 	// An env_file yields to the environment grove was invoked from: an inline
 	// override is the most deliberate thing in the chain, a checked-in file the
@@ -271,25 +291,49 @@ func layer(cfg *config.Config, context identity.Context, resolved map[string]str
 		if _, inherited := os.LookupEnv(name); inherited {
 			continue
 		}
-		layered[name] = value
+		env[name] = value
 	}
 	// Set whether or not anything is bound: every project so far names the
 	// context for itself, so grove says it once rather than each file repeating
 	// {context.slug}.
-	layered["GROVE_CONTEXT"] = context.Slug
+	env["GROVE_CONTEXT"] = context.Slug
 	if active != nil {
 		if grant, ok := grants[active.Name]; ok {
-			layered["GROVE_PORT"] = strconv.Itoa(grant.Port)
+			env["GROVE_PORT"] = strconv.Itoa(grant.Port)
 			if grant.Host != "" {
-				layered["GROVE_HOST"] = grant.Host
-				layered["GROVE_URL"] = grant.URL
+				env["GROVE_HOST"] = grant.Host
+				env["GROVE_URL"] = grant.URL
 			}
 		}
 	}
 	for name, value := range resolved {
-		layered[name] = value
+		env[name] = value
 	}
-	return layered, nil
+
+	// The top of the chain, and the one tier that does not yield to the
+	// environment grove was invoked from. If it did, while grove's own values
+	// went on beating that environment, then exporting a name in your shell
+	// would hand it back to grove and the .env.local line would silently stop
+	// applying. Nobody can reason about that.
+	out := layered{env: env}
+	for name, value := range overrides {
+		if _, took := resolved[name]; took {
+			out.shadowed = append(out.shadowed, name)
+		}
+		env[name] = value
+	}
+	slices.Sort(out.shadowed)
+	return out, nil
+}
+
+// One line, whatever it covers: the names are the news, and a sentence apiece
+// would read as a scolding for something legitimate.
+func reportShadowed(out io.Writer, names []string) {
+	if len(names) == 0 {
+		return
+	}
+	paint := styles(out)
+	fmt.Fprintf(out, "grove: %s overrides %s\n", paint.bold(config.OverrideName), paint.warn(strings.Join(names, ", ")))
 }
 
 func runChild(args []string, env []string) error {
