@@ -73,10 +73,13 @@ type file struct {
 	Env      map[string]string `toml:"env"`
 }
 
+// Every field is a pointer so merge can tell a key the local file omitted from
+// one it set to the zero value, which is the difference between leaving
+// detached alone and turning it off.
 type entry struct {
-	Dir      string            `toml:"dir"`
+	Dir      *string           `toml:"dir"`
 	Label    *string           `toml:"label"`
-	Detached bool              `toml:"detached"`
+	Detached *bool             `toml:"detached"`
 	Env      map[string]string `toml:"env"`
 }
 
@@ -147,8 +150,11 @@ func decode(path string) (*file, error) {
 	return &decoded, nil
 }
 
-// Whole entries and individual env values, which is what a machine-specific
-// difference looks like in practice.
+// A name the local file shares with the committed one merges into it field by
+// field, which is what a machine-specific change looks like in practice:
+// overriding one variable should not cost the entry everything else it said.
+// env_files is the exception and replaces the list, since the reason to name it
+// locally is to load a different file rather than an extra one.
 func merge(base, local *file) {
 	if local.Name != "" {
 		base.Name = local.Name
@@ -160,13 +166,13 @@ func merge(base, local *file) {
 		if base.Routes == nil {
 			base.Routes = map[string]*entry{}
 		}
-		base.Routes[name] = e
+		base.Routes[name] = mergeEntry(base.Routes[name], e)
 	}
 	for name, e := range local.Ports {
 		if base.Ports == nil {
 			base.Ports = map[string]*entry{}
 		}
-		base.Ports[name] = e
+		base.Ports[name] = mergeEntry(base.Ports[name], e)
 	}
 	for key, value := range local.Env {
 		if base.Env == nil {
@@ -174,6 +180,39 @@ func merge(base, local *file) {
 		}
 		base.Env[key] = value
 	}
+}
+
+// A name the committed file has never heard of is a whole new entry, which is
+// how a local file adds the one service only this machine runs.
+func mergeEntry(base, local *entry) *entry {
+	if base == nil {
+		return local
+	}
+	// Into a copy: base is the entry grove.toml decoded, and merging is not
+	// supposed to rewrite it in place.
+	merged := *base
+	if local.Dir != nil {
+		merged.Dir = local.Dir
+	}
+	if local.Label != nil {
+		merged.Label = local.Label
+	}
+	if local.Detached != nil {
+		merged.Detached = local.Detached
+	}
+	if len(local.Env) > 0 {
+		// Key-wise, as top-level [env] is: overriding one variable should not
+		// delete the rest of the entry's environment.
+		env := make(map[string]string, len(merged.Env)+len(local.Env))
+		for key, value := range merged.Env {
+			env[key] = value
+		}
+		for key, value := range local.Env {
+			env[key] = value
+		}
+		merged.Env = env
+	}
+	return &merged
 }
 
 func build(dir string, f *file) (*Config, error) {
@@ -240,14 +279,17 @@ func usableName(name string) error {
 
 func buildEntry(name string, kind Kind, raw *entry) (*Entry, error) {
 	built := &Entry{
-		Name:     name,
-		Kind:     kind,
-		Dir:      filepath.Clean(raw.Dir),
-		Detached: raw.Detached,
-		Env:      raw.Env,
+		Name: name,
+		Kind: kind,
+		Env:  raw.Env,
 	}
-	if raw.Dir == "" {
-		built.Dir = ""
+	// Cleaning an empty dir would give ".", and an entry scoped to "." is not
+	// the same as one covering the whole project.
+	if raw.Dir != nil && *raw.Dir != "" {
+		built.Dir = filepath.Clean(*raw.Dir)
+	}
+	if raw.Detached != nil {
+		built.Detached = *raw.Detached
 	}
 
 	label := name

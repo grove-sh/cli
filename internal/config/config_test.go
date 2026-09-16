@@ -397,3 +397,140 @@ func TestTwoEntriesCoveringTheProjectIsAnError(t *testing.T) {
 		t.Errorf("err = %v, want one naming the way out", err)
 	}
 }
+
+// Overriding one variable locally used to replace the whole entry, taking the
+// dir, label and detached from grove.toml with it.
+func TestALocalEntryMergesIntoTheOneItNames(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, config.FileName, myappConfig)
+	write(t, root, config.LocalName, `
+[routes.admin]
+env = { VITE_SITE_URL = "http://localhost:5173" }
+`)
+
+	cfg, err := config.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	admin := cfg.Routes["admin"]
+	if admin.Dir != "apps/admin" {
+		t.Errorf("dir = %q, want the one from grove.toml", admin.Dir)
+	}
+	if admin.Detached {
+		t.Error("detached came back true")
+	}
+	if got := admin.Env["VITE_SITE_URL"]; got != "http://localhost:5173" {
+		t.Errorf("VITE_SITE_URL = %q, want the local override", got)
+	}
+	if _, ok := admin.Env["PORT"]; !ok {
+		t.Error("the local entry replaced env instead of merging into it")
+	}
+}
+
+// [routes.web] takes the context's own hostname with label = "", and a replaced
+// entry read that as an omitted key and fell back to the name, moving the site
+// to web.<context>.
+func TestALocalOverrideKeepsAnEmptyLabel(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, config.FileName, myappConfig)
+	write(t, root, config.LocalName, "[routes.web]\nenv = { PORT = \"3100\" }\n")
+
+	cfg, err := config.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	web := cfg.Routes["web"]
+	if web.Label != "" {
+		t.Errorf("label = %q, want the empty one from grove.toml", web.Label)
+	}
+	if web.Dir != "apps/web" {
+		t.Errorf("dir = %q, want the one from grove.toml", web.Dir)
+	}
+	if got := web.Env["PORT"]; got != "3100" {
+		t.Errorf("PORT = %q, want the local override", got)
+	}
+}
+
+func TestALocalLabelLeavesTheRestOfTheEntry(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, config.FileName, myappConfig)
+	write(t, root, config.LocalName, "[routes.studio]\nlabel = \"lab\"\n")
+
+	cfg, err := config.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	studio := cfg.Routes["studio"]
+	if studio.Label != "lab" {
+		t.Errorf("label = %q, want lab", studio.Label)
+	}
+	if !studio.Detached {
+		t.Error("detached did not survive the local label")
+	}
+	if got := studio.Env["SUPABASE_STUDIO_PORT"]; got != "{port}" {
+		t.Errorf("SUPABASE_STUDIO_PORT = %q, want the one from grove.toml", got)
+	}
+}
+
+// The case pointer fields exist for: a plain bool cannot say "false" in a way
+// that is distinguishable from saying nothing at all.
+func TestALocalFileCanTurnDetachedOff(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, config.FileName, myappConfig)
+	write(t, root, config.LocalName, "[ports.db]\ndetached = false\n")
+
+	cfg, err := config.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Ports["db"].Detached {
+		t.Error("detached = false in the local file did nothing")
+	}
+	if got := cfg.Ports["db"].Env["SUPABASE_DB_PORT"]; got != "{port}" {
+		t.Errorf("SUPABASE_DB_PORT = %q, want the one from grove.toml", got)
+	}
+}
+
+// How a local file adds the one service only this machine runs.
+func TestALocalEntryWithANewNameIsAdded(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, config.FileName, myappConfig)
+	write(t, root, config.LocalName, `
+[ports.mailhog]
+detached = true
+env = { MAILHOG_PORT = "{port}" }
+`)
+
+	cfg, err := config.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mailhog, ok := cfg.Ports["mailhog"]
+	if !ok {
+		t.Fatal("the local-only port was dropped")
+	}
+	if !mailhog.Detached || mailhog.Env["MAILHOG_PORT"] != "{port}" {
+		t.Errorf("mailhog = %+v", mailhog)
+	}
+	if _, ok := cfg.Ports["db"]; !ok {
+		t.Error("adding a port replaced the ones in grove.toml")
+	}
+}
+
+// Pointer fields still have to decode, or every key in them would land in
+// md.Undecoded() and read as a typo.
+func TestPointerFieldsStillRejectOnlyRealTypos(t *testing.T) {
+	cfg := load(t, "[routes.web]\ndir = \"apps/web\"\ndetached = true\n")
+
+	if cfg.Routes["web"].Dir != "apps/web" || !cfg.Routes["web"].Detached {
+		t.Errorf("web = %+v", cfg.Routes["web"])
+	}
+	if err := loadErr(t, "[routes.web]\ndetatched = true\n"); !strings.Contains(err.Error(), "detatched") {
+		t.Errorf("error does not name the key: %v", err)
+	}
+}
