@@ -966,3 +966,63 @@ func TestTheShadowReportNamesOnlyWhatItTookOver(t *testing.T) {
 		t.Errorf("report = %q, want %q", out.String(), want)
 	}
 }
+
+// One app, one port, two hostnames: the alias reaches the child as a variable,
+// and the port it names is the entry's own.
+func TestExecResolvesAnAliasURL(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	writeConfig(t, repo, `
+[routes.web]
+dir = "."
+label = ""
+aliases = ["admin"]
+env = { PORT = "{port}", SITE_URL = "{url}", ADMIN_URL = "{web.admin.url}" }
+`)
+	t.Chdir(repo)
+
+	code, _, stderr := exercise(t, "exec", "--socket", socket, "--",
+		"sh", "-c", `printf '%s\n%s\n%s\n' "$SITE_URL" "$ADMIN_URL" "$GROVE_URL" > env.txt`)
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+
+	written, err := os.ReadFile(filepath.Join(repo, "env.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(written)), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("child saw %d values: %q", len(lines), written)
+	}
+	siteURL, adminURL, groveURL := lines[0], lines[1], lines[2]
+
+	if siteURL != "https://app1."+defaultDomain {
+		t.Errorf("SITE_URL = %q", siteURL)
+	}
+	if adminURL != "https://app1-admin."+defaultDomain {
+		t.Errorf("ADMIN_URL = %q", adminURL)
+	}
+	// The entry's own hostname, not one of its aliases: a single name has to
+	// mean the same thing however many the entry answers on.
+	if groveURL != siteURL {
+		t.Errorf("GROVE_URL = %q, want the entry's own URL %q", groveURL, siteURL)
+	}
+}
+
+// An alias is named nowhere else in the run, and a hostname nobody knows
+// answers is a hostname nobody uses.
+func TestRouteLineNamesTheAliases(t *testing.T) {
+	active := &config.Entry{Name: "web", Kind: config.KindRoute}
+	grants := map[string]daemon.Grant{"web": {
+		Port:    20107,
+		Host:    "app.grov.site",
+		URL:     "https://app.grov.site",
+		Aliases: []string{"app-admin.grov.site"},
+	}}
+
+	want := "grove: web is at https://app.grov.site (also https://app-admin.grov.site)"
+	if got := routeLine(active, grants); got != want {
+		t.Errorf("routeLine = %q, want %q", got, want)
+	}
+}

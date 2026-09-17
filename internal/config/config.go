@@ -50,6 +50,10 @@ type Entry struct {
 	// Hostname suffix, routes only. Empty means the context's own hostname.
 	Label string
 
+	// Extra hostname labels reaching the same port, routes only. Label is the
+	// one an unqualified reference to the entry means; these answer as well.
+	Aliases []string
+
 	// Whatever binds this port outlives the command that asked for it, as
 	// containers started by "supabase start" do.
 	Detached bool
@@ -79,6 +83,7 @@ type file struct {
 type entry struct {
 	Dir      *string           `toml:"dir"`
 	Label    *string           `toml:"label"`
+	Aliases  []string          `toml:"aliases"`
 	Detached *bool             `toml:"detached"`
 	Env      map[string]string `toml:"env"`
 }
@@ -197,6 +202,11 @@ func mergeEntry(base, local *entry) *entry {
 	if local.Label != nil {
 		merged.Label = local.Label
 	}
+	// Replaced rather than appended, as env_files is: naming aliases locally is
+	// how a machine drops one, not only how it adds another.
+	if local.Aliases != nil {
+		merged.Aliases = local.Aliases
+	}
 	if local.Detached != nil {
 		merged.Detached = local.Detached
 	}
@@ -233,8 +243,11 @@ func build(dir string, f *file) (*Config, error) {
 		cfg.Name = normalized
 	}
 
+	// Sorted, so which of two entries a clash blames does not depend on map
+	// order. Aliases make that error several times more reachable.
 	labels := map[string]string{}
-	for name, raw := range f.Routes {
+	for _, name := range sorted(f.Routes) {
+		raw := f.Routes[name]
 		if err := usableName(name); err != nil {
 			return nil, err
 		}
@@ -242,13 +255,15 @@ func build(dir string, f *file) (*Config, error) {
 		if err != nil {
 			return nil, err
 		}
-		if owner, taken := labels[built.Label]; taken {
-			return nil, fmt.Errorf("config: routes %q and %q both claim the hostname label %q", owner, name, built.Label)
+		for _, label := range append([]string{built.Label}, built.Aliases...) {
+			if err := claimLabel(labels, label, name); err != nil {
+				return nil, err
+			}
 		}
-		labels[built.Label] = name
 		cfg.Routes[name] = built
 	}
-	for name, raw := range f.Ports {
+	for _, name := range sorted(f.Ports) {
+		raw := f.Ports[name]
 		if err := usableName(name); err != nil {
 			return nil, err
 		}
@@ -262,10 +277,36 @@ func build(dir string, f *file) (*Config, error) {
 		if raw.Label != nil {
 			return nil, fmt.Errorf("config: [ports.%s] has a label, but only routes get a hostname", name)
 		}
+		if raw.Aliases != nil {
+			return nil, fmt.Errorf("config: [ports.%s] has aliases, but only routes get a hostname", name)
+		}
 		cfg.Ports[name] = built
 	}
 
 	return cfg, validate(cfg)
+}
+
+func sorted(entries map[string]*entry) []string {
+	names := make([]string, 0, len(entries))
+	for name := range entries {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// One hostname cannot reach two ports, so the first entry to name a label keeps
+// it, whether it named it as its own or as an alias.
+func claimLabel(labels map[string]string, label, name string) error {
+	owner, taken := labels[label]
+	switch {
+	case taken && owner == name:
+		return fmt.Errorf("config: [routes.%s] claims the hostname label %q twice", name, label)
+	case taken:
+		return fmt.Errorf("config: routes %q and %q both claim the hostname label %q", owner, name, label)
+	}
+	labels[label] = name
+	return nil
 }
 
 // A template says {<name>.<field>}, so an entry called context would make
@@ -296,15 +337,41 @@ func buildEntry(name string, kind Kind, raw *entry) (*Entry, error) {
 	if raw.Label != nil {
 		label = *raw.Label
 	}
-	if kind == KindRoute && label != "" {
-		normalized, err := identity.ValidateLabel(label)
+	if kind == KindRoute {
+		normalized, err := normalizeLabel(name, label)
 		if err != nil {
-			return nil, fmt.Errorf("[routes.%s]: %w", name, err)
+			return nil, err
 		}
 		label = normalized
+		for _, alias := range raw.Aliases {
+			// The pair this would have given is label = "" with the other
+			// hostname aliased, which reaches the same two names and leaves
+			// both of them with something to call them.
+			if alias == "" {
+				return nil, fmt.Errorf("config: [routes.%s] has an empty alias, which no template could name; set label = \"\" and alias the other hostname instead", name)
+			}
+			normalized, err := normalizeLabel(name, alias)
+			if err != nil {
+				return nil, err
+			}
+			built.Aliases = append(built.Aliases, normalized)
+		}
 	}
 	built.Label = label
 	return built, nil
+}
+
+// An empty label is the context's own hostname rather than a missing one, so it
+// skips the check that would reject it.
+func normalizeLabel(name, label string) (string, error) {
+	if label == "" {
+		return "", nil
+	}
+	normalized, err := identity.ValidateLabel(label)
+	if err != nil {
+		return "", fmt.Errorf("config: [routes.%s]: %w", name, err)
+	}
+	return normalized, nil
 }
 
 func validate(cfg *Config) error {

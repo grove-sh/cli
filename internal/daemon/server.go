@@ -48,7 +48,7 @@ type Server struct {
 	mu      sync.Mutex
 	control net.Listener
 	conns   map[net.Conn]struct{}
-	routed  map[routeKey]string
+	routed  map[routeKey][]string
 	closing bool
 }
 
@@ -90,7 +90,7 @@ func New(cfg Config) (*Server, error) {
 		cert:     cert,
 		root:     root.RootPEM(),
 		conns:    make(map[net.Conn]struct{}),
-		routed:   make(map[routeKey]string),
+		routed:   make(map[routeKey][]string),
 	}, nil
 }
 
@@ -267,7 +267,7 @@ func (s *Server) resolve(enc *json.Encoder, req Request) {
 		}
 		grant := Grant{Port: found.Port}
 		if entry.Routed {
-			grant.Host = s.host(req.Slug, entry.Label)
+			grant.Host, grant.Aliases = s.hosts(req.Slug, entry)
 			grant.URL = "https://" + grant.Host
 		}
 		grants[entry.Name] = grant
@@ -313,10 +313,10 @@ func (s *Server) acquire(conn net.Conn, enc *json.Encoder, req Request) {
 
 		grant := Grant{Port: held.Port}
 		if entry.Routed {
-			grant.Host = s.host(req.Slug, entry.Label)
+			grant.Host, grant.Aliases = s.hosts(req.Slug, entry)
 			grant.URL = "https://" + grant.Host
 			s.mu.Lock()
-			s.routed[routeKey{slug: req.Slug, service: entry.Name}] = grant.Host
+			s.routed[routeKey{slug: req.Slug, service: entry.Name}] = append([]string{grant.Host}, grant.Aliases...)
 			s.mu.Unlock()
 		}
 		grants[entry.Name] = grant
@@ -382,14 +382,15 @@ func (s *Server) syncRoutes() {
 	s.mu.Lock()
 	routes := make([]proxy.Route, 0, len(live))
 	for _, l := range live {
-		host, routed := s.routed[routeKey{slug: l.Slug, service: l.Service}]
+		hosts, routed := s.routed[routeKey{slug: l.Slug, service: l.Service}]
 		if !routed {
 			continue
 		}
-		routes = append(routes, proxy.Route{
-			Host:     host,
-			Upstream: net.JoinHostPort("127.0.0.1", strconv.Itoa(l.Port)),
-		})
+		// Every hostname the entry claimed, all onto the one port it leased.
+		upstream := net.JoinHostPort("127.0.0.1", strconv.Itoa(l.Port))
+		for _, host := range hosts {
+			routes = append(routes, proxy.Route{Host: host, Upstream: upstream})
+		}
 	}
 	s.mu.Unlock()
 
@@ -409,8 +410,13 @@ func (s *Server) entries() []Live {
 			Service:  l.Service,
 			Worktree: l.Worktree,
 			Port:     l.Port,
-			Host:     s.routed[routeKey{slug: l.Slug, service: l.Service}],
 			Detached: l.Detached,
+		}
+		// The entry's own hostname, and not its aliases: an alias adds no lease
+		// and no port, and the listing that shows them reads the project's
+		// config, so nothing would read them off the wire.
+		if hosts := s.routed[routeKey{slug: l.Slug, service: l.Service}]; len(hosts) > 0 {
+			entry.Host = hosts[0]
 		}
 		// Only an attached lease has a process holding it. The command that
 		// asserted a detached one has exited by definition, so naming its pid
@@ -423,8 +429,18 @@ func (s *Server) entries() []Live {
 	return out
 }
 
-// An empty label means the context's own hostname. Capping happens on the
-// composed label, since that is what has to fit in 63 bytes.
+// hosts is the entry's own hostname and then its aliases, all of which reach
+// the one port it leases. An empty label means the context's own hostname.
+// Capping happens on the composed label, since that is what has to fit in 63
+// bytes.
+func (s *Server) hosts(slug string, entry Entry) (string, []string) {
+	var aliases []string
+	for _, alias := range entry.Aliases {
+		aliases = append(aliases, s.host(slug, alias))
+	}
+	return s.host(slug, entry.Label), aliases
+}
+
 func (s *Server) host(slug, label string) string {
 	return identity.ComposeLabel(slug, label) + "." + s.domain
 }

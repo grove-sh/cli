@@ -163,7 +163,17 @@ func routeLine(active *config.Entry, grants map[string]daemon.Grant) string {
 	if !ok || grant.URL == "" {
 		return ""
 	}
-	return fmt.Sprintf("grove: %s is at %s", active.Name, grant.URL)
+	line := fmt.Sprintf("grove: %s is at %s", active.Name, grant.URL)
+	if len(grant.Aliases) == 0 {
+		return line
+	}
+	// Nothing else in the run names an alias, and a hostname nobody knows
+	// answers is a hostname nobody uses.
+	also := make([]string, 0, len(grant.Aliases))
+	for _, host := range grant.Aliases {
+		also = append(also, "https://"+host)
+	}
+	return line + " (also " + strings.Join(also, ", ") + ")"
 }
 
 func entriesToLease(cfg *config.Config, active *config.Entry) []daemon.Entry {
@@ -172,6 +182,7 @@ func entriesToLease(cfg *config.Config, active *config.Entry) []daemon.Entry {
 		out = append(out, daemon.Entry{
 			Name:     entry.Name,
 			Label:    entry.Label,
+			Aliases:  entry.Aliases,
 			Routed:   entry.Kind == config.KindRoute,
 			Detached: entry.Detached,
 		})
@@ -200,8 +211,17 @@ func valuesFrom(cfg *config.Config, context identity.Context, allocated map[stri
 	}
 
 	for name, route := range cfg.Routes {
-		host := identity.ComposeLabel(context.Slug, route.Label) + "." + defaultDomain
-		values.Routes[name] = config.Binding{Host: host, URL: "https://" + host}
+		binding := config.Binding{}
+		binding.Host, binding.URL = hostFor(context.Slug, route.Label)
+		for _, alias := range route.Aliases {
+			if binding.Aliases == nil {
+				binding.Aliases = make(map[string]config.Binding, len(route.Aliases))
+			}
+			aliased := config.Binding{}
+			aliased.Host, aliased.URL = hostFor(context.Slug, alias)
+			binding.Aliases[alias] = aliased
+		}
+		values.Routes[name] = binding
 	}
 	// Bound or not: leaving the unbound out makes a reference to one read as a
 	// typo, when the entry is right there and simply has nothing to give yet.
@@ -219,6 +239,12 @@ func valuesFrom(cfg *config.Config, context identity.Context, allocated map[stri
 		values.Ports[name] = binding
 	}
 	return values
+}
+
+// The hostname a label composes to, and the URL that reaches it.
+func hostFor(slug, label string) (host, url string) {
+	host = identity.ComposeLabel(slug, label) + "." + defaultDomain
+	return host, "https://" + host
 }
 
 func bindings(grants map[string]daemon.Grant) map[string]config.Binding {

@@ -482,3 +482,30 @@ func TestLsAllSeparatesTheContextFromTheRoute(t *testing.T) {
 		t.Errorf("no row with the context and route as separate cells:\n%s", stdout)
 	}
 }
+
+// An alias is a whole hostname, so it gets a row of its own, spelled the way a
+// template names it and carrying the port and state of the entry it belongs to.
+func TestLsGivesEachAliasItsOwnRow(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	writeConfig(t, repo, "[routes.web]\ndir = \".\"\nlabel = \"\"\naliases = [\"admin\"]\n")
+	t.Chdir(repo)
+
+	_, stdout, _ := exercise(t, "ls", "--socket", socket)
+
+	var line string
+	for _, row := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(row, "web.admin ") {
+			line = row
+		}
+	}
+	if line == "" {
+		t.Fatalf("no row for the alias:\n%s", stdout)
+	}
+	if !strings.Contains(line, "https://app1-admin."+defaultDomain) {
+		t.Errorf("the alias row does not carry its URL: %q", line)
+	}
+	if !strings.Contains(stdout, "https://app1."+defaultDomain) {
+		t.Errorf("the entry's own URL is gone:\n%s", stdout)
+	}
+}

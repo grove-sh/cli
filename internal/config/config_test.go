@@ -606,3 +606,106 @@ func TestTheOverrideFileCannotSetGrovesOwnNames(t *testing.T) {
 		})
 	}
 }
+
+func TestAliasesAreMoreHostnamesOnOneEntry(t *testing.T) {
+	cfg := load(t, `
+[routes.web]
+label = "app"
+aliases = ["admin", "CDN"]
+`)
+
+	web := cfg.Routes["web"]
+	if web.Label != "app" {
+		t.Errorf("label = %q, want app", web.Label)
+	}
+	if got := strings.Join(web.Aliases, ","); got != "admin,cdn" {
+		t.Errorf("aliases = %q, want admin,cdn", got)
+	}
+}
+
+// An empty alias would route and then have no name any template could write,
+// and the pair it gives is available the other way round.
+func TestAnEmptyAliasIsRefusedForTheSwapThatWorks(t *testing.T) {
+	err := loadErr(t, "[routes.web]\nlabel = \"app\"\naliases = [\"\"]\n")
+
+	if !strings.Contains(err.Error(), `label = ""`) {
+		t.Errorf("error does not name the fix: %v", err)
+	}
+}
+
+// The swap the refusal names: the same two hostnames, and both of them
+// referenceable.
+func TestTheBareHostnameIsReachedByLabellingItInstead(t *testing.T) {
+	cfg := load(t, "[routes.web]\nlabel = \"\"\naliases = [\"app\"]\n")
+
+	web := cfg.Routes["web"]
+	if web.Label != "" || len(web.Aliases) != 1 || web.Aliases[0] != "app" {
+		t.Errorf("label = %q, aliases = %q", web.Label, web.Aliases)
+	}
+}
+
+func TestAnAliasCannotTakeAnotherRoutesHostname(t *testing.T) {
+	err := loadErr(t, `
+[routes.web]
+aliases = ["admin"]
+
+[routes.admin]
+`)
+	if !strings.Contains(err.Error(), "label") {
+		t.Errorf("error does not explain the clash: %v", err)
+	}
+}
+
+func TestARouteCannotClaimOneHostnameTwice(t *testing.T) {
+	err := loadErr(t, "[routes.web]\naliases = [\"web\"]\n")
+	if !strings.Contains(err.Error(), "twice") {
+		t.Errorf("error does not explain the clash: %v", err)
+	}
+}
+
+func TestPortsCannotHaveAliases(t *testing.T) {
+	err := loadErr(t, "[ports.db]\naliases = [\"other\"]\n")
+	if !strings.Contains(err.Error(), "hostname") {
+		t.Errorf("error does not explain why: %v", err)
+	}
+}
+
+func TestAliasesAreValidatedLikeLabels(t *testing.T) {
+	if err := loadErr(t, "[routes.web]\naliases = [\"one.two\"]\n"); !strings.Contains(err.Error(), "dot") {
+		t.Errorf("a dotted alias was not rejected clearly: %v", err)
+	}
+}
+
+// Replaced rather than merged, so a machine that cannot resolve one of them can
+// drop it without the committed file's list coming back.
+func TestALocalFileReplacesTheAliasList(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, config.FileName, "[routes.web]\naliases = [\"admin\", \"cdn\"]\nenv = { A = \"1\" }\n")
+	write(t, dir, config.LocalName, "[routes.web]\naliases = [\"admin\"]\n")
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := cfg.Routes["web"]
+	if got := strings.Join(web.Aliases, ","); got != "admin" {
+		t.Errorf("aliases = %q, want admin", got)
+	}
+	if web.Env["A"] != "1" {
+		t.Error("naming aliases locally cost the entry its environment")
+	}
+}
+
+func TestALocalFileCanDropEveryAlias(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, config.FileName, "[routes.web]\naliases = [\"admin\"]\n")
+	write(t, dir, config.LocalName, "[routes.web]\naliases = []\n")
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Routes["web"].Aliases; len(got) != 0 {
+		t.Errorf("aliases = %q, want none", got)
+	}
+}

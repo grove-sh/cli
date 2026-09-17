@@ -2,7 +2,7 @@ package daemon
 
 // A grove binary is rebuilt far more often than its daemon is restarted, so a
 // mismatch has to name itself rather than surface as a missing field.
-const Version = 3
+const Version = 4
 
 const (
 	OpAcquire = "acquire"
@@ -26,11 +26,14 @@ type Request struct {
 }
 
 // Routed entries get a hostname built from Label; the rest have no name in DNS.
+// Aliases are further labels reaching the same port, so one app answers on more
+// than one hostname without leasing a port per name.
 type Entry struct {
-	Name     string `json:"name"`
-	Label    string `json:"label,omitempty"`
-	Routed   bool   `json:"routed,omitempty"`
-	Detached bool   `json:"detached,omitempty"`
+	Name     string   `json:"name"`
+	Label    string   `json:"label,omitempty"`
+	Aliases  []string `json:"aliases,omitempty"`
+	Routed   bool     `json:"routed,omitempty"`
+	Detached bool     `json:"detached,omitempty"`
 }
 
 type Response struct {
@@ -59,6 +62,10 @@ type Grant struct {
 	Port int    `json:"port"`
 	Host string `json:"host,omitempty"`
 	URL  string `json:"url,omitempty"`
+
+	// The composed alias hostnames, in the order the entry named them. Host is
+	// the one the entry means when a single hostname is wanted.
+	Aliases []string `json:"aliases,omitempty"`
 }
 
 type Live struct {

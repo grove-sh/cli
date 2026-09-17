@@ -25,6 +25,10 @@ type Binding struct {
 	Port int
 	Host string
 	URL  string
+
+	// The entry's extra hostnames, keyed by the label that named them. Each
+	// carries only a Host and URL: the port is the entry's own.
+	Aliases map[string]Binding
 }
 
 type Values struct {
@@ -164,17 +168,58 @@ func lookup(path string, self *Entry, values Values) (string, error) {
 	}
 
 	// Which section an entry lives in is not part of the reference, or moving
-	// one between [routes] and [ports] would break every line naming it.
-	if len(parts) != 2 {
+	// one between [routes] and [ports] would break every line naming it. Three
+	// parts name one of the entry's aliases, which only a route can have.
+	if len(parts) != 2 && len(parts) != 3 {
 		return "", fmt.Errorf("unknown token {%s}; a reference is {<name>.port}, .url or .host", path)
 	}
 	if binding, ok := values.Routes[parts[0]]; ok {
+		if len(parts) == 3 {
+			return aliasField(binding, parts[0], parts[1], parts[2])
+		}
 		return field(binding, parts[1], "routes."+parts[0], true)
 	}
 	if binding, ok := values.Ports[parts[0]]; ok {
+		if len(parts) == 3 {
+			return "", fmt.Errorf("{%s} reads as an alias of ports.%s, and only routes have hostnames to alias", path, parts[0])
+		}
 		return field(binding, parts[1], "ports."+parts[0], false)
 	}
 	return "", fmt.Errorf("{%s} names no entry called %q", path, parts[0])
+}
+
+// An alias is another hostname on the entry's own port, so it answers .host and
+// .url and nothing else: {web.admin.port} would be {web.port} spelled longer,
+// and saying so beats handing back the same number twice.
+func aliasField(binding Binding, name, alias, wanted string) (string, error) {
+	aliased, ok := binding.Aliases[alias]
+	if !ok {
+		return "", fmt.Errorf("{%s.%s.%s} names no alias %q on routes.%s%s", name, alias, wanted, alias, name, declares(binding.Aliases))
+	}
+	switch wanted {
+	case "host":
+		return aliased.Host, nil
+	case "url":
+		return aliased.URL, nil
+	case "port":
+		return "", fmt.Errorf("{%s.%s.port} is {%s.port}: an alias is another hostname on the same port", name, alias, name)
+	}
+	return "", fmt.Errorf("unknown field %q on alias %q of routes.%s", wanted, alias, name)
+}
+
+// A label is lowercased and hyphenated on the way in, so the alias a template
+// has to name can differ from the one the file spelled. Listing what is there
+// covers that surprise and a plain misspelling in one sentence.
+func declares(aliases map[string]Binding) string {
+	if len(aliases) == 0 {
+		return ", which declares none"
+	}
+	names := make([]string, 0, len(aliases))
+	for name := range aliases {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return "; it has " + strings.Join(names, ", ")
 }
 
 // An empty URL means two things needing different messages: a port can never
@@ -217,8 +262,15 @@ func bindingOf(entry *Entry, values Values) Binding {
 // so it fails at load rather than at use.
 func checkTemplates(cfg *Config) error {
 	values := Values{Routes: map[string]Binding{}, Ports: map[string]Binding{}}
-	for name := range cfg.Routes {
-		values.Routes[name] = Binding{Port: 1, Host: "h", URL: "u"}
+	for name, route := range cfg.Routes {
+		binding := Binding{Port: 1, Host: "h", URL: "u"}
+		for _, alias := range route.Aliases {
+			if binding.Aliases == nil {
+				binding.Aliases = map[string]Binding{}
+			}
+			binding.Aliases[alias] = Binding{Host: "h", URL: "u"}
+		}
+		values.Routes[name] = binding
 	}
 	for name := range cfg.Ports {
 		values.Ports[name] = Binding{Port: 1}

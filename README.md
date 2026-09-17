@@ -111,6 +111,25 @@ Grove loads your `env_files` too, so it replaces `dotenv-cli` rather than sittin
 
 To bend one of those values for an afternoon, put it in `.env.local` beside your `grove.toml`. That file is the top of the chain and yields to nothing, not even a variable you exported, and grove names on stderr whatever it took over. `GROVE_CONTEXT`, `GROVE_PORT`, `GROVE_HOST` and `GROVE_URL` are grove's own, so setting one there is an error rather than a lie about a lease. If your `env_files` already lists `.env.local`, it stays where you put it and grove leaves it in that lower tier.
 
+## One app on more than one hostname
+
+Some apps answer on two names: a storefront and its admin, or a site and the host it serves assets from. That is one port, so it is one route with aliases rather than two routes.
+
+```toml
+[routes.web]
+dir = "apps/web"
+aliases = ["admin"]
+env.PORT = "{port}"
+
+[env]
+SITE_URL = "{web.url}"
+ADMIN_URL = "{web.admin.url}"
+```
+
+Every one of those hostnames proxies to the one port grove leased, and they come and go with the lease together. `{web.url}`, `GROVE_HOST` and `GROVE_URL` stay the route's own hostname, so a single name means one thing however many the route answers on; each alias is reachable as `{web.<alias>.url}` or `.host`. There is no `{web.admin.port}`, since an alias is another hostname on the same port and that port is `{web.port}`.
+
+An alias is a label under the domain like every other, so it answers on `<context>-admin.grov.site` rather than as a subdomain of the route. No two routes can claim one label, whether either of them named it as its own or as an alias.
+
 ## Your dev server has to bind the port it is given
 
 Grove leases a port and proxies the hostname to it, so a server that picks its own port is a server grove cannot reach, and you get a 503 from something that looks like it is running fine.
