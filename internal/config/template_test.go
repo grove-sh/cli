@@ -252,3 +252,104 @@ func TestContextIsNotAnEntryName(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// The alias is a hostname on the entry's own port, so the URL differs and the
+// port does not.
+func TestAnAliasResolvesItsOwnHostname(t *testing.T) {
+	cfg := load(t, `
+[routes.web]
+aliases = ["admin"]
+env = { PORT = "{port}", SITE_URL = "{url}", ADMIN_URL = "{web.admin.url}", ADMIN_HOST = "{web.admin.host}" }
+`)
+
+	env, err := cfg.Environment(cfg.Routes["web"], aliasValues())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]string{
+		"PORT":       "20101",
+		"SITE_URL":   "https://myapp-feat1.grov.site",
+		"ADMIN_URL":  "https://myapp-feat1-admin.grov.site",
+		"ADMIN_HOST": "myapp-feat1-admin.grov.site",
+	}
+	for name, value := range want {
+		if env[name] != value {
+			t.Errorf("%s = %q, want %q", name, env[name], value)
+		}
+	}
+}
+
+// An alias is reachable from anywhere the entry is, and [env] is where a URL
+// belongs, since a build needs one and binds nothing.
+func TestAnAliasIsReachableFromProjectEnv(t *testing.T) {
+	cfg := load(t, `
+[env]
+ADMIN_URL = "{web.admin.url}"
+
+[routes.web]
+aliases = ["admin"]
+`)
+
+	env, err := cfg.Environment(nil, aliasValues())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env["ADMIN_URL"] != "https://myapp-feat1-admin.grov.site" {
+		t.Errorf("ADMIN_URL = %q", env["ADMIN_URL"])
+	}
+}
+
+func TestAliasTokensFailAtLoad(t *testing.T) {
+	for _, body := range []string{
+		// An alias the route does not declare.
+		"[env]\nA = \"{web.cdn.url}\"\n\n[routes.web]\naliases = [\"admin\"]\n",
+		// A field an alias cannot answer.
+		"[env]\nA = \"{web.admin.port}\"\n\n[routes.web]\naliases = [\"admin\"]\n",
+		"[env]\nA = \"{web.admin.wat}\"\n\n[routes.web]\naliases = [\"admin\"]\n",
+		// Only routes have hostnames to alias.
+		"[env]\nA = \"{db.admin.url}\"\n\n[ports.db]\n",
+	} {
+		if err := loadErr(t, body); err == nil {
+			t.Errorf("%q loaded", body)
+		}
+	}
+}
+
+// The port is the entry's own, and saying so beats handing back the same number
+// under a second spelling.
+func TestAnAliasPortNamesTheEntryInstead(t *testing.T) {
+	err := loadErr(t, "[env]\nA = \"{web.admin.port}\"\n\n[routes.web]\naliases = [\"admin\"]\n")
+	if !strings.Contains(err.Error(), "{web.port}") {
+		t.Errorf("error does not name the fix: %v", err)
+	}
+}
+
+// A label is normalized on the way in, so the spelling in the file is not
+// always the spelling a template needs. The error says which it is rather than
+// leaving the reader to work out that the two differ at all.
+func TestAMisspelledAliasNamesTheOnesThereAre(t *testing.T) {
+	err := loadErr(t, "[env]\nA = \"{web.Admin_UI.url}\"\n\n[routes.web]\naliases = [\"Admin_UI\"]\n")
+
+	if !strings.Contains(err.Error(), "it has admin-ui") {
+		t.Errorf("error does not name the alias that exists: %v", err)
+	}
+}
+
+func TestAnAliasOnARouteWithNoneSaysSo(t *testing.T) {
+	err := loadErr(t, "[env]\nA = \"{web.admin.url}\"\n\n[routes.web]\n")
+
+	if !strings.Contains(err.Error(), "declares none") {
+		t.Errorf("error does not say the route has no aliases: %v", err)
+	}
+}
+
+func aliasValues() config.Values {
+	v := values()
+	web := v.Routes["web"]
+	web.Aliases = map[string]config.Binding{
+		"admin": {Host: "myapp-feat1-admin.grov.site", URL: "https://myapp-feat1-admin.grov.site"},
+	}
+	v.Routes["web"] = web
+	return v
+}

@@ -803,3 +803,110 @@ func TestListAnyVersionAsksAgainInAnOlderProtocol(t *testing.T) {
 		t.Errorf("asked again in v%d, want the daemon's v%d", second, daemon.Version-1)
 	}
 }
+
+// The whole point: one lease, one port, and every hostname the entry named
+// reaching the server on it.
+func TestAliasHostnamesReachTheOnePort(t *testing.T) {
+	h := start(t)
+
+	grants, err := h.dial(t).Acquire("app1-feat1", "/src/feat1", []daemon.Entry{
+		{Name: "web", Routed: true, Aliases: []string{"admin", "cdn"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant := grants["web"]
+	if grant.Host != "app1-feat1."+domain {
+		t.Errorf("host = %q", grant.Host)
+	}
+	want := []string{"app1-feat1-admin." + domain, "app1-feat1-cdn." + domain}
+	if strings.Join(grant.Aliases, ",") != strings.Join(want, ",") {
+		t.Fatalf("aliases = %q, want %q", grant.Aliases, want)
+	}
+
+	serveOn(t, grant.Port, "one server")
+
+	for _, host := range append([]string{grant.Host}, grant.Aliases...) {
+		code, body := h.status(t, host)
+		if code != 200 || body != "one server" {
+			t.Errorf("%s: got %d %q", host, code, body)
+		}
+	}
+
+	if entries, err := h.dial(t).List(); err != nil || len(entries) != 1 {
+		t.Errorf("List = %v (err %v), want one lease", entries, err)
+	}
+}
+
+// An alias lives on its entry's lease, so it goes away with it rather than
+// outliving the command the way a stale route would.
+func TestAliasesGoAwayWithTheLease(t *testing.T) {
+	h := start(t)
+	client, err := daemon.Dial(h.socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grants, err := client.Acquire("app1", "/src/app1", []daemon.Entry{
+		{Name: "web", Routed: true, Aliases: []string{"admin"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := grants["web"].Aliases[0]
+	serveOn(t, grants["web"].Port, "up")
+	if code, _ := h.status(t, alias); code != 200 {
+		t.Fatalf("status = %d on the alias before close, want 200", code)
+	}
+
+	client.Close()
+
+	eventually(t, "the alias route to disappear", func() bool {
+		code, _ := h.status(t, alias)
+		return code == http.StatusServiceUnavailable
+	})
+}
+
+// Resolve reports the hostnames without routing any of them, as it does for the
+// entry's own.
+func TestResolveNamesAliasesWithoutRoutingThem(t *testing.T) {
+	h := start(t)
+
+	grants, err := h.dial(t).Resolve("app1", "/src/app1", []daemon.Entry{
+		{Name: "web", Routed: true, Aliases: []string{"admin"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := grants["web"].Aliases; len(got) != 1 || got[0] != "app1-admin."+domain {
+		t.Fatalf("aliases = %q", got)
+	}
+
+	if code, _ := h.status(t, "app1-admin."+domain); code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want the alias unrouted", code)
+	}
+}
+
+// A restarted daemon knows nothing, and hold re-asserts from the project, so a
+// detached entry's aliases have to come back with it.
+func TestHeldDetachedAliasesAreRouted(t *testing.T) {
+	h := start(t)
+
+	grants, err := h.dial(t).Acquire("app1", "/src/app1", []daemon.Entry{
+		{Name: "studio", Label: "studio", Routed: true, Detached: true, Aliases: []string{"studio-alt"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := grants["studio"].Aliases[0]
+	serveOn(t, grants["studio"].Port, "studio")
+
+	// The client that asked is gone, and the detached lease and its alias stay.
+	if code, body := h.status(t, alias); code != 200 || body != "studio" {
+		t.Errorf("got %d %q", code, body)
+	}
+	// One lease, reported under the entry's own hostname: an alias adds no
+	// lease of its own for the listing to carry.
+	if entries, err := h.dial(t).List(); err != nil || len(entries) != 1 || entries[0].Host != "app1-studio."+domain {
+		t.Errorf("List = %v (err %v), want one lease on the entry's own hostname", entries, err)
+	}
+}

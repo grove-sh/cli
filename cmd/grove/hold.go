@@ -85,6 +85,7 @@ func holdContext(out io.Writer, socket, dir string, report bool) error {
 		entries = append(entries, daemon.Entry{
 			Name:     entry.Name,
 			Label:    entry.Label,
+			Aliases:  entry.Aliases,
 			Routed:   entry.Kind == config.KindRoute,
 			Detached: true,
 		})
@@ -118,6 +119,10 @@ func holdContext(out io.Writer, socket, dir string, report bool) error {
 			shown = context.Slug + ":" + name
 		}
 		fmt.Fprintf(w, "%s\t%s\n", shown, strconv.Itoa(grant.Port))
+		// A line each, since every one of them is now routing to that port.
+		for _, alias := range grant.Aliases {
+			fmt.Fprintf(w, "%s\t%s\n", alias, strconv.Itoa(grant.Port))
+		}
 	}
 	return w.Flush()
 }

@@ -15,7 +15,6 @@ import (
 
 	"github.com/grove-sh/cli/internal/config"
 	"github.com/grove-sh/cli/internal/daemon"
-	"github.com/grove-sh/cli/internal/identity"
 )
 
 func newLsCommand() *cobra.Command {
@@ -149,19 +148,21 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 			continue
 		}
 
-		url := dash
-		if entry.Kind == config.KindRoute {
-			url = "https://" + identity.ComposeLabel(context.Slug, entry.Label) + "." + defaultDomain
-			switch {
-			case problem != "":
-				painted[url] = paint.bad(url)
-			case state == stateRunning:
-				painted[url] = paint.good(url)
-			default:
-				painted[url] = paint.warn(url)
+		// An alias gets its own line rather than a crowded cell: it is a whole
+		// hostname, and the ROUTE cell spells it the way a template names it.
+		for _, row := range hostnames(context.Slug, entry) {
+			if row.url != dash {
+				switch {
+				case problem != "":
+					painted[row.url] = paint.bad(row.url)
+				case state == stateRunning:
+					painted[row.url] = paint.good(row.url)
+				default:
+					painted[row.url] = paint.warn(row.url)
+				}
 			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", row.name, row.url, port, state)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", entry.Name, url, port, state)
 		routed = routed || entry.Kind == config.KindRoute
 	}
 	if err := w.Flush(); err != nil {
@@ -181,6 +182,26 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 			problem, invocation())))
 	}
 	return nil
+}
+
+type hostRow struct {
+	name string
+	url  string
+}
+
+// One row per hostname the entry answers on. A port entry has none, and keeps
+// its single row so the table still accounts for it.
+func hostnames(slug string, entry *config.Entry) []hostRow {
+	if entry.Kind != config.KindRoute {
+		return []hostRow{{name: entry.Name, url: dash}}
+	}
+	_, url := hostFor(slug, entry.Label)
+	rows := []hostRow{{name: entry.Name, url: url}}
+	for _, alias := range entry.Aliases {
+		_, url := hostFor(slug, alias)
+		rows = append(rows, hostRow{name: entry.Name + "." + alias, url: url})
+	}
+	return rows
 }
 
 func listLeases(cmd *cobra.Command, socket string) error {
