@@ -520,6 +520,14 @@ func TestProjectGroveComparesOnlyAReleasedBuild(t *testing.T) {
 	if !strings.Contains(f.detail, "0.4.3 throughout") {
 		t.Errorf("detail = %q", f.detail)
 	}
+	// A row, not an alarm: this only matters where the two derive a context
+	// differently, and most pairs do not.
+	if f.state != ok {
+		t.Errorf("state = %q, want a plain row", f.state)
+	}
+	if f.advice != "" {
+		t.Errorf("a paragraph was spent on it: %q", f.advice)
+	}
 
 	// A build from a working tree matches no published version, so comparing it
 	// would warn about every project on the machine. The pseudo-version is what
@@ -645,9 +653,10 @@ func TestProjectGroveReadsALinkedNodeModules(t *testing.T) {
 }
 
 // The two branches are different claims: one project holding two versions is a
-// split, and one whole version behind is only a difference that sometimes
-// matters. Sharing a sentence would overstate the weaker of them.
-func TestProjectGroveSaysSomethingDifferentForEachCase(t *testing.T) {
+// split, which is wrong however it got that way, and one whole version behind
+// is only a difference that sometimes matters. Only the first earns a warning
+// and the paragraph that goes with it.
+func TestOnlyASplitProjectIsWorthAnAlarm(t *testing.T) {
 	split := t.TempDir()
 	writeGroveToml(t, split)
 	installGrove(t, filepath.Join(split, "node_modules"), "0.4.5")
@@ -659,10 +668,10 @@ func TestProjectGroveSaysSomethingDifferentForEachCase(t *testing.T) {
 
 	one, _ := checkProjectGrove(split, "v0.4.5")
 	other, _ := checkProjectGrove(behind, "v0.4.5")
-	if one.advice == "" || other.advice == "" {
-		t.Fatal("a finding went out with no advice")
+	if one.state != warn || one.advice == "" {
+		t.Errorf("a split project is not reported as a problem: %+v", one)
 	}
-	if one.advice == other.advice {
-		t.Error("both cases give the same advice, so one of them overstates")
+	if other.state != ok || other.advice != "" {
+		t.Errorf("being a version behind was reported as a problem: %+v", other)
 	}
 }

@@ -498,11 +498,12 @@ func checkProjectGrove(dir, running string) (finding, bool) {
 		return finding{}, false
 	}
 
-	f := finding{name: "Project grove", state: warn}
+	f := finding{name: "Project grove"}
 	// The project disagreeing with itself is the whole finding, and it holds
 	// whatever grove is running it: the build that starts the stack is the one
 	// under the package whose script does it, not the one anybody types.
 	if where := byVersion(installed); len(where) > 1 {
+		f.state = warn
 		f.detail = strings.Join(where, "; ")
 		f.advice = "Commands run through this project reach whichever copy is nearest, so two of them derive this worktree's context differently and hand out different ports. Install one version throughout, then restart whatever is running on the other's ports."
 		return f, true
@@ -514,8 +515,13 @@ func checkProjectGrove(dir, running string) (finding, bool) {
 	if !released(running) || installed[0].version == strings.TrimPrefix(running, "v") {
 		return finding{}, false
 	}
+	// A row and nothing more. Two versions matter only where they derive a
+	// context differently, which this cannot tell and which most pairs do not,
+	// so a warning here would cry wolf on every project not yet upgraded and a
+	// paragraph would spend three lines saying it might be nothing. Stated as a
+	// fact, it is the clue to reach for when something later does not line up.
+	f.state = ok
 	f.detail = installed[0].version + " throughout, and this is " + running
-	f.advice = "A command run through this project is a different grove from this one. That matters where the two derive a worktree's context differently, which nothing announces, so the ports one hands out are not the ports the other looks for."
 	return f, true
 }
 
