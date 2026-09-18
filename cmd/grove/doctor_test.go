@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -455,4 +456,213 @@ func contextOf(t *testing.T, dir string) identity.Context {
 		t.Fatal(err)
 	}
 	return context
+}
+
+// The case this exists for: a workspace whose package installs a different
+// grove from the rest of it, which is invisible until two contexts of the same
+// worktree start handing out different ports.
+func TestProjectGroveNamesTheCopiesOnEachVersion(t *testing.T) {
+	root := t.TempDir()
+	writeGroveToml(t, root)
+	installGrove(t, filepath.Join(root, "node_modules"), "0.4.5")
+	installGrove(t, filepath.Join(root, "packages", "db", "node_modules"), "0.4.3")
+
+	f, worth := checkProjectGrove(root, "v0.4.5")
+	if !worth {
+		t.Fatal("a workspace holding two versions was not reported")
+	}
+	want := "0.4.3 in packages/db; 0.4.5 in this project"
+	if f.detail != want {
+		t.Errorf("detail = %q, want %q", f.detail, want)
+	}
+	if f.state != warn {
+		t.Errorf("state = %q, want a warning", f.state)
+	}
+}
+
+// The project disagreeing with itself is the finding whatever is running it,
+// since the build that starts the stack is the one under the package whose
+// script does it.
+func TestProjectGroveReportsASplitFromAWorkingTreeBuild(t *testing.T) {
+	root := t.TempDir()
+	writeGroveToml(t, root)
+	installGrove(t, filepath.Join(root, "node_modules"), "0.4.5")
+	installGrove(t, filepath.Join(root, "packages", "db", "node_modules"), "0.4.3")
+
+	if _, worth := checkProjectGrove(root, "v0.5.0-beta.1+dirty"); !worth {
+		t.Error("a split project went unreported because of what was running it")
+	}
+}
+
+// npm writes 0.4.5 where grove reports v0.4.5, and a check that called those
+// two different versions would fire on every correctly installed project.
+func TestProjectGroveAcceptsTheTagSpelling(t *testing.T) {
+	root := t.TempDir()
+	writeGroveToml(t, root)
+	installGrove(t, filepath.Join(root, "node_modules"), "0.4.5")
+
+	if _, worth := checkProjectGrove(root, "v0.4.5"); worth {
+		t.Error("a matching version was reported as a mismatch")
+	}
+}
+
+// One version throughout, and it is not the one running: worth saying, but only
+// where the running build is something a project could have installed.
+func TestProjectGroveComparesOnlyAReleasedBuild(t *testing.T) {
+	root := t.TempDir()
+	writeGroveToml(t, root)
+	installGrove(t, filepath.Join(root, "node_modules"), "0.4.3")
+
+	f, worth := checkProjectGrove(root, "v0.4.5")
+	if !worth {
+		t.Fatal("a project a release behind was not reported")
+	}
+	if !strings.Contains(f.detail, "0.4.3 throughout") {
+		t.Errorf("detail = %q", f.detail)
+	}
+
+	// A build from a working tree matches no published version, so comparing it
+	// would warn about every project on the machine. The pseudo-version is what
+	// go stamps on a clean checkout past the last tag, which is every build a
+	// contributor makes and the one shape that reads like a release.
+	for _, running := range []string{
+		"v0.5.0-beta.1+dirty",
+		"v0.5.0-beta.1.0.20260918153512-01613716023d",
+		"unknown",
+	} {
+		if _, worth := checkProjectGrove(root, running); worth {
+			t.Errorf("%s reported a mismatch against an agreed project", running)
+		}
+	}
+}
+
+func TestProjectGroveIsQuietWithNothingToRead(t *testing.T) {
+	// A directory with no project: nothing installs grove for it.
+	if _, worth := checkProjectGrove(t.TempDir(), "v0.4.5"); worth {
+		t.Error("a directory with no grove.toml was reported on")
+	}
+
+	// A project with no install at all, which is every project using the
+	// binary straight off the path.
+	root := t.TempDir()
+	writeGroveToml(t, root)
+	if _, worth := checkProjectGrove(root, "v0.4.5"); worth {
+		t.Error("a project that installs no grove was reported on")
+	}
+}
+
+// The walk reads the source tree, and a repository's dependencies are most of
+// what is under it. Grove's own copy inside another package's node_modules is
+// not an install of this project's.
+func TestProjectGroveDoesNotDescendIntoDependencies(t *testing.T) {
+	root := t.TempDir()
+	writeGroveToml(t, root)
+	installGrove(t, filepath.Join(root, "node_modules"), "0.4.5")
+	installGrove(t, filepath.Join(root, "node_modules", "some-package", "node_modules"), "0.1.0")
+
+	if f, worth := checkProjectGrove(root, "v0.4.5"); worth {
+		t.Errorf("a nested dependency's copy was counted: %q", f.detail)
+	}
+}
+
+func writeGroveToml(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, config.FileName), []byte("[routes.web]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func installGrove(t *testing.T, nodeModules, version string) string {
+	t.Helper()
+	dir := filepath.Join(nodeModules, "@grove-sh", "cli")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"name":"@grove-sh/cli","version":%q}`, version)
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// pnpm installs one physical copy per version and links each package at it, so
+// what a package resolves is a symlink and the directory walk never descends
+// into it. Reading through the link is the whole point: this is the layout the
+// check exists for.
+func TestProjectGroveReadsThroughAPnpmLink(t *testing.T) {
+	root := t.TempDir()
+	writeGroveToml(t, root)
+	store := filepath.Join(root, "node_modules", ".pnpm")
+	linkGrove(t, filepath.Join(root, "node_modules"), installGrove(t, filepath.Join(store, "@grove-sh+cli@0.4.5", "node_modules"), "0.4.5"))
+	linkGrove(t, filepath.Join(root, "packages", "db", "node_modules"), installGrove(t, filepath.Join(store, "@grove-sh+cli@0.4.3", "node_modules"), "0.4.3"))
+
+	f, worth := checkProjectGrove(root, "v0.4.5")
+	if !worth {
+		t.Fatal("a pnpm workspace holding two versions was not reported")
+	}
+	want := "0.4.3 in packages/db; 0.4.5 in this project"
+	if f.detail != want {
+		t.Errorf("detail = %q, want %q", f.detail, want)
+	}
+}
+
+func linkGrove(t *testing.T, nodeModules, target string) {
+	t.Helper()
+	scope := filepath.Join(nodeModules, "@grove-sh")
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(scope, "cli")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Some layouts link node_modules rather than create it, and a link is not a
+// directory to a walk, so checking the kind before the name loses the whole
+// tree behind it.
+func TestProjectGroveReadsALinkedNodeModules(t *testing.T) {
+	root := t.TempDir()
+	writeGroveToml(t, root)
+	installGrove(t, filepath.Join(root, "node_modules"), "0.4.5")
+
+	elsewhere := installGrove(t, filepath.Join(t.TempDir(), "store"), "0.4.3")
+	linked := filepath.Join(root, "packages", "db")
+	if err := os.MkdirAll(linked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The whole node_modules is one link, which is the shape that was missed.
+	if err := os.Symlink(filepath.Dir(filepath.Dir(elsewhere)), filepath.Join(linked, "node_modules")); err != nil {
+		t.Fatal(err)
+	}
+
+	f, worth := checkProjectGrove(root, "v0.4.5")
+	if !worth {
+		t.Fatal("a linked node_modules was walked past")
+	}
+	if !strings.Contains(f.detail, "0.4.3 in packages/db") {
+		t.Errorf("detail = %q", f.detail)
+	}
+}
+
+// The two branches are different claims: one project holding two versions is a
+// split, and one whole version behind is only a difference that sometimes
+// matters. Sharing a sentence would overstate the weaker of them.
+func TestProjectGroveSaysSomethingDifferentForEachCase(t *testing.T) {
+	split := t.TempDir()
+	writeGroveToml(t, split)
+	installGrove(t, filepath.Join(split, "node_modules"), "0.4.5")
+	installGrove(t, filepath.Join(split, "packages", "db", "node_modules"), "0.4.3")
+
+	behind := t.TempDir()
+	writeGroveToml(t, behind)
+	installGrove(t, filepath.Join(behind, "node_modules"), "0.4.3")
+
+	one, _ := checkProjectGrove(split, "v0.4.5")
+	other, _ := checkProjectGrove(behind, "v0.4.5")
+	if one.advice == "" || other.advice == "" {
+		t.Fatal("a finding went out with no advice")
+	}
+	if one.advice == other.advice {
+		t.Error("both cases give the same advice, so one of them overstates")
+	}
 }
