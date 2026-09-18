@@ -21,7 +21,7 @@ Releases are cut by pushing a `v*` tag. No version is written down in the repo: 
 
 ## Layout
 
-`cmd/grove` is the cobra CLI, one file per command. Beyond `exec`, `ls`, `hold`, and the `start`/`stop`/`restart` trio, that is `install`/`uninstall` (the privileged and trust-store path), `doctor` (one finding plus a remedy per check, and usually where a platform change needs its matching edit), `init`, `env`, `context`, and `release`. `internal/*` holds everything with logic in it:
+`cmd/grove` is the cobra CLI, one file per command. Beyond `exec`, `ls`, `hold`, and the `start`/`stop`/`restart` trio, that is `install`/`uninstall` (the privileged and trust-store path), `doctor` (a finding per check, with a remedy where there is one to name, and usually where a platform change needs its matching edit), `init`, `env`, `context`, and `release`. `internal/*` holds everything with logic in it:
 
 | | |
 |-|-|
@@ -33,7 +33,7 @@ Releases are cut by pushing a `v*` tag. No version is written down in the repo: 
 | `ca` / `trust` | the local root, the wildcard leaf, and the trust stores |
 | `platform` | the only place GOOS branches; keeps build tags out of the rest |
 | `redirect` | the macOS pf rules, as text, so Linux can test them |
-| `shell` | quoting, for commands grove prints for a human to paste |
+| `shell` | text a shell will run: quoting values, and naming grove itself |
 
 `npm/` is the published package: `cli/bin/grove.js` is the shim that picks a platform binary, `platform/` is the template the four of them are stamped from, and `stage.sh` and `rehearse.sh` build and rehearse a release. It is JavaScript and shell, so no Go test reaches it.
 

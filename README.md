@@ -166,6 +166,23 @@ On a terminal, grove colours each URL by how much to believe it. Green opens. Ye
 
 A 503 says which half is wrong. "No grove context is bound to this hostname" means there is no lease, usually because the command that held it exited. "Nothing is listening on the port grove leased" means the lease is fine and your server is somewhere else, which is nearly always the port question above.
 
+When every port grove handed out is claimed and nothing answers on any of them, `grove ls` says so under the table. One port answering keeps it quiet, because a stack comes up a service at a time. All of them silent means something larger: the stack is stopped, or it is running under a context grove is not looking at, which is the next section.
+
+## When two groves disagree about this worktree
+
+A context is derived from the worktree rather than written down, so two versions of grove can decide differently about the same directory. Ports come from the context, so a worktree that changes name changes every port with it, and a stack that is still running carries on listening on the old ones. Nothing about that looks like a version problem: `grove ls` shows ports nothing answers on, and the stack is plainly up.
+
+`grove doctor` names both halves of it.
+
+```
+Project grove   0.4.3 in packages/db; 0.4.5 in this project
+Context         holding ports as app-main, and resolving app now
+```
+
+`Project grove` reads what the project installs. A workspace can resolve a different copy per package, and the one that decides is under the package whose script starts the stack, not the one you type. Two versions there is worth fixing whatever else is true. One version that is merely not the one you are running is reported without a warning, since it only matters where the two derive a context differently.
+
+`Context` is the disagreement itself, read from the daemon: a worktree holding ports under one name while resolving another. That is the version split having already happened.
+
 ## Commands
 
 ```
