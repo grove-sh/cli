@@ -132,6 +132,7 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 	w := tabwriter.NewWriter(&table, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ROUTE\tURL\tPORT\tSTATE")
 	routed := false
+	var claimed, serving int
 	for _, entry := range cfg.All() {
 		// Allocation is a hash and could be run ahead, but a guess printed in
 		// the same column as a real allocation reads as one.
@@ -139,6 +140,19 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 		if held, ok := live[entry.Name]; ok {
 			port = strconv.Itoa(held.Port)
 			state = leaseState(held.Detached, held.Port)
+			// Only a detached lease was asked. An attached one reads running
+			// because a process is holding it, which says nothing about
+			// whether the stack's own ports have anything on them, so counting
+			// it would let one dev server vouch for a stack that is not there.
+			// Counted per entry, above the hostname loop: an alias is another
+			// name for this port, not another port.
+			if held.Detached {
+				if state == stateRunning {
+					serving++
+				} else {
+					claimed++
+				}
+			}
 		}
 
 		// A route's URL is worth listing whatever its state. An idle bare port
@@ -176,12 +190,33 @@ func listRoutes(cmd *cobra.Command, socket, dir string, cfg *config.Config) erro
 
 	// A URL in a table reads as a promise, and someone whose browser refuses it
 	// concludes their app is broken rather than that grove is unfinished.
+	say := styles(cmd.ErrOrStderr())
 	if routed && problem != "" {
-		say := styles(cmd.ErrOrStderr())
 		fmt.Fprintln(cmd.ErrOrStderr(), say.warn(fmt.Sprintf("%s, so those URLs will not open. Run %s doctor.",
 			problem, invocation())))
 	}
+	if line := stoppedStackLine(claimed, serving); line != "" {
+		fmt.Fprintln(cmd.ErrOrStderr(), say.warn(line))
+	}
 	return nil
+}
+
+// The help above already says a claimed port is what a stopped stack looks
+// like, so what is left to say is that every one of them is claimed: that is
+// equally a context another grove on this machine derives differently, which
+// is the same table and a very different fix.
+//
+// One port answering keeps it quiet, because a stack comes up a service at a
+// time and a table mid-start is not a finding. A stray listener on one of them
+// buys the same silence, which is the cost of not asking what is on the port.
+//
+// What there is to say, separately from whether to say it, so the judgement is
+// testable without a table.
+func stoppedStackLine(claimed, serving int) string {
+	if claimed == 0 || serving > 0 {
+		return ""
+	}
+	return fmt.Sprintf("nothing answers on any detached port: what they were taken for is stopped, or is running under a context another grove derives differently. Run %s doctor to tell them apart.", invocation())
 }
 
 type hostRow struct {

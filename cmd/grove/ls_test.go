@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/grove-sh/cli/internal/daemon"
 	"github.com/grove-sh/cli/internal/identity"
 )
 
@@ -507,5 +508,91 @@ func TestLsGivesEachAliasItsOwnRow(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "https://app1."+defaultDomain) {
 		t.Errorf("the entry's own URL is gone:\n%s", stdout)
+	}
+}
+
+// A claimed port on its own is ordinary: a stack that was stopped keeps its
+// ports. Every port claimed and none answering is the shape of the whole
+// context being somewhere else, which the table alone does not say.
+func TestStoppedStackLineSpeaksOnlyWhenNothingAnswers(t *testing.T) {
+	if got := stoppedStackLine(3, 0); got == "" {
+		t.Error("a context holding ports with nothing on any of them said nothing")
+	} else if !strings.Contains(got, "doctor") {
+		t.Errorf("the line does not say where to look next: %q", got)
+	}
+	// One port answering makes the rest ordinary: a stack comes up a service
+	// at a time, and a table mid-start is not a finding.
+	if got := stoppedStackLine(3, 1); got != "" {
+		t.Errorf("a partly running context was reported: %q", got)
+	}
+	// Nothing leased at all is an untouched project, not a stopped one.
+	if got := stoppedStackLine(0, 0); got != "" {
+		t.Errorf("a project holding nothing was reported: %q", got)
+	}
+}
+
+// Said to stderr, since stdout here is a table that gets piped and parsed.
+func TestLsKeepsTheStoppedStackNoteOffStdout(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	writeConfig(t, repo, "[routes.web]\ndir = \".\"\nlabel = \"\"\n\n[ports.db]\ndetached = true\n")
+	t.Chdir(repo)
+
+	// hold takes the detached port, and nothing is listening on it.
+	if code, _, stderr := exercise(t, "hold", "--socket", socket); code != 0 {
+		t.Fatalf("hold: %s", stderr)
+	}
+
+	code, stdout, stderr := exercise(t, "ls", "--socket", socket)
+	if code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "nothing answers") {
+		t.Errorf("the note is missing from stderr:\n%s", stderr)
+	}
+	if strings.Contains(stdout, "nothing answers") {
+		t.Errorf("the note reached stdout:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, stateClaimed) {
+		t.Errorf("no claimed port to explain:\n%s", stdout)
+	}
+}
+
+// An attached lease reads running because a process holds it, not because
+// anything answers on the stack's ports. Letting it count would have one dev
+// server vouch for a supabase stack that is not there, which is the shape of
+// the whole problem this note exists for.
+func TestAnAttachedLeaseDoesNotVouchForTheStack(t *testing.T) {
+	socket := startDaemon(t)
+	repo := tempRepo(t, "app1")
+	writeConfig(t, repo, "[routes.web]\ndir = \".\"\nlabel = \"\"\n\n[ports.db]\ndetached = true\n")
+	t.Chdir(repo)
+
+	if code, _, stderr := exercise(t, "hold", "--socket", socket); code != 0 {
+		t.Fatalf("hold: %s", stderr)
+	}
+
+	// The lease lives as long as this connection, which is what a dev server
+	// running in another terminal looks like to grove.
+	context, err := identity.Resolve(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := daemon.Dial(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if _, err := client.Acquire(context.Slug, context.Root, []daemon.Entry{{Name: "web", Routed: true}}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stdout, stderr := exercise(t, "ls", "--socket", socket)
+
+	if !strings.Contains(stdout, stateRunning) {
+		t.Fatalf("the attached lease is not reported running, so this proves nothing:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "nothing answers") {
+		t.Errorf("an attached lease silenced the note:\n%s", stderr)
 	}
 }
