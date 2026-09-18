@@ -1,16 +1,20 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -94,6 +98,9 @@ script; a warning does not.`,
 				leases = allLeases(socket)
 			}
 			if f, worth := checkContextMoved(dir, leases); worth {
+				findings = append(findings, f)
+			}
+			if f, worth := checkProjectGrove(dir, resolveVersion()); worth {
 				findings = append(findings, f)
 			}
 			// Read here rather than inside the check that wants it: a check
@@ -473,6 +480,138 @@ func staleDaemon(daemonBuild, cliBuild string) string {
 		return "built before it could report its version"
 	}
 	return "the one running was built from " + daemonBuild + ", and this one from " + cliBuild
+}
+
+// The other version skew, and the one nothing reports: a project installs grove
+// as a dependency, so a command run through its scripts can be a different
+// build from the one on the path. Two builds either side of a change to how a
+// context is derived put the same worktree on two slugs, which moves every port
+// and hostname, and every symptom of it reads as grove losing track of a stack
+// that is plainly running.
+func checkProjectGrove(dir, running string) (finding, bool) {
+	root, err := config.Find(dir)
+	if err != nil {
+		return finding{}, false
+	}
+	installed := installedGroves(filepath.Dir(root))
+	if len(installed) == 0 {
+		return finding{}, false
+	}
+
+	f := finding{name: "Project grove", state: warn}
+	// The project disagreeing with itself is the whole finding, and it holds
+	// whatever grove is running it: the build that starts the stack is the one
+	// under the package whose script does it, not the one anybody types.
+	if where := byVersion(installed); len(where) > 1 {
+		f.detail = strings.Join(where, "; ")
+		f.advice = "Commands run through this project reach whichever copy is nearest, so two of them derive this worktree's context differently and hand out different ports. Install one version throughout, then restart whatever is running on the other's ports."
+		return f, true
+	}
+
+	// One version throughout, so the only question left is whether it is this
+	// one. Asked only of a released build, since a build from a working tree
+	// differs from every published version by definition.
+	if !released(running) || installed[0].version == strings.TrimPrefix(running, "v") {
+		return finding{}, false
+	}
+	f.detail = installed[0].version + " throughout, and this is " + running
+	f.advice = "A command run through this project is a different grove from this one. That matters where the two derive a worktree's context differently, which nothing announces, so the ports one hands out are not the ports the other looks for."
+	return f, true
+}
+
+// Grouped by version rather than listed by directory: which copies are the odd
+// ones out is the question, and a flat list of every package leaves the reader
+// to work that out.
+func byVersion(installed []installedGrove) []string {
+	var versions []string
+	where := map[string][]string{}
+	for _, one := range installed {
+		if _, seen := where[one.version]; !seen {
+			versions = append(versions, one.version)
+		}
+		where[one.version] = append(where[one.version], one.where)
+	}
+	slices.Sort(versions)
+
+	out := make([]string, 0, len(versions))
+	for _, version := range versions {
+		out = append(out, version+" in "+strings.Join(where[version], ", "))
+	}
+	return out
+}
+
+// A build stamped from a working tree carries +dirty, one from a clean checkout
+// past the last tag carries a pseudo-version ending in a timestamp and a
+// commit, and one that cannot name itself says unknown. No project could have
+// installed any of them, so comparing one to a project would warn about every
+// project on the machine.
+func released(version string) bool {
+	return version != "unknown" && !strings.Contains(version, "+") && !pseudoVersion.MatchString(version)
+}
+
+// The tail go stamps on a build of an untagged commit, as in
+// v0.5.0-beta.1.0.20260918153512-01613716023d.
+var pseudoVersion = regexp.MustCompile(`[0-9]{14}-[0-9a-f]{12}$`)
+
+type installedGrove struct {
+	where   string
+	version string
+}
+
+// Every copy the project carries, not only the one a command here would
+// resolve: the install that matters is usually the one under the package whose
+// script starts the stack, which is not the directory anybody runs doctor from.
+// node_modules is checked and then skipped, so this walks the source tree
+// rather than its dependencies.
+func installedGroves(root string) []installedGrove {
+	var found []installedGrove
+	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		// By name before kind, since yarn and nix layouts link node_modules
+		// rather than create it, and a link is not a directory to a walk.
+		if d.Name() == "node_modules" {
+			if version, ok := groveVersion(filepath.Join(path, "@grove-sh", "cli", "package.json")); ok {
+				where := filepath.Dir(path)
+				if where == root {
+					where = "this project"
+				} else if rel, relErr := filepath.Rel(root, where); relErr == nil {
+					where = rel
+				}
+				found = append(found, installedGrove{where: where, version: version})
+			}
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		// A dot directory holds no packages, and .git in a large repository is
+		// most of what a walk would otherwise read.
+		if name := d.Name(); name != "." && strings.HasPrefix(name, ".") {
+			return fs.SkipDir
+		}
+		return nil
+	})
+	slices.SortFunc(found, func(a, b installedGrove) int { return cmp.Compare(a.where, b.where) })
+	return found
+}
+
+func groveVersion(manifest string) (string, bool) {
+	data, err := os.ReadFile(manifest)
+	if err != nil {
+		return "", false
+	}
+	var pkg struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil || pkg.Version == "" {
+		return "", false
+	}
+	return pkg.Version, true
 }
 
 func checkPort443(running *daemon.Status, answered bool, stateDir, domain string) finding {
