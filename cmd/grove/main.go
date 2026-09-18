@@ -8,9 +8,10 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
-	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/grove-sh/cli/internal/shell"
 )
 
 // Never set in this repo. The release stamps it in:
@@ -148,36 +149,9 @@ func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
 	}
 }
 
-// A project depending on @grove-sh/cli has no grove on PATH, so naming one is
-// naming a command the reader does not have.
-func invocation() string {
-	self, err := os.Executable()
-	if err != nil {
-		return "grove"
-	}
-	return invocationFrom(self)
-}
-
-// Both halves have to hold. A global "npm install -g" also lands under
-// node_modules, so the path alone does not mean grove is unreachable by name,
-// and an unset agent means no package manager ran us, which is the same as
-// saying whatever the reader typed was already on PATH.
-func invocationFrom(self string) string {
-	if !strings.Contains(self, "node_modules") {
-		return "grove"
-	}
-	// Set by every package manager for the commands it runs, and grove is one.
-	manager, _, _ := strings.Cut(os.Getenv("npm_config_user_agent"), "/")
-	switch manager {
-	case "pnpm", "yarn":
-		return manager + " grove"
-	case "bun":
-		return "bunx grove"
-	case "npm":
-		return "npx grove"
-	}
-	return "grove"
-}
+// Alongside the errors internal packages raise, which name the same command
+// the same way.
+func invocation() string { return shell.Invocation() }
 
 // Go derives a version from VCS in a git checkout, so an unstamped build still
 // reports one. "(devel)" means it had nothing to go on, as under "go run".

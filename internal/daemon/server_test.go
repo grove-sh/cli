@@ -19,6 +19,7 @@ import (
 
 	"github.com/grove-sh/cli/internal/ca"
 	"github.com/grove-sh/cli/internal/daemon"
+	"github.com/grove-sh/cli/internal/shell"
 )
 
 const domain = "grov.site"
@@ -908,5 +909,27 @@ func TestHeldDetachedAliasesAreRouted(t *testing.T) {
 	// lease of its own for the listing to carry.
 	if entries, err := h.dial(t).List(); err != nil || len(entries) != 1 || entries[0].Host != "app1-studio."+domain {
 		t.Errorf("List = %v (err %v), want one lease on the entry's own hostname", entries, err)
+	}
+}
+
+// An upgrade is when this is read, and an upgraded project is exactly where
+// grove is not on PATH. Naming a command the reader cannot run leaves them
+// stuck on the one message that exists to unstick them.
+func TestTheErrorsNameHowGroveWasReached(t *testing.T) {
+	t.Setenv("npm_config_user_agent", "pnpm/11.22.0 npm/? node/v26.0.0 linux x64")
+
+	// Set for this process, since the errors ask how this binary was reached.
+	// The test binary is not under node_modules, so the spelling is plain here
+	// and the point is that both halves come from one answer.
+	grove := shell.Invocation()
+
+	mismatch := (&daemon.VersionError{Daemon: 3, CLI: 4}).Error()
+	if !strings.Contains(mismatch, "'"+grove+" restart'") || !strings.Contains(mismatch, "'"+grove+" hold'") {
+		t.Errorf("version error does not name the caller's grove: %q", mismatch)
+	}
+
+	down := (&daemon.NotRunningError{Socket: "/tmp/x.sock"}).Error()
+	if !strings.Contains(down, "'"+grove+" start'") {
+		t.Errorf("not-running error does not name the caller's grove: %q", down)
 	}
 }

@@ -1,4 +1,5 @@
-// Package shell quotes values for text a shell will run.
+// Package shell writes text a shell will run: quoting the values that go into
+// a command, and naming grove itself the way the reader can run it.
 package shell
 
 import "strings"
