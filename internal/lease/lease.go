@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+
+	"github.com/grove-sh/cli/internal/shell"
 )
 
 // Below Linux's default ephemeral range of 32768-60999, so grove never contends
@@ -359,7 +361,7 @@ func (e *BusyError) Error() string {
 	switch {
 	case e.Detached:
 		// Nothing holds a detached lease in process terms: no pid to name.
-		return fmt.Sprintf("%s, detached; end it with 'grove release %s'", held, e.Service)
+		return fmt.Sprintf("%s, detached; end it with '%s release %s'", held, shell.Invocation(), e.Service)
 	case e.PID != 0:
 		// The port alone is no help when the holder stopped listening without
 		// exiting, which is exactly when this shows up.

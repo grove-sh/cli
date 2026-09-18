@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+
+	"github.com/grove-sh/cli/internal/shell"
 )
 
 type Client struct {
@@ -25,7 +27,7 @@ type NotRunningError struct {
 }
 
 func (e *NotRunningError) Error() string {
-	return fmt.Sprintf("grove is not running at %s; start it with 'grove start'", e.Socket)
+	return fmt.Sprintf("grove is not running at %s; start it with '%s start'", e.Socket, shell.Invocation())
 }
 
 func (e *NotRunningError) Unwrap() error { return e.Err }
@@ -209,5 +211,9 @@ type VersionError struct {
 }
 
 func (e *VersionError) Error() string {
-	return fmt.Sprintf("the running daemon speaks control protocol v%d and this grove speaks v%d; restart it with 'grove restart', then 'grove hold' in each project, since a restart drops every detached port", e.Daemon, e.CLI)
+	// The message an upgrade produces, and so the one most likely to be read
+	// from inside a project that installed grove rather than from a shell that
+	// has it on PATH.
+	grove := shell.Invocation()
+	return fmt.Sprintf("the running daemon speaks control protocol v%d and this grove speaks v%d; restart it with '%s restart', then '%s hold' in each project, since a restart drops every detached port", e.Daemon, e.CLI, grove, grove)
 }

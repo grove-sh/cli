@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/grove-sh/cli/internal/lease"
+	"github.com/grove-sh/cli/internal/shell"
 )
 
 func registry(t *testing.T, opts lease.Options) *lease.Registry {
@@ -597,5 +598,15 @@ func TestResolveRefusesAnotherWorktreesSlug(t *testing.T) {
 	var collision *lease.CollisionError
 	if !errors.As(err, &collision) {
 		t.Fatalf("err = %v, want a CollisionError", err)
+	}
+}
+
+// The same for the one command lease names: a detached port is ended by hand,
+// and the reader has to be able to run what they are told to run.
+func TestBusyDetachedNamesHowGroveWasReached(t *testing.T) {
+	err := (&lease.BusyError{Slug: "app1", Service: "db", Port: 20100, Detached: true}).Error()
+
+	if !strings.Contains(err, "'"+shell.Invocation()+" release db'") {
+		t.Errorf("busy error does not name the caller's grove: %q", err)
 	}
 }
