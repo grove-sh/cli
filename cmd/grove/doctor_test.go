@@ -10,6 +10,7 @@ import (
 
 	"github.com/grove-sh/cli/internal/ca"
 	"github.com/grove-sh/cli/internal/config"
+	"github.com/grove-sh/cli/internal/daemon"
 	"github.com/grove-sh/cli/internal/identity"
 	"github.com/grove-sh/cli/internal/platform"
 )
@@ -368,4 +369,90 @@ func TestAConfigThatWillNotLoadFailsTheRun(t *testing.T) {
 	if f.detail == "" || !strings.Contains(f.advice, config.FileName) {
 		t.Errorf("finding does not say what is wrong or which file: %+v", f)
 	}
+}
+
+// The failure this exists for: two groves on one machine derive the context
+// differently, so the stack is leased and listening under a name this one no
+// longer uses, and every symptom reads as grove losing track of it.
+func TestContextMovedNamesTheSlugStillHoldingPorts(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	context := contextOf(t, repo)
+
+	f, worth := checkContextMoved(repo, []daemon.Live{
+		{Slug: context.Slug + "-main", Service: "db", Worktree: context.Root, Port: 20299},
+		{Slug: context.Slug + "-main", Service: "api", Worktree: context.Root, Port: 20103},
+	})
+	if !worth {
+		t.Fatal("a worktree leasing under another slug was not reported")
+	}
+	// Once, however many entries it holds: the slug is the finding.
+	if want := "holding ports as " + context.Slug + "-main, and resolving " + context.Slug + " now"; f.detail != want {
+		t.Errorf("detail = %q, want %q", f.detail, want)
+	}
+	if f.state != warn {
+		t.Errorf("state = %q, want a warning", f.state)
+	}
+}
+
+// Another worktree of the same repository is a different context on purpose,
+// and reporting one would fire on every machine running two branches at once.
+func TestContextMovedIgnoresOtherWorktrees(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	context := contextOf(t, repo)
+
+	_, worth := checkContextMoved(repo, []daemon.Live{
+		{Slug: context.Slug, Service: "db", Worktree: context.Root},
+		{Slug: "app1-feat1", Service: "db", Worktree: "/src/feat1"},
+		{Slug: "other-project", Service: "db", Worktree: "/src/other"},
+	})
+	if worth {
+		t.Error("leases belonging to other worktrees were reported")
+	}
+}
+
+func TestContextMovedIsQuietWithNothingToAsk(t *testing.T) {
+	repo := tempRepo(t, "app1")
+
+	// No daemon, so no leases: the daemon check reports that, not this one.
+	if _, worth := checkContextMoved(repo, nil); worth {
+		t.Error("a machine with no leases was reported on")
+	}
+
+	// A bare repository is no context at all, which is the one way resolving
+	// fails rather than falling back to the directory's name.
+	bare := filepath.Join(t.TempDir(), "app1.git")
+	if out, err := exec.Command("git", "init", "--bare", "-q", bare).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v\n%s", err, out)
+	}
+	if _, worth := checkContextMoved(bare, []daemon.Live{{Slug: "x", Worktree: bare}}); worth {
+		t.Error("a bare repository was reported on")
+	}
+}
+
+// Two builds need not spell one worktree the same way, since one may not have
+// resolved the symlinks the other did. Missing the match would lose the finding
+// silently, which is the failure this whole check exists to end.
+func TestContextMovedMatchesAWorktreeThroughASymlink(t *testing.T) {
+	repo := tempRepo(t, "app1")
+	context := contextOf(t, repo)
+
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(context.Root, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, worth := checkContextMoved(repo, []daemon.Live{
+		{Slug: context.Slug + "-main", Service: "db", Worktree: link},
+	}); !worth {
+		t.Error("a lease naming this worktree through a symlink was missed")
+	}
+}
+
+func contextOf(t *testing.T, dir string) identity.Context {
+	t.Helper()
+	context, err := identity.Resolve(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return context
 }

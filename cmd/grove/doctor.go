@@ -86,6 +86,16 @@ script; a warning does not.`,
 			if f, worth := checkMainWorktree(dir); worth {
 				findings = append(findings, f)
 			}
+			// Only where the daemon answered: the check above already reports
+			// one that is down, and a second dial to learn the same is a
+			// connection nobody reads the result of.
+			var leases []daemon.Live
+			if answered {
+				leases = allLeases(socket)
+			}
+			if f, worth := checkContextMoved(dir, leases); worth {
+				findings = append(findings, f)
+			}
 			// Read here rather than inside the check that wants it: a check
 			// loading its own config cannot tell a directory with no project
 			// from a project whose config will not parse, and goes quiet for
@@ -194,6 +204,79 @@ func checkMainWorktree(dir string) (finding, bool) {
 		f.advice = "Nothing serves the hostname with no suffix. Name the worktree that should with git config grove.mainWorktree, from: " + strings.Join(m.Candidates, ", ") + "."
 	}
 	return f, true
+}
+
+// A context is derived, not recorded, so a grove that derives it differently
+// renames this worktree without anything saying so: the ports move with the
+// slug, and the stack carries on listening on the old set under the old name.
+// The daemon is the one place both spellings exist at once, since the leases it
+// is holding carry the worktree they were taken for.
+func checkContextMoved(dir string, leases []daemon.Live) (finding, bool) {
+	context, err := identity.Resolve(dir)
+	if err != nil {
+		return finding{}, false
+	}
+
+	var under []string
+	for _, held := range leases {
+		if sameWorktree(held.Worktree, context.Root) && held.Slug != context.Slug && !slices.Contains(under, held.Slug) {
+			under = append(under, held.Slug)
+		}
+	}
+	if len(under) == 0 {
+		return finding{}, false
+	}
+	slices.Sort(under)
+
+	grove := invocation()
+	return finding{
+		name:   "Context",
+		state:  warn,
+		detail: "holding ports as " + strings.Join(under, ", ") + ", and resolving " + context.Slug + " now",
+		advice: "Ports are derived from the context, so those sets do not overlap and whatever is running is on the other one. Usually another grove on this machine derives the context differently: run " + grove + " doctor there, stop the stack, then " + grove + " hold here.",
+	}, true
+}
+
+// The two spellings come from two builds, which is the whole premise, so they
+// need not agree on how a path is written: one may not have resolved the
+// symlinks the other did, and macOS reaches every temporary directory through
+// one. A path that will not resolve is compared as it came.
+func sameWorktree(a, b string) bool {
+	if a == b {
+		return true
+	}
+	return resolvedPath(a) == resolvedPath(b)
+}
+
+func resolvedPath(path string) string {
+	if out, err := filepath.EvalSymlinks(path); err == nil {
+		return out
+	}
+	return path
+}
+
+// Every lease on the machine, since the question is which of them name this
+// worktree rather than which name this context.
+//
+// Whatever protocol the daemon speaks, because the daemon running is quite
+// likely the other build's: a check about two groves on one machine that goes
+// quiet as soon as they disagree on the wire is quiet exactly when it is
+// needed. Safe here for the reason ListAnyVersion asks its callers to have: an
+// older payload leaves what it does not carry zero, and an empty worktree
+// matches nothing, so a field that moved costs the finding rather than
+// inventing one.
+func allLeases(socket string) []daemon.Live {
+	client, err := daemon.Dial(socket)
+	if err != nil {
+		return nil
+	}
+	defer client.Close()
+
+	leases, err := client.ListAnyVersion()
+	if err != nil {
+		return nil
+	}
+	return leases
 }
 
 // No grove.toml is the ordinary case, doctor being mostly about the machine.
