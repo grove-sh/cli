@@ -47,7 +47,7 @@ Grove serves `127.0.0.4`, not `127.0.0.1`, so it runs beside whatever else wants
 
 Nothing to stop, nothing to hand back, no `poweroff` before you can use something else.
 
-The rest follows the same instinct. Grove prints the one privileged step your platform needs instead of running it. It registers nothing to start at boot. It derives its ports instead of storing them, and under CI it steps aside and runs your command untouched. `grove uninstall` returns everything it borrowed.
+The rest follows the same instinct. Grove prints the one privileged step your platform needs in full, and runs it only when you say so. It registers nothing to start at boot. It derives its ports instead of storing them, and under CI it steps aside and runs your command untouched. `grove uninstall` returns everything it borrowed.
 
 ## What it is not
 
@@ -67,7 +67,7 @@ Or, if you have Go: `go install github.com/grove-sh/cli/cmd/grove@latest`. Eithe
 grove install
 ```
 
-That generates a local certificate authority, adds it to your trust stores, and prints the one privileged step your platform needs. On Linux that is a sysctl lowering the port floor; on macOS it is a pf redirect and a loopback alias, since nothing there can bind 443 as you. Grove prints those commands rather than running them, because they change the machine rather than your project.
+That generates a local certificate authority, adds it to your trust stores, and shows the one privileged step your platform needs. On Linux that is a sysctl lowering the port floor; on macOS it is a pf redirect and a loopback alias, since nothing there can bind 443 as you. Those commands change the machine rather than your project, so grove prints them in full and asks before running them. `grove install --yes` answers in advance, and where there is no terminal to ask, the commands are printed and left to you.
 
 Nothing runs at boot. Grove is up while you are using it. Any `grove exec` starts a daemon when none is answering, and `grove start` does it on its own.
 
@@ -203,7 +203,7 @@ One daemon serves every context, so `grove stop` drops every context's leases an
 
 A route belongs to one command at a time, which is right for the thing that listens on the port and wrong for a test suite that only reads it. `grove exec --no-bind` reports the ports and takes no lease, so it runs alongside the dev server holding them and reports the port that dev server is on. Where nothing holds a port it reports the one a lease would get, and no hostname routes there.
 
-On macOS, `grove uninstall` asks for authorization before it will untrust the root, since removing a trust root is not something to do quietly. In a terminal with no way to show that prompt, over ssh for instance, it waits rather than failing.
+On macOS, `grove uninstall` asks for authorization before it will untrust the root, since removing a trust root is not something to do quietly. In a terminal with no way to show that prompt, over ssh for instance, it waits rather than failing. Uninstall also offers to take back what install changed for port 443, the sysctl on Linux and the pf redirect on macOS, the same way: printed in full, run on a yes or with `--yes`.
 
 ## How it decides things
 

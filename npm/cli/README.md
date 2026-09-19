@@ -24,7 +24,7 @@ grove install
 
 This package is a wrapper. It installs the binary for your platform and runs it.
 
-`grove install` is a separate step on purpose. It generates a certificate authority and adds it to your trust stores, and it prints the one privileged step your platform needs instead of running it. Neither belongs in an `npm install` that nobody is watching.
+`grove install` is a separate step on purpose. It generates a certificate authority and adds it to your trust stores, and it prints the one privileged step your platform needs, running it only when you say so. Neither belongs in an `npm install` that nobody is watching.
 
 ## It runs beside your other tools
 
