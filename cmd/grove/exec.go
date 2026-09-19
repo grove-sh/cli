@@ -369,7 +369,7 @@ func reportShadowed(out io.Writer, names []string) {
 }
 
 func runChild(args []string, env []string) error {
-	// The same terminal, so the child still detects a tty and keeps its colours.
+	// The same terminal, so the child still detects a tty and keeps its colors.
 	child := exec.Command(args[0], args[1:]...)
 	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
 	child.Env = env

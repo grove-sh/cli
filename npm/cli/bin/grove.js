@@ -65,7 +65,7 @@ function locate() {
 
 const binary = locate();
 
-// Inherited stdio, so grove sees the real terminal: it colours only for one,
+// Inherited stdio, so grove sees the real terminal: it colors only for one,
 // and `grove exec` hands the terminal to the command it runs.
 const child = spawn(binary, process.argv.slice(2), { stdio: "inherit" });
 
