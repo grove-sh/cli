@@ -1,0 +1,29 @@
+---
+title: Reading the ports without taking them
+description: A test suite or a script only wants to know where the dev server is. --no-bind and grove env report the ports without leasing them.
+---
+
+A route belongs to one command at a time. Start `grove exec -- pnpm dev` in a worktree, then try it again in a second terminal, and the second one is refused: the route is already running. That's the right answer for a second dev server, which would have nothing to bind. It's the wrong answer for a test suite, a smoke check, or a script that only wants to know where the dev server is.
+
+Those get `--no-bind`:
+
+```sh
+grove exec --no-bind -- pnpm playwright test
+```
+
+It takes no lease, so it runs alongside the command holding the route, and it reports the port that command is actually on. Where nothing holds a port, it reports the one a lease would get, so your script still has a number to work with, but no hostname routes there until something takes the lease for real.
+
+## Without a command
+
+`grove env` is the same idea without a command. It prints the environment grove would hand you, from the leases that exist right now, and names on stderr any variable it had to leave out because nobody holds that port yet.
+
+```sh
+eval "$(grove env)"
+grove env --format json
+```
+
+The shell form is quoted for `eval`. The JSON form is for tools, and it's the stable contract: `grove context --json` is the same for the context itself.
+
+## The other direction
+
+`grove hold` is what brings a port into being without running anything: it takes every detached entry the project declares, so a script that needs those numbers to be real rather than predicted can run it first. Attached entries have no equivalent, since a port for a command that isn't running means nothing.

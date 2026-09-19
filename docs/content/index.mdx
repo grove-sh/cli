@@ -1,10 +1,45 @@
 ---
 title: Introduction
-description: Welcome to your new Blume docs.
+description: Grove gives every git worktree its own HTTPS hostname, its own leased ports, and its own environment, so several checkouts of a repository run at once without colliding.
+sidebar:
+  icon: home
 ---
 
-# Introduction
+You probably have a feature you're working on, a PR you promised to review, and an agent or two grinding away on branches of their own, sometimes in a different repo. Nothing stops you running all of that at once. Nothing coordinates it either. You pick ports by hand, you edit `.env` in each checkout, and you swear you'll put it all back afterwards. So mostly you stop one thing to look at another.
 
-Welcome to **Blume** — markdown-first docs powered by Astro and Vite.
+Grove uses worktrees to keep contexts separate. Every worktree of every repo on your machine is a context, and each one gets its own hostname, its own ports, and its own env vars. One daemon serves them all, so run as many worktrees on as many projects as you like and they won't collide:
 
-Edit `content/index.mdx` to get started, then run `blume dev`.
+```
+~/code/app            https://app.grov.site        web on 20107   postgres on 20402
+~/worktrees/app/feat  https://app-feat.grov.site   web on 20871   postgres on 20533
+~/code/shop           https://shop.grov.site       web on 20334   postgres on 20118
+```
+
+No port in the URL, a certificate your browser actually trusts, and one command to run anything inside that context:
+
+```sh
+grove exec -- pnpm dev
+```
+
+There's nothing to configure per worktree. Ports come from a hash of the worktree and the thing being served, so a fresh checkout is addressable the moment it exists and leaves nothing behind when you delete it. And since the worktree's name is a value you can template, `{context.slug}` in a database URL points each one at its own database on the postgres you're already running.
+
+## Where to start
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" href="/quickstart" icon="rocket">
+    Four commands from nothing to a hostname that opens.
+  </Card>
+  <Card title="Why not lando or ddev?" href="/comparison" icon="scale">
+    What grove keeps from them, what it drops, and what it asks of your project.
+  </Card>
+  <Card title="Setting up a machine" href="/guides/machine" icon="monitor">
+    The certificate authority, the trust stores, and the one privileged step.
+  </Card>
+  <Card title="Setting up a project" href="/guides/project" icon="folder">
+    What `grove init` writes, and how to read `grove.toml`.
+  </Card>
+</CardGroup>
+
+## How it works, in one paragraph
+
+A context is a worktree, named from its directory. The daemon terminates TLS for `*.grov.site`, which is real wildcard DNS pointing at loopback, and proxies each context's hostname to a port it leased for that context. Ports are derived from a hash rather than stored, and a lease lasts exactly as long as the command holding it, so there's no state to clean up when a worktree goes away. The [Concepts](/concepts/contexts) section says how each of those decisions is made and why.

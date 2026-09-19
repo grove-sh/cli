@@ -1,0 +1,23 @@
+---
+title: grove release
+description: Release this context's detached ports, all of them or by name.
+---
+
+```sh
+grove release [name...]
+```
+
+A detached port outlives the command that asked for it, because a container stack holds it rather than a child of grove. Releasing one hands the number back and drops its hostname. Attached ports are untouched: they belong to a running command and end with it.
+
+With no names, every detached port this context holds is released.
+
+```sh
+grove release
+grove release studio db
+```
+
+## Flags
+
+| Flag | Meaning |
+|------|---------|
+| `--socket` | The control socket to reach the daemon on. |

@@ -1,0 +1,61 @@
+/* Palette shared with grov.site (grove-web/src/styles/global.css). Accent and
+   page background are set in blume.config.ts; the rest of the tokens live
+   here. */
+
+:root {
+  --blume-foreground: #14170f;
+  --blume-muted: #f0ece3;
+  --blume-muted-foreground: #5a6357;
+  --blume-border: #e1ddd2;
+  --blume-code-background: #f4f1e9;
+}
+
+:root[data-theme="dark"] {
+  --blume-foreground: #f0ece3;
+  /* Blume paints accent text white in dark mode, and white on fern is 1.9:1.
+     Spruce on fern is 10:1. */
+  --blume-accent-foreground: #14170f;
+  --blume-muted: #1d211a;
+  --blume-muted-foreground: #8fa394;
+  --blume-border: #2b2b2b;
+  --blume-code-background: #0f110c;
+}
+
+/* The wordmark above the introduction's title, from components/PageHeader.astro,
+   one file per colour mode. Blume's toggle sets data-theme rather than the OS
+   preference, so a <picture> media query would not follow it. */
+.grove-banner {
+  display: block;
+  width: min(300px, 100%);
+  margin: 1rem auto 2.5rem;
+}
+
+.grove-banner-dark,
+:root[data-theme="dark"] .grove-banner-light {
+  display: none;
+}
+
+:root[data-theme="dark"] .grove-banner-dark {
+  display: block;
+}
+
+/* The wordmark already says the page's name, so the h1 under it is kept only
+   for screen readers, the outline, and the Markdown copy, and taken out of the
+   layout. The slot renders directly before the article, hence the sibling. */
+.grove-banner-wrap + article > h1 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The header wordmark shares a baseline with the nav tabs, but its letters are
+   taller than the tabs' 14px Inter, so its body sits about a pixel above
+   theirs. Nudged down to centre the two bodies rather than the boxes. */
+header > a:first-of-type img {
+  transform: translateY(1px);
+}

@@ -1,0 +1,32 @@
+---
+title: Ports and leases
+description: Ports are derived from a hash rather than stored, and a lease lasts exactly as long as the connection that asked for it, so there is no state to clean up.
+---
+
+## Ports are derived, not stored
+
+A port comes from a hash of the context and the entry's name, landing inside 20000 to 20999. That's below Linux's ephemeral range, so nothing else on the machine picks one of them by accident. Ports are stable without being stored: a fresh checkout is addressable the moment it exists, and deleting it leaves nothing behind.
+
+When two entries collide on one port, grove walks to the next free one. Only a walked **detached** port is written down, in `ports.json` beside the CA. Without that record, colliding entries would re-resolve in whatever order they ask after a restart, and an entry could be handed the port another worktree's stack is still listening on. A database URL pointing at someone else's data is why the file exists. An attached port doesn't need it, since its command is gone when the daemon is.
+
+## Lease lifetime is the point
+
+Leases live in the daemon's memory. An attached lease lasts exactly as long as the `grove exec` connection that asked for it: the daemon holds that connection open, so the kernel reports the client exiting, crashing, or being killed, and the lease ends with it. There's nothing to time out and nothing to garbage collect.
+
+A detached lease outlives its command, because something like `supabase start` returns in seconds and holds its ports for hours. `grove hold` re-asserts a context's detached entries by reading the project again, which is what makes it safe for a worktree this process was never in. `grove release` ends them.
+
+Either way, stop the daemon and every lease is gone. That's why `grove stop` refuses while anything is answering on a port grove leased, and why `--force` exists.
+
+## Across a restart
+
+`grove restart` covers for the daemon forgetting. Before it stops anything, it notes which worktrees hold detached leases. Once the new daemon is up, it runs the equivalent of `grove hold` in each of them. The ports come out the same as before, because they're derived from the context, so a running stack never notices.
+
+Attached leases aren't restored. The dev server holding one keeps running on its port, but its hostname routes nowhere until you start it again under `grove exec`. Restart tells you which routes that cost.
+
+## One route, one command
+
+A route belongs to one command at a time, and a second `grove exec` on a bound route is refused. A command that only reads the ports runs with [`--no-bind`](/guides/no-bind), which takes no lease.
+
+## What ls reads
+
+`grove ls` shows `idle` for an entry nothing holds, `claimed` for a port grove handed out that nothing answers on, and `running` once something does. The answering check is a real connection to the port, so `claimed` is what a stopped stack looks like and `running` is something really there.

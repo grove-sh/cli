@@ -1,0 +1,59 @@
+---
+title: Quickstart
+description: Install grove, set up the machine once, write a grove.toml, and run your dev server on a hostname of its own.
+sidebar:
+  icon: rocket
+---
+
+<Steps>
+  <Step title="Install the binary">
+    ```sh
+    npm install -g @grove-sh/cli
+    ```
+
+    Or, with Go handy, `go install github.com/grove-sh/cli/cmd/grove@latest`. The npm package is a shim that picks the binary for your platform, so either way you end up with one static executable and no runtime.
+  </Step>
+  <Step title="Set up the machine, once">
+    ```sh
+    grove install
+    ```
+
+    This generates a local certificate authority, adds it to your trust stores, and prints the one privileged step your platform needs to reach port 443. It runs that step when you say yes, or straight away with `--yes`. [Setting up a machine](/guides/machine) says what the step is on Linux and on macOS.
+  </Step>
+  <Step title="Check it">
+    ```sh
+    grove doctor
+    ```
+
+    Doctor is the first thing to run after install, before anything has had a chance to go wrong. A healthy machine reads `running`, `installed and trusted`, and a runtime bundle that carries grove's root. Anything else names the fix.
+  </Step>
+  <Step title="Set up the project, once">
+    ```sh
+    grove init
+    ```
+
+    This writes a `grove.toml` at the root of the worktree from what it finds: a route per app, and the ports a supabase stack would publish. Read it before you trust it. Grove is guessing which variable each app reads its URL from, and it's guessing from your dependencies.
+  </Step>
+  <Step title="Run something in the context">
+    ```sh
+    grove exec -- pnpm dev
+    ```
+
+    Grove leases a port for the route this directory belongs to, sets `PORT` and whatever else the config names, and routes `https://<context>.grov.site` to it for as long as the command runs. `grove ls` shows what's live.
+  </Step>
+</Steps>
+
+:::warning[Your dev server has to bind the port it's given]
+Grove proxies the hostname to the port it leased. A server that picks its own port is a server grove can't reach, and it shows up as a 503 from something that looks like it's running fine. Next.js reads `PORT` on its own; Vite has to be told. See [Your dev server has to bind the port](/guides/dev-server).
+:::
+
+## Then
+
+<CardGroup cols={2}>
+  <Card title="Ports for things grove doesn't start" href="/guides/detached-ports" icon="database">
+    Supabase, docker compose, and anything else that returns in seconds and holds ports for hours.
+  </Card>
+  <Card title="Teammates and CI" href="/guides/ci" icon="users">
+    Adopting grove isn't a team decision. Here's why.
+  </Card>
+</CardGroup>

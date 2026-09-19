@@ -1,0 +1,35 @@
+---
+title: HTTPS and DNS
+description: A local root, a wildcard leaf, real DNS pointing at loopback, and why grove serves 127.0.0.4 rather than 127.0.0.1.
+---
+
+## The certificate authority
+
+`grove install` generates a root in your state directory and installs it into the system trust stores, which is the step that may ask for your password. The daemon issues a wildcard leaf for `*.grov.site` from that root, so every context's hostname is covered by one certificate and a new worktree needs nothing issued.
+
+Runtimes that ignore the OS store get told separately. `grove exec` sets `NODE_EXTRA_CA_CERTS` to the root, and `REQUESTS_CA_BUNDLE` and `DENO_CERT` to a bundle carrying it, since those two replace a trust store rather than adding to it and so need the whole thing. Where the system's own bundle was updated by the install, that's the one used; otherwise grove's. `grove doctor` reports which, and `GROVE_SYSTEM_BUNDLE` names one by hand.
+
+## The DNS
+
+`*.grov.site` is real wildcard DNS pointing at `127.0.0.4`, so there are no hosts-file entries to manage and a hostname exists the moment a context does. Secure cookies and OAuth redirects behave like production, because the origin is a real name over real TLS. Two branches are two origins, so they never share a session, where `localhost:3000` and `localhost:3001` do.
+
+Some resolvers strip answers that point into loopback as a rebinding defence. Pi-hole, NextDNS, dnsmasq with `stop-dns-rebind`, and several routers do this. Doctor's DNS check names it, and the fix is to allowlist the domain.
+
+The domain isn't a config key. It's a constant, and it's one decision with the address grove serves: a hostname resolving somewhere grove doesn't serve reaches nothing, which is what doctor's DNS check reports when they disagree.
+
+## Why 127.0.0.4
+
+Grove serves `127.0.0.4`, not `127.0.0.1`. That's the whole reason it runs beside lando: nothing contends for `127.0.0.1:443`, so neither has to be stopped for the other, and there's no port to hand back.
+
+```
+127.0.0.1:80    docker-proxy   <- lando
+127.0.0.1:443   docker-proxy   <- lando
+127.0.0.4:80    grove
+127.0.0.4:443   grove
+```
+
+The other side of the proxy is ordinary loopback: your dev servers listen on `127.0.0.1` and grove connects to them there.
+
+## Port 80
+
+The daemon answers plain HTTP on port 80 too, redirecting every request to its https counterpart, so a hostname typed without a scheme still lands somewhere. Doctor's HTTP redirect check covers it.

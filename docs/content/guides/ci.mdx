@@ -1,0 +1,32 @@
+---
+title: Teammates and CI
+description: Under CI grove runs your command untouched, and --if-available asks for the same anywhere, so a script that uses grove works for people and machines that never installed it.
+---
+
+Adopting grove isn't a team decision, because a script that runs through it keeps working for anyone who doesn't have it.
+
+## Under CI
+
+With `CI` set in the environment and no daemon to talk to, `grove exec` runs the command with its environment untouched instead of failing. A build service is the authority on its own environment and grove is not running there. `CI` empty, `0`, or `false` counts as unset; anything else counts as CI, which is how the build services set it.
+
+This only decides what happens when no daemon answered. A daemon deliberately running in CI is used like any other.
+
+## For a teammate who never ran grove install
+
+`--if-available` asks for the same tolerance anywhere:
+
+```json package.json
+{
+  "scripts": {
+    "dev": "grove exec --if-available -- next dev"
+  }
+}
+```
+
+A teammate who never ran `grove install` runs `pnpm dev` and gets `next dev` on whatever port it picks, as before. Someone who did gets a hostname. The script is the same, and there's no branch in it.
+
+The binary still has to be there to step aside, which is what the npm package is for: list `@grove-sh/cli` as a dev dependency and `grove` resolves from `node_modules/.bin` for everyone. When grove has to name a command in an error, it names the one you can run, so inside a package that's `pnpm grove doctor` rather than `grove doctor`.
+
+## Two versions of grove in one project
+
+A workspace can resolve a different copy of grove per package, and the one that decides is under the package whose script starts the stack, not the one you type. Two versions can derive a worktree's context differently, and since ports come from the context, a worktree that changes name changes every port with it. `grove doctor` reports what the project installs, and [Troubleshooting](/guides/troubleshooting#when-two-groves-disagree-about-this-worktree) says what that looks like.

@@ -1,0 +1,62 @@
+---
+title: Setting up a project
+description: What grove init writes, how to read grove.toml, and where a variable has to sit to be set when you need it.
+---
+
+```sh
+grove init
+```
+
+This writes a `grove.toml` from what it finds: a route per app, and the ports a supabase stack would publish. Read it before you trust it. Grove is guessing which variable each app reads its URL from, and it's guessing from your dependencies.
+
+```toml grove.toml
+# Loaded first, so anything below can override a line in it
+env_files = [".env"]
+
+[env]
+POSTGRES_URL = "postgres://postgres@localhost:5432/{context.slug}"
+NEXT_PUBLIC_SITE_URL = "{web.url}"
+NEXT_PUBLIC_API_URL = "{api.url}"
+
+# https://<context>.grov.site
+[routes.web]
+dir = "apps/web"
+label = ""
+env.PORT = "{port}"
+
+# https://<context>-api.grov.site
+[routes.api]
+dir = "apps/api"
+env.PORT = "{port}"
+```
+
+## Routes and labels
+
+Each route gets a hostname under the context. A route's label is its own name unless you say otherwise, so `api` answers on `<context>-api.grov.site`, and an empty label puts the route on the bare context name. Only one route can claim a label, and grove refuses the file when two do.
+
+A route's `dir` scopes it to part of the tree, so a command run inside `apps/web` binds `web` with no flag. The deepest matching dir wins, which is what lets a nested app beat its parent. A route with no `dir` claims the whole project, and two of those is an error, since picking one would be at random. `grove exec -s api` names one outright, from anywhere in the project.
+
+## Templates
+
+`{port}` and `{url}` are this entry's own, so they only mean anything on an entry. `{api.url}` names another entry, whichever section it lives in, and `{context.slug}` is the worktree's name, which is how one shared database server gives every worktree its own database. Every template is checked when the file is read, so a typo fails at load rather than at use. The [templates reference](/reference/templates) has every token.
+
+## Where a variable sits decides when it's set
+
+`[env]` is set for every command in the project. An env block on a route is only set while that route is bound, which is why a URL belongs in `[env]` even though it describes the route: a build needs it, and a build binds nothing.
+
+An env block on a **detached** entry is always set, exactly like `[env]`, so it reads as scoped while behaving as global. Put it in `[env]`, where the section already says so.
+
+## Running commands through it
+
+```sh
+grove exec -- pnpm dev
+grove exec -- psql "$POSTGRES_URL"
+```
+
+Grove loads your `env_files` too, so it replaces `dotenv-cli` rather than sitting beside it. Values from those files yield to your shell. Grove's own resolved values win over both, because a route pointing at a port it didn't lease would be a lie.
+
+Want to bend one of those values for an afternoon? Put it in `.env.local` beside your `grove.toml`. That file is the top of the chain and yields to nothing, not even a variable you exported, and grove tells you on stderr whatever it took over. `GROVE_CONTEXT`, `GROVE_PORT`, `GROVE_HOST` and `GROVE_URL` are grove's own, so setting one there is an error rather than a lie about a lease. If your `env_files` already lists `.env.local`, it stays where you put it and grove leaves it in that lower tier. [Environment layering](/concepts/environment) has the whole order.
+
+## A file for this machine only
+
+`grove.local.toml` beside `grove.toml` is read too, and it's meant to stay out of git. An entry it names that the committed file also names merges field by field, so overriding one variable doesn't cost the entry everything else it said. A name the committed file has never heard of is a whole new entry, which is how one machine adds the one service only it runs. `env_files` and `aliases` are the exceptions and replace the list, since the reason to name them locally is to load a different file or drop an alias, not to add one.

@@ -1,0 +1,24 @@
+---
+title: grove install
+description: Generate grove's certificate authority, trust it on this machine, and take the privileged step that reaches port 443.
+---
+
+```sh
+grove install [--yes] [--trust=false] [--state-dir <dir>]
+```
+
+Generate grove's certificate authority and trust it on this machine.
+
+Installing into the system trust store needs elevated privileges, so this may ask for your password. Everything else is written under your own state directory. Re-running is safe: an existing CA is reused, and an already trusted root is left alone.
+
+Reaching port 443 is a machine-wide change, a sysctl on Linux and a pf redirect on macOS, so it is printed in full and run only when you say so: at the prompt, or in advance with `--yes`. Where there is no terminal to ask, the steps are printed and left to you. [Linux and macOS](/concepts/platforms) has each platform's step.
+
+Nothing here starts a daemon or arranges for one to start later. Grove runs while you are using it: any `grove exec` starts one, and `grove start` does it on its own.
+
+## Flags
+
+| Flag | Meaning |
+|------|---------|
+| `-y`, `--yes` | Run the privileged step without asking. |
+| `--trust` | Install the root into the system trust stores. On by default; `--trust=false` generates the CA and skips the trust stores, and the port step still happens. |
+| `--state-dir` | The directory holding the CA and bundle. |

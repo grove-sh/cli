@@ -1,0 +1,35 @@
+---
+title: Contexts and naming
+description: A context is a worktree. Here is how grove names it, what a linked worktree adds, and how a bare repository picks the worktree that is the project.
+---
+
+A context is a worktree. Its name comes from the directory, or from `name` in `grove.toml`, and `GROVE_CONTEXT_OVERRIDE` replaces it outright. The name is a DNS label, so it's lowercased and hyphenated on the way in and capped at 63 bytes, which is also the cap on a postgres identifier, so one limit covers both uses.
+
+```sh
+grove context
+grove context --json
+```
+
+The JSON form is the stable contract for other tools. It carries the project, the variant, the slug they compose into, and `is_main`, which marks the context that is the project itself.
+
+## Project and variant
+
+A linked worktree appends its directory to the project name and the main clone doesn't, which is what keeps `app` and `app-feat` apart. The two halves are `{context.project}` and `{context.variant}` in a template, and `{context.slug}` is the two joined. A worktree called `v1.2` is a real one whose variant is `v1-2`.
+
+## Bare repositories
+
+A bare repository has no main clone to be the project itself, so the worktree on the default branch is, and the others keep their suffix. Grove reads `origin/HEAD` for that, falling back to the repository's own `HEAD`, and `grove doctor` tells you which one it went by. Both are guesses, and the branch a repository defaults to is often not the one you work in, so name the worktree that is the project:
+
+```sh
+git config grove.mainWorktree dev
+```
+
+That lives in the repository's config, which every worktree reads and no branch carries, so there's one answer and two worktrees can't both claim it. A repository with a main clone ignores it, since the main clone is always the context that is the project. Both layouts in the wild are handled: `app.git` beside the worktrees, and `app/.bare` inside a directory of them.
+
+## Why the override is a separate variable
+
+`GROVE_CONTEXT` is exported into every command grove runs, so a child process can read which context it's in. The override is `GROVE_CONTEXT_OVERRIDE`, not the same name, because an override sharing it would follow a process tree into other worktrees and quietly answer for them.
+
+## Paths come from git
+
+Both the worktree's path and the directory grove is standing in come from git rather than the shell, so they stay comparable. On macOS every temp directory reaches through a symlink (`/var` resolves to `/private/var`), and mixing a resolved path with an unresolved one would make a worktree fail to match itself.

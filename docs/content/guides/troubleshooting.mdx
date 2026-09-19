@@ -1,0 +1,77 @@
+---
+title: Troubleshooting
+description: What grove ls, the 503 pages, and grove doctor are telling you when a hostname does not answer.
+---
+
+## What ls is telling you
+
+`grove ls` shows what this context has and what's holding it:
+
+```
+ROUTE  URL                    PORT   STATE
+web    https://app.grov.site  20107  running
+db     -                      20402  claimed
+```
+
+On a terminal, grove colors each URL by how much to believe it. Green opens. Yellow would open if something were listening. Red won't open until grove is finished being set up, and the line under the table says what's missing. Nothing is said in colour alone, so the same is true of the words when the output is piped.
+
+`idle` means nothing holds it. `claimed` means grove handed the port out and nothing answers on it, which is what a stopped stack looks like. `running` means something is really there.
+
+A route that nothing is serving still has a URL, since every hostname comes from the config rather than from a lease. It has no port, because a port exists only while something holds one. A bare `[ports.x]` entry appears once grove has handed it out and not before, since the number only means something when something holds it.
+
+## The two 503s
+
+A 503 tells you which half is wrong.
+
+**"No grove context is bound to this hostname"** means there's no lease, usually because the command that held it exited. Start it again under `grove exec`, or `grove hold` if it's a detached entry after a daemon restart.
+
+**"Nothing is listening on the port grove leased"** means the lease is fine and your server is somewhere else, which is nearly always [the port question](/guides/dev-server).
+
+## Ask doctor
+
+```sh
+grove doctor
+```
+
+Each check reports on its own, and a failure names the fix. A failure exits non-zero so doctor can gate a script; a warning does not. The checks, in the order they're printed. The three that only speak up when something is wrong stay out of a healthy report, and the project checks only appear inside a project.
+
+| Check | What it looks at |
+|-------|------------------|
+| Grove | Whether a daemon is answering, and whether it's the build you have installed. |
+| Authority | Whether the CA exists and the system trusts it. |
+| Runtime bundle | Which bundle runtimes that ignore the OS store are pointed at, and whether it carries grove's root. |
+| DNS | Whether `*.grov.site` resolves here, and to loopback. Quiet when it does. |
+| Port 443 | Whether 443 reaches grove, and who holds it if not. Quiet when it does. |
+| HTTP redirect | Whether port 80 redirects to https. Quiet when it does. |
+| Main worktree | Which worktree of a bare repository is the project itself, and what decided it. |
+| Context | Whether this worktree is holding ports under one name while resolving another. |
+| Project grove | Which grove the project installs, and whether packages disagree. |
+| Project | Whether `grove.toml` and `grove.local.toml` parse. Nothing in this directory runs until they do. |
+| Env override | Whether `.env.local` is tracked by git. That file overrides for everyone, and a shared one hides the values grove leased. |
+
+`Version` and `Platform` close the report. They aren't checks, but they're the two things every bug report needs.
+
+## After a crash or a reboot
+
+Leases live in the daemon's memory, so a daemon that stopped without `grove restart` forgot every one. `grove hold` in a worktree re-registers its detached entries, and the ports come out the same as before because they're derived from the context, so a stack that's still running gets its hostname back. Attached entries have to be run again under `grove exec`.
+
+On macOS a reboot also removes the loopback alias and the pf rules, which is why install stages a launchd job to put both back. If hostnames stopped resolving after a reboot, `grove doctor` says whether that job did its work.
+
+## When two groves disagree about this worktree
+
+A context is derived from the worktree rather than written down, so two versions of grove can decide differently about the same directory. Ports come from the context, so a worktree that changes name changes every port with it, and a stack that's still running carries on listening on the old ones. Your stack is plainly up, `grove ls` shows ports nothing answers on, and nothing about that looks like a version problem.
+
+`grove doctor` names both halves of it.
+
+```
+Project grove   0.4.3 in packages/db; 0.4.5 in this project
+Context         holding ports as app-main, and resolving app now
+```
+
+`Project grove` reads what the project installs. A workspace can resolve a different copy per package, and the one that decides is under the package whose script starts the stack, not the one you type. Two versions there is worth fixing whatever else is true. One version that merely isn't the one you're running is reported without a warning, since it only matters where the two derive a context differently.
+
+`Context` is the disagreement itself, read from the daemon: a worktree holding ports under one name while resolving another. That's the version split having already happened. Fix the versions, stop the stack, then `grove hold` here.
+
+## The daemon is serving an old build
+
+A running daemon keeps serving the build it started as, and it only complains about a mismatch when the wire protocol changed. After upgrading grove, `grove restart`. Detached ports are taken again on the far side; a lease held by a running command is not, so that command has to be run again, and restart tells you which routes that cost.

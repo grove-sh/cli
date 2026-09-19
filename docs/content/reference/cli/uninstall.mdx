@@ -1,0 +1,26 @@
+---
+title: grove uninstall
+description: Stop grove, remove its root from the trust stores, and offer to undo the privileged step.
+---
+
+```sh
+grove uninstall [--yes] [--force] [--trust=false]
+```
+
+Remove grove's root from this machine's trust stores.
+
+The CA files stay on disk, so a later `grove install` trusts the same root rather than generating another one. Certificates already issued keep working for anything that still trusts the root.
+
+Where a platform needed a privileged step to reach port 443, this prints the step that undoes it and offers to run it, the same way install did the one that set it up. `--yes` answers in advance. On macOS, removing a trust root asks for authorization, since that isn't something to do quietly.
+
+Grove is stopped too, since a root the machine no longer trusts leaves nothing worth serving. Every lease on the machine goes with it, so this refuses while anything is answering on a port grove leased.
+
+## Flags
+
+| Flag | Meaning |
+|------|---------|
+| `-y`, `--yes` | Run the privileged step without asking. |
+| `--force` | Untrust even while a running command is served over https. |
+| `--trust` | Remove the root from the system trust stores. On by default. |
+| `--state-dir` | The directory holding the CA. |
+| `--socket` | The control socket to reach the daemon on. |

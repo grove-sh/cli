@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <defs>
+    <path id="body" d="M60 6C96 34 104 70 60 114C16 70 24 34 60 6Z"/>
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="120" height="120">
+      <use href="#body" fill="#FFF"/>
+      <g fill="none" stroke="#000" stroke-width="5" stroke-linecap="round">
+        <path d="M60 102V24"/>
+        <path d="M60 92L42 74"/>
+        <path d="M60 78L80 58"/>
+        <path d="M60 62L42 44"/>
+        <path d="M60 48L74 34"/>
+      </g>
+      <g fill="#000">
+        <circle cx="42" cy="74" r="6"/>
+        <circle cx="80" cy="58" r="6"/>
+        <circle cx="42" cy="44" r="6"/>
+        <circle cx="74" cy="34" r="6"/>
+        <circle cx="60" cy="22" r="6"/>
+      </g>
+    </mask>
+  </defs>
+  <rect width="120" height="120" rx="26" fill="#14170F"/>
+  <g transform="translate(6.65 6.67) scale(0.88889)">
+    <use href="#body" fill="#7FC96B" mask="url(#cut)"/>
+  </g>
+</svg>

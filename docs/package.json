@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "blume dev",
     "build": "blume build",
+    "preview": "blume preview",
+    "validate": "blume validate --strict",
     "doctor": "blume doctor"
   },
   "dependencies": {

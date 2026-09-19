@@ -1,0 +1,52 @@
+---
+title: Why not lando or ddev?
+description: What grove keeps from lando and ddev, where it disagrees with them, and what it asks of a project in return.
+sidebar:
+  label: Why not lando or ddev
+  icon: scale
+---
+
+You could describe grove as "lando, but bring your own services". That's close, but it undersells the part that matters.
+
+lando and ddev get a lot right. You get a real hostname like `app.lndo.site` or `app.ddev.site`, https with a certificate your browser trusts, and a stack that comes up with one command. Grove keeps all of that.
+
+What they assume, along with docker compose, is that the project is the unit. One checkout, one hostname, one set of ports. Clone the same project a second time and it collides with the first until you rename it and hand-edit the config. Their answer is to wrap everything in containers, which does isolate your services. Unfortunately it isolates your tooling right along with them, and you're still stuck at one checkout per project.
+
+Grove takes a different approach.
+
+**A context is a worktree.** Hostnames, ports, and env vars are derived from the worktree, not written down. A fresh checkout serves on its own name with no setup, and five checkouts are no harder than one. That holds across repos too, so nothing defaults to 3000 twice. Run several agents at once and each has its own stack to check its work against.
+
+**Bring your own services and namespace them.** Grove doesn't run postgres or redis. It addresses the ones you already run and gives each worktree its own slice. `{context.slug}` in a connection string is a database per worktree on one server. The service is shared; the data isn't.
+
+**Your tooling stays on your host.** `pnpm dev` runs as you, with your node and your files. Hot reload watches the real filesystem, your debugger attaches, and the paths in your editor are the paths the process sees. No VM to feed, no bind mount to wait on.
+
+**Real hostnames, real HTTPS.** A wildcard certificate from a root your machine trusts, and real DNS under `grov.site`. No hosts file, no port in the URL, and secure cookies and OAuth redirects behave like production. Two branches are two origins, so they never share a session. `localhost:3000` and `localhost:3001` do, because cookies don't care about ports.
+
+**Adopting it isn't a team decision.** Under CI grove steps aside and runs your command untouched, and `--if-available` asks for the same anywhere. A teammate who never ran `grove install` runs the same scripts. Your lando project keeps working too.
+
+|                             | lando, ddev            | docker compose | grove               |
+|-----------------------------|------------------------|----------------|---------------------|
+| The unit                    | project                | project        | worktree            |
+| Runs your services          | yes                    | yes            | no, addresses yours |
+| Where your tooling runs     | container              | container      | your host           |
+| Several checkouts at once   | rename and reconfigure | juggle ports   | nothing to do       |
+| Needed in CI                | yes                    | yes            | no                  |
+
+## What grove asks of your project
+
+Your services have to be namespaceable. A database per worktree works because postgres has databases. A single-tenant listener like the Stripe webhook forwarder doesn't multiply, however nicely you ask. Each worktree's database also needs its own migrations and seed, which is a chore grove creates and does nothing about.
+
+Last, your dev server has to bind the port it's handed. Next.js reads `PORT` on its own, Vite has to be told, and a server that picks its own port is one grove can't reach. That catches nearly everyone, so it has [a page of its own](/guides/dev-server).
+
+## Running beside lando
+
+Grove serves `127.0.0.4`, not `127.0.0.1`, so nothing contends for `127.0.0.1:443` and neither has to be stopped for the other:
+
+```
+127.0.0.1:80    docker-proxy   <- lando
+127.0.0.1:443   docker-proxy   <- lando
+127.0.0.4:80    grove
+127.0.0.4:443   grove
+```
+
+The wildcard DNS points at that address, so you never see it in a URL. Nothing to stop, nothing to hand back, no `poweroff` before you can use something else.

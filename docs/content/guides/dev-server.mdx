@@ -1,0 +1,31 @@
+---
+title: Your dev server has to bind the port it's given
+description: Grove proxies a hostname to the port it leased. A server that picks its own port is one grove cannot reach, and it looks like a 503 from something that is running fine.
+sidebar:
+  label: Binding the port
+---
+
+Grove leases a port and proxies the hostname to it. So you run `grove exec -- pnpm dev`, the server announces itself on a port of its own choosing, and you get a 503 from something that looks like it's running fine. A server that picks its own port is a server grove can't reach.
+
+Next.js reads `PORT` on its own. Vite doesn't, and its preview server is configured separately from its dev server:
+
+```ts vite.config.ts
+const port = Number(process.env.PORT) || undefined;
+const site = process.env.VITE_SITE_URL;
+const allowedHosts = site ? [new URL(site).hostname] : undefined;
+
+export default defineConfig({
+  server: { port, allowedHosts },
+  preview: { port, allowedHosts },
+});
+```
+
+`allowedHosts` matters as much as the port. Dev servers reject requests carrying a `Host` they don't recognise, and grove's whole point is a hostname they've never seen.
+
+## How to tell
+
+`grove ls` reads `claimed` for a route grove handed a port to that nothing answers on, and the 503 page says "Nothing is listening on the port grove leased." Both mean the lease is fine and your server is somewhere else. [Troubleshooting](/guides/troubleshooting) has the other states and what each one means.
+
+## Servers that pick a port when theirs is taken
+
+Some dev servers notice a busy port and move to the next one with a note in the log. Under grove that note is the whole problem: the port grove leased is free, by construction, so a server that moved was told the wrong port or never read it. Check the variable the server reads against the one the route sets, since `env.PORT = "{port}"` is grove's guess at the name and a framework can read another.

@@ -1,0 +1,30 @@
+---
+title: Environment layering
+description: The order grove builds a command's environment in, and why grove's own values win over your shell while .env.local wins over everything.
+---
+
+`grove exec` builds the environment in a deliberate order. Later tiers win.
+
+1. **Trust variables.** `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, and `DENO_CERT`, pointed at grove's root or a bundle carrying it, for runtimes that ignore the OS store. A variable you already set is left alone.
+2. **`env_files`.** Read in order, later files winning. Every value here yields to anything already in your shell: an inline override is the most deliberate thing in the chain, and a checked-in file the least. A missing file is skipped, since `.env` is usually gitignored and its absence is normal.
+3. **`GROVE_CONTEXT`**, and **`GROVE_PORT`**, **`GROVE_HOST`**, **`GROVE_URL`** for the bound entry.
+4. **Grove's resolved values.** Everything `[env]` and the active entry's env block name, with templates filled in. These win over your shell, because a route naming a port it did not lease would be a lie, and a port hand-copied into a checked-in `.env` is the drift grove exists to remove.
+5. **`.env.local`.** The one tier above grove's own, and it yields to nothing.
+
+## Why .env.local doesn't yield to the shell
+
+If `.env.local` yielded to the shell while grove's values did not, exporting a name would hand it back to grove and the file's line would silently stop applying. So it yields to nothing, and grove tells you on stderr every name it took over.
+
+It cannot set `GROVE_CONTEXT`, `GROVE_PORT`, `GROVE_HOST`, or `GROVE_URL`. Grove fills those from the lease it holds, and an override would have grove name a route or a port it doesn't serve, so it's refused rather than believed.
+
+A project that lists `.env.local` in its own `env_files` has already said where that file goes, and it stays in that lower tier. An upgrade must not change what a file already in use means.
+
+`.env.local` isn't a `grove.toml` key because Next, Vite, CRA and Rails dotenv all already treat it as the personal override, and their gitignore templates already carry it. `grove doctor` warns when it's tracked by git, since a shared override hides the values grove leased from everyone.
+
+## Where a variable sits decides when it's set
+
+`[env]` is set for every command in the project. An env block on a route is only set while that route is bound, so a URL belongs in `[env]` even though it describes the route: a build needs it, and a build binds nothing. An env block on a detached entry is always set, exactly like `[env]`.
+
+## Reporting rather than allocating
+
+`grove env` prints this same environment from the leases that exist right now. A variable naming a port nobody holds is left out and named on stderr, since printing a number nothing routes to would be the lie the layering exists to prevent. `grove exec --no-bind` is the same for a command.

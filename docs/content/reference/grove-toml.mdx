@@ -1,0 +1,69 @@
+---
+title: grove.toml
+description: Every key grove reads from grove.toml and grove.local.toml, and what it refuses.
+---
+
+`grove.toml` sits at the root of the project, and every grove command finds it by walking up from the directory it's run in. Unknown keys are an error, so a typo fails at load rather than being silently ignored, and every template in the file is resolved against dummy values when it's read, so a token naming nothing fails there too.
+
+```toml grove.toml
+schema = 1
+name = "app"
+env_files = [".env"]
+
+[env]
+POSTGRES_URL = "postgres://postgres@localhost:5432/{context.slug}"
+NEXT_PUBLIC_SITE_URL = "{web.url}"
+
+[routes.web]
+dir = "apps/web"
+label = ""
+aliases = ["admin"]
+env.PORT = "{port}"
+
+[routes.api]
+dir = "apps/api"
+detached = true
+
+[ports.db]
+detached = true
+```
+
+## Top level
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `schema` | integer | The file format's version. A file declaring a schema newer than this grove understands is refused with "upgrade grove", before the unknown-key check, since a file from a later grove is expected to carry keys this one has never heard of. Currently `1`. |
+| `name` | string | The project's name, in place of the directory the repository sits in. Lowercased and hyphenated like any label. `GROVE_CONTEXT_OVERRIDE` still replaces the whole context. |
+| `env_files` | list of paths | Files loaded in order, later winning, relative to the file's directory. Their values yield to the shell and to grove's own. A missing file is skipped. |
+| `env` | table | Variables set for every command in the project. Values may use [templates](/reference/templates). |
+| `routes.<name>` | table | An entry with a hostname. |
+| `ports.<name>` | table | An entry with a port and no hostname, for a database or an SMTP sink nothing browses to. |
+
+## Entries
+
+`[routes.<name>]` and `[ports.<name>]` share these keys. An entry's name is what templates and `-s` refer to, and moving an entry between the two sections doesn't break either.
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `dir` | path | Scopes the entry to part of the tree, so a command run inside it binds this entry with no flag. The deepest matching dir wins. No dir claims the whole project, and two entries with none is an error. Must be inside the project. |
+| `label` | string | Routes only. The hostname label under the context: `<context>-<label>.grov.site`. Defaults to the entry's name. Empty puts the route on the bare context name. |
+| `aliases` | list of strings | Routes only. More labels reaching the same port. Each is a label like any other, and only one route can claim it. |
+| `detached` | boolean | The lease outlives the command that took it. Every `grove exec` in the project takes all detached entries; `grove release` ends them. |
+| `env` | table | Variables set while this entry is bound. For a detached entry that's always, so it behaves exactly like `[env]`. `{port}`, `{url}`, and `{host}` here mean this entry's own. |
+
+Labels are lowercased and hyphenated on the way in. Two routes claiming one label, whether as a name or an alias, is an error that names both.
+
+## grove.local.toml
+
+A `grove.local.toml` beside `grove.toml` is read too, and merged into it. It's meant to stay out of git, and the same keys apply.
+
+- `name` and `env` merge key by key, so overriding one variable doesn't drop the rest.
+- An entry the committed file also names merges field by field: only the fields the local file sets change.
+- An entry the committed file has never heard of is added whole, which is how one machine adds the one service only it runs.
+- `env_files` and `aliases` are replaced rather than appended, since the reason to name them locally is to load a different file or drop an alias.
+
+## What isn't a key
+
+`.env.local` is read from the project directory as the tier above everything grove resolves, and it isn't named in the config because every framework already treats it as the personal override. See [Environment layering](/concepts/environment).
+
+The domain is a constant, not a key. `grov.site` is one decision with the address grove serves, and neither is configurable alone.

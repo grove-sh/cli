@@ -1,0 +1,51 @@
+---
+title: Templates
+description: Every token a value in grove.toml can carry, what it resolves to, and the errors a wrong one gets.
+---
+
+A `{token}` in any value under `[env]` or an entry's `env` is replaced when the environment is built. Every template is checked against dummy values when the file is read, so a token naming nothing fails at load, not at use.
+
+## This entry's own
+
+Only meaningful in an entry's `env` block, since `[env]` has no entry to be.
+
+| Token | Resolves to |
+|-------|-------------|
+| `{port}` | The port this entry leased. |
+| `{host}` | This entry's hostname. Routes only. |
+| `{url}` | `https://` and the hostname. Routes only. |
+
+Using one in `[env]` is an error that says to name the entry instead.
+
+## Another entry
+
+| Token | Resolves to |
+|-------|-------------|
+| `{name.port}` | The port entry `name` leased, whichever section it lives in. |
+| `{name.host}` | Its hostname. Routes only; a port has none. |
+| `{name.url}` | `https://` and its hostname. Routes only. |
+
+Which section an entry lives in is not part of the reference, or moving one between `[routes]` and `[ports]` would break every line naming it.
+
+## An alias
+
+| Token | Resolves to |
+|-------|-------------|
+| `{name.alias.host}` | The alias's hostname. |
+| `{name.alias.url}` | `https://` and the alias's hostname. |
+
+There's no `{name.alias.port}`: an alias is another hostname on the same port, so that would be `{name.port}` spelled longer, and grove says so. Naming an alias the route doesn't declare is an error that lists the ones it does. Labels are lowercased and hyphenated on the way in, so the alias a template names can differ from the one the file spelled.
+
+## The context
+
+| Token | Resolves to |
+|-------|-------------|
+| `{context.slug}` | The context's name: project and variant joined. Also exported as `GROVE_CONTEXT`. |
+| `{context.project}` | The project half, from the directory or `name`. |
+| `{context.variant}` | The worktree half. Empty for the context that is the project itself. |
+
+The slug is a DNS label and a postgres identifier, which is what makes `postgres://.../{context.slug}` a database per worktree on one server.
+
+## When a port isn't held
+
+`grove env` and `grove exec --no-bind` report rather than allocate. A template naming a port nobody holds can't be resolved, so the variable carrying it is left out of the output and named on stderr. Under `grove exec` proper, every entry the command needs is leased first, so this doesn't arise.

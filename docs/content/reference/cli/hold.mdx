@@ -1,0 +1,20 @@
+---
+title: grove hold
+description: Re-register this context's detached ports and hostnames after a daemon that forgot them.
+---
+
+```sh
+grove hold
+```
+
+A restarted daemon knows nothing, since leases live in its memory. The ports themselves are derived from the context, so a stack that is still running is still on the right ones, but its hostname has nowhere to route until something says the context exists. This is that something.
+
+Attached ports are not restored, because they belong to a command that has to be running for the port to mean anything.
+
+`grove restart` runs this for you in every worktree that held a detached lease. Run it yourself after a crash, a reboot, or a `grove stop` followed by a `grove start` later. It reads the project again rather than remembering anything, which is what makes it safe for a worktree this process was never in.
+
+## Flags
+
+| Flag | Meaning |
+|------|---------|
+| `--socket` | The control socket to reach the daemon on. |
