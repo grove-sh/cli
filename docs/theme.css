@@ -59,3 +59,273 @@
 header > a:first-of-type img {
   transform: translateY(1px);
 }
+
+/* The landing page at the site root (pages/index.astro), carried over from the
+   standalone grov.site: one centred column in the CLI's own mono, drawn with
+   blume's tokens so it follows the theme toggle like every other page. */
+
+.grove-home {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: 100%;
+  max-width: 48rem;
+  min-height: calc(100dvh - 4rem);
+  margin: 0 auto;
+  padding: 4rem 1.5rem;
+  font-family: var(--blume-font-body);
+}
+
+/* The wordmark is the same banner the header and the introduction use, with
+   the page's h1 kept for screen readers and the outline, as on the
+   introduction. The banner's own margins are for the centred introduction, so
+   they are reset here. */
+.grove-home-lockup .grove-banner {
+  width: min(280px, 100%);
+  margin: 0;
+}
+
+.grove-home-title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.grove-home-tagline {
+  margin: 1.5rem 0 0;
+  font-family: var(--blume-font-mono);
+  font-size: 0.875rem;
+  color: var(--blume-accent);
+}
+
+.grove-home-lead {
+  max-width: 36rem;
+  margin: 2rem 0 0;
+  font-size: 1.125rem;
+  line-height: 1.65;
+}
+
+/* What grove ls prints. */
+.grove-home-ls,
+.grove-home-exec {
+  border: 1px solid var(--blume-border);
+  border-radius: var(--blume-radius);
+  background: var(--blume-code-background);
+  font-family: var(--blume-font-mono);
+  font-size: 0.8125rem;
+}
+
+.grove-home-ls {
+  margin-top: 3rem;
+  padding: 1.25rem;
+  overflow-x: auto;
+}
+
+.grove-home-ls .grove-home-line {
+  display: grid;
+  gap: 0.125rem;
+  white-space: nowrap;
+}
+
+.grove-home-ls .grove-home-line + .grove-home-line {
+  margin-top: 0.875rem;
+}
+
+.grove-home-path {
+  flex: none;
+  color: var(--blume-muted-foreground);
+}
+
+.grove-home-ports {
+  display: flex;
+  flex: none;
+  gap: 1.5rem;
+}
+
+.grove-home-host {
+  flex: none;
+}
+
+.grove-home-port {
+  color: var(--blume-muted-foreground);
+}
+
+.grove-home-accent {
+  color: var(--blume-accent);
+}
+
+.grove-home-exec {
+  width: fit-content;
+  margin-top: 1.25rem;
+  padding: 0.625rem 1rem;
+}
+
+.grove-home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem 1.5rem;
+  margin-top: 2.5rem;
+}
+
+.grove-home-button {
+  display: inline-flex;
+  align-items: center;
+  height: 2.5rem;
+  padding: 0 1.125rem;
+  border-radius: var(--blume-radius);
+  background: var(--blume-accent);
+  color: var(--blume-accent-foreground);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.grove-home-button:hover {
+  opacity: 0.85;
+}
+
+.grove-home-link {
+  color: var(--blume-foreground);
+  font-size: 0.9375rem;
+  text-decoration: underline;
+  text-decoration-color: var(--blume-border);
+  text-underline-offset: 0.25em;
+}
+
+.grove-home-link:hover {
+  text-decoration-color: var(--blume-accent);
+}
+
+.grove-home-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.5rem;
+  margin-top: 4rem;
+  font-family: var(--blume-font-mono);
+  font-size: 0.75rem;
+  color: var(--blume-muted-foreground);
+}
+
+.grove-home-footer code {
+  font-family: inherit;
+  font-size: inherit;
+  background: none;
+  padding: 0;
+}
+
+.grove-home-footer a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--blume-foreground);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.grove-home-footer a:hover {
+  color: var(--blume-accent);
+}
+
+.grove-home-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  border: 1px solid color-mix(in oklch, var(--blume-accent) 40%, transparent);
+  border-radius: 9999px;
+  color: var(--blume-accent);
+}
+
+.grove-home-dot {
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 9999px;
+  background: var(--blume-accent);
+}
+
+@media (min-width: 40rem) {
+  .grove-home-lockup .grove-banner {
+    width: 340px;
+  }
+
+  .grove-home-tagline,
+  .grove-home-ls,
+  .grove-home-exec {
+    font-size: 0.875rem;
+  }
+
+  /* One grid for the whole table, so the columns line up across rows however
+     long a hostname is. Each row is a subgrid of it rather than a run of
+     cells, which keeps the row an element the settle animation can move. The
+     host column takes the slack, so the ports sit against the right edge, and
+     its floor is the longest hostname: a bare 1fr shrinks under the text when
+     the box is squashed, and the ports draw over it instead of the box
+     scrolling. */
+  .grove-home-ls {
+    display: grid;
+    grid-template-columns: max-content minmax(max-content, 1fr) max-content max-content;
+    column-gap: 1.5rem;
+  }
+
+  .grove-home-ls .grove-home-line {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    column-gap: 1.5rem;
+  }
+
+  .grove-home-ls .grove-home-line + .grove-home-line {
+    margin-top: 0;
+  }
+
+  .grove-home-ports {
+    display: contents;
+  }
+}
+
+/* Page load: the mark settles, then each line of the worktree table lands
+   under it, the way grove ls fills in a row at a time. */
+@keyframes grove-mark-settle {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes grove-line-settle {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.grove-home-lockup {
+  animation: grove-mark-settle 0.6s cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+
+.grove-home-line {
+  animation: grove-line-settle 0.45s ease-out both;
+  animation-delay: calc(0.35s + var(--line-index) * 0.09s);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grove-home-lockup,
+  .grove-home-line {
+    animation: none;
+  }
+}

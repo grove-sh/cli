@@ -1,9 +1,9 @@
 ---
-title: Ports for things grove doesn't start
+title: Detached ports
 description: Mark an entry detached when whatever binds it outlives the command that asked, as supabase start and docker compose up do.
 ---
 
-A route's lease normally lasts exactly as long as the command holding it. Run `grove exec -- pnpm dev`, and the port and hostname are yours until the dev server exits. That's the right shape for a process that's a child of grove, and the wrong shape for `supabase start` or `docker compose up -d`, which return in seconds and leave a stack holding ports for hours.
+A route's lease normally lasts exactly as long as the command holding it. Run `grove exec -- vite dev`, and the port and hostname are yours until the dev server exits. That's the right shape for a process that's a child of grove, and the wrong shape for `supabase start` or `docker compose up -d`, which return in seconds and leave a stack holding ports for hours.
 
 Mark those entries `detached`:
 

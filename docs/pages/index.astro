@@ -1,0 +1,113 @@
+---
+import PageLayout from "blume/components/layout/PageLayout.astro";
+import data from "blume:data";
+
+export const prerender = true;
+
+const { config } = data;
+
+// The same three rows the README and the docs introduction open with, so the
+// page and the repo cannot drift apart. The third is a second repository, which
+// is what shows that nothing defaults to 3000 twice.
+const worktrees = [
+  { path: "~/code/app", host: "app.grov.site", web: "20107", db: "20402" },
+  { path: "~/worktrees/app/feat", host: "app-feat.grov.site", web: "20871", db: "20533" },
+  { path: "~/code/shop", host: "shop.grov.site", web: "20334", db: "20118" },
+];
+
+// No version is written down anywhere in grove, on purpose: it is stamped
+// into the binary at release. Naming one here would just go stale.
+const install = "npm install -g @grove-sh/cli";
+
+const description =
+  "Local HTTPS hostnames, port allocation, and env vars, scoped per git worktree.";
+---
+
+<PageLayout
+  site={{ title: config.title, description: config.description }}
+  logo={config.logo}
+  banner={config.banner}
+  analytics={config.analytics}
+  navigation={data.navigation}
+  favicon={config.favicon}
+  fontCssVars={data.fontCssVars}
+  themeMode={config.theme.mode}
+  searchEnabled={config.search.enabled}
+  siteUrl={config.site}
+  ogEnabled={config.og.enabled}
+  structuredDataEnabled={config.structuredData}
+  page={{ title: "grove: local HTTPS for every git worktree", description, route: "/" }}
+>
+  <main class="grove-home">
+    <div class="grove-home-lockup">
+      <img
+        class="grove-banner grove-banner-light"
+        src="/grove-banner-light.svg"
+        alt=""
+        width="311"
+        height="96"
+      />
+      <img
+        class="grove-banner grove-banner-dark"
+        src="/grove-banner-dark.svg"
+        alt=""
+        width="311"
+        height="96"
+      />
+      <h1 class="grove-home-title">grove</h1>
+    </div>
+
+    <p class="grove-home-tagline">{description}</p>
+
+    <section
+      aria-label="Three worktrees across two repositories, running at once"
+      class="grove-home-ls"
+    >
+      {
+        worktrees.map((w, index) => (
+          <div class="grove-home-line" style={`--line-index: ${index}`}>
+            <span class="grove-home-path">{w.path}</span>
+            <span class="grove-home-host">
+              https://<span class="grove-home-accent">{w.host}</span>
+            </span>
+            <span class="grove-home-ports">
+              <span class="grove-home-port">web:{w.web}</span>
+              <span class="grove-home-port">db:{w.db}</span>
+            </span>
+          </div>
+        ))
+      }
+    </section>
+
+    <p class="grove-home-lead">
+      No port in the URL, a real certificate your browser trusts, and one command to run anything
+      inside that context:
+    </p>
+
+    <div class="grove-home-exec grove-home-line" style="--line-index: 3">
+      <span class="grove-home-accent">grove</span> exec -- vite dev
+    </div>
+
+    <div class="grove-home-actions">
+      <a class="grove-home-button" href="/docs">Read the docs</a>
+      <a class="grove-home-link" href="/docs/quickstart">Quickstart</a>
+      <a class="grove-home-link" href="/docs/comparison">Why not lando or ddev?</a>
+    </div>
+
+    <footer class="grove-home-footer">
+      <span class="grove-home-pill">
+        <span class="grove-home-dot"></span>
+        early development
+      </span>
+      <code>{install}</code>
+      <a href="https://github.com/grove-sh/cli">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor">
+          <path
+            d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+          />
+        </svg>
+        grove-sh/cli
+      </a>
+    </footer>
+  </main>
+</PageLayout>

@@ -5,7 +5,7 @@ sidebar:
   label: Binding the port
 ---
 
-Grove leases a port and proxies the hostname to it. So you run `grove exec -- pnpm dev`, the server announces itself on a port of its own choosing, and you get a 503 from something that looks like it's running fine. A server that picks its own port is a server grove can't reach.
+Grove leases a port and proxies the hostname to it. So you run `grove exec -- vite dev`, the server announces itself on a port of its own choosing, and you get a 503 from something that looks like it's running fine. A server that picks its own port is a server grove can't reach.
 
 Next.js reads `PORT` on its own. Vite doesn't, and its preview server is configured separately from its dev server:
 

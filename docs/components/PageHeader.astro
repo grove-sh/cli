@@ -1,13 +1,16 @@
 ---
+import data from "blume:data";
+
 // Blume renders the frontmatter title as the first thing in the article, so
 // the only way to put anything above it is this slot, which sits just before
-// the article on every page. It is empty everywhere but the introduction.
+// the article on every page. It is empty everywhere but the introduction,
+// whose route is the docs mount point rather than the site root.
 interface Props {
   route: string;
 }
 
 const { route } = Astro.props;
-const isIntroduction = route === "/";
+const isIntroduction = route === (data.config.basePath || "/");
 ---
 
 {

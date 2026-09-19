@@ -10,9 +10,9 @@ grove exec [flags] -- command [args...]
 Grove leases a port for the route this directory belongs to, routes the route's hostname to it, and holds that lease for as long as the command runs. Entries marked detached are always active, since whatever binds them outlives the command. Signals and the exit code pass through.
 
 ```sh
-grove exec -- pnpm dev
-grove exec -s admin -- pnpm dev
-grove exec --no-bind -- pnpm playwright test
+grove exec -- vite dev
+grove exec -s admin -- vite dev
+grove exec --no-bind -- playwright test
 ```
 
 Everything after `--` is the command, untouched: flags there belong to it, not to grove.

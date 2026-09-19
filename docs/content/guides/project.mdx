@@ -49,9 +49,11 @@ An env block on a **detached** entry is always set, exactly like `[env]`, so it 
 ## Running commands through it
 
 ```sh
-grove exec -- pnpm dev
+grove exec -- vite dev
 grove exec -- psql "$POSTGRES_URL"
 ```
+
+The dev server one belongs in your `package.json` scripts, so nobody types the wrapper and `pnpm dev` keeps meaning what it did. [Teammates and CI](/guides/ci) has that pattern, with the flag that makes the script work for people who don't have grove.
 
 Grove loads your `env_files` too, so it replaces `dotenv-cli` rather than sitting beside it. Values from those files yield to your shell. Grove's own resolved values win over both, because a route pointing at a port it didn't lease would be a lie.
 

@@ -46,7 +46,7 @@ one, a test suite asserting on them being the usual case. It takes no lease, so
 it can run alongside the command that holds them, and it reports the port that
 command is on. Where nothing holds a port, the answer is the one a lease would
 get rather than one anything is serving, and no hostname routes to it.`,
-		Example: "  grove exec -- pnpm dev\n  grove exec -s admin -- pnpm dev",
+		Example: "  grove exec -- vite dev\n  grove exec -s admin -- vite dev",
 		Args:    usageArgs(cobra.MinimumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// First, so a command grove will not touch pays for neither reading

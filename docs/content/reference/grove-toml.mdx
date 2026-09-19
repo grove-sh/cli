@@ -5,9 +5,12 @@ description: Every key grove reads from grove.toml and grove.local.toml, and wha
 
 `grove.toml` sits at the root of the project, and every grove command finds it by walking up from the directory it's run in. Unknown keys are an error, so a typo fails at load rather than being silently ignored, and every template in the file is resolved against dummy values when it's read, so a token naming nothing fails there too.
 
+Every key is optional. A file with one route in it is a complete `grove.toml`, and this is roughly what `grove init` writes for a monorepo with two apps and a database:
+
 ```toml grove.toml
-schema = 1
-name = "app"
+# The project name comes from this directory. This overrides it
+# name = "example"
+
 env_files = [".env"]
 
 [env]
@@ -32,8 +35,8 @@ detached = true
 
 | Key | Type | Meaning |
 |-----|------|---------|
-| `schema` | integer | The file format's version. A file declaring a schema newer than this grove understands is refused with "upgrade grove", before the unknown-key check, since a file from a later grove is expected to carry keys this one has never heard of. Currently `1`. |
-| `name` | string | The project's name, in place of the directory the repository sits in. Lowercased and hyphenated like any label. `GROVE_CONTEXT_OVERRIDE` still replaces the whole context. |
+| `schema` | integer | The file format's version, for a file written against a newer grove than the one reading it: a schema this grove doesn't understand is refused with "upgrade grove", before the unknown-key check. Leave it out. There is only one schema so far, and `grove init` doesn't write it. |
+| `name` | string | The project's name, in place of the directory the repository sits in. Only needed when the directory isn't the name you want in hostnames. Lowercased and hyphenated like any label. `GROVE_CONTEXT_OVERRIDE` still replaces the whole context. |
 | `env_files` | list of paths | Files loaded in order, later winning, relative to the file's directory. Their values yield to the shell and to grove's own. A missing file is skipped. |
 | `env` | table | Variables set for every command in the project. Values may use [templates](/reference/templates). |
 | `routes.<name>` | table | An entry with a hostname. |

@@ -1,14 +1,16 @@
 ---
 title: Reading the ports without taking them
 description: A test suite or a script only wants to know where the dev server is. --no-bind and grove env report the ports without leasing them.
+sidebar:
+  label: Not binding the port
 ---
 
-A route belongs to one command at a time. Start `grove exec -- pnpm dev` in a worktree, then try it again in a second terminal, and the second one is refused: the route is already running. That's the right answer for a second dev server, which would have nothing to bind. It's the wrong answer for a test suite, a smoke check, or a script that only wants to know where the dev server is.
+A route belongs to one command at a time. Start `grove exec -- vite dev` in a worktree, then try it again in a second terminal, and the second one is refused: the route is already running. That's the right answer for a second dev server, which would have nothing to bind. It's the wrong answer for a test suite, a smoke check, or a script that only wants to know where the dev server is.
 
 Those get `--no-bind`:
 
 ```sh
-grove exec --no-bind -- pnpm playwright test
+grove exec --no-bind -- playwright test
 ```
 
 It takes no lease, so it runs alongside the command holding the route, and it reports the port that command is actually on. Where nothing holds a port, it reports the one a lease would get, so your script still has a number to work with, but no hostname routes there until something takes the lease for real.

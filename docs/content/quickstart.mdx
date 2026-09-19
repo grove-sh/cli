@@ -36,10 +36,20 @@ sidebar:
   </Step>
   <Step title="Run something in the context">
     ```sh
-    grove exec -- pnpm dev
+    grove exec -- vite dev
     ```
 
     Grove leases a port for the route this directory belongs to, sets `PORT` and whatever else the config names, and routes `https://<context>.grov.site` to it for as long as the command runs. `grove ls` shows what's live.
+
+    In a real project that wrapper belongs in the script, so `pnpm dev` stays `pnpm dev`:
+
+    ```json package.json
+    {
+      "scripts": {
+        "dev": "grove exec -- vite dev"
+      }
+    }
+    ```
   </Step>
 </Steps>
 
