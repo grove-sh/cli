@@ -92,7 +92,7 @@ func notSetUp() string {
     %s install
 
 That generates a certificate authority so grove can serve https, trusts it here, and
-prints the one privileged step your platform needs. It is asked for once per machine.`,
+offers to run the one privileged step your platform needs. It is asked for once per machine.`,
 		invocation())
 }
 

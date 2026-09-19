@@ -175,7 +175,7 @@ type State struct {
 const Advice = `Grove can send 443 to a port it is allowed to bind, which is what macOS leaves
 open to you. Run grove install: it writes the pf rule, a copy of this machine's
 pf.conf with two lines added, and the launchd job that puts them back after a
-reboot, then prints the one privileged step that installs the three.`
+reboot, then offers to run the one privileged step that installs the three.`
 
 // Access is pure, so every platform's tests cover it: a report that says no
 // without saying what would make it yes is the failure worth guarding against.

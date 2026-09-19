@@ -14,10 +14,10 @@ func PrivilegedPorts() PortAccess {
 func WSL() bool { return false }
 
 // Nothing to stage on a platform grove knows nothing about.
-func PrepareRedirect(string) (string, error) { return "", nil }
+func PreparePorts(string) (Plan, error) { return Plan{}, nil }
 
-// RemoveRedirect has nothing to take back, since nothing was staged.
-func RemoveRedirect(string) (string, error) { return "", nil }
+// RemovePorts has nothing to take back, since nothing was staged.
+func RemovePorts(string) (Plan, error) { return Plan{}, nil }
 
 // Nothing here knows better, so ask for 443 and report what happens.
 func DefaultListen() string { return Address + ":443" }

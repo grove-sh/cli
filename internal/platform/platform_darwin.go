@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/grove-sh/cli/internal/redirect"
 	"github.com/grove-sh/cli/internal/shell"
@@ -42,104 +41,111 @@ func inspect() (redirect.State, error) {
 	}, nil
 }
 
-// Writes the files and stops there: editing how a machine filters packets is
-// not a thing to do behind someone's back, and the Linux sysctl gets the same.
-func PrepareRedirect(dir string) (string, error) {
+// Writes the files and stops there. Editing how a machine filters packets is
+// not a thing to do behind someone's back, so the caller shows the plan and
+// asks before running it, and the Linux sysctl gets the same.
+func PreparePorts(dir string) (Plan, error) {
 	state, err := inspect()
 	if err != nil {
-		return "", err
+		return Plan{}, err
 	}
 	if ready, _, _ := redirect.Access(state); ready {
-		return "", nil
+		return Plan{}, nil
 	}
 
 	current, err := os.ReadFile(redirect.ConfPath)
 	if err != nil {
-		return "", err
+		return Plan{}, err
 	}
 	// Already referenced is fine: the merge is idempotent.
 	merged, _, err := redirect.Conf(string(current))
 	if err != nil {
-		return "", err
+		return Plan{}, err
 	}
 	staged, err := redirect.Stage(dir, Address, merged)
 	if err != nil {
-		return "", err
+		return Plan{}, err
 	}
 
-	return strings.Join([]string{
-		fmt.Sprintf("The daemon listens on %d, and pf can send 443 there. The three files are", redirect.Port),
-		"written; installing them is one privileged step:",
-		"",
-		"  sudo cp " + shell.Quote(staged.Anchor) + " " + redirect.AnchorPath,
-		"  sudo cp " + shell.Quote(staged.Conf) + " " + redirect.ConfPath,
-		"  sudo cp " + shell.Quote(staged.Plist) + " " + redirect.PlistPath,
-		"  sudo launchctl bootstrap system " + redirect.PlistPath,
-		"",
-		"That last line loads the job, which runs it, so the redirect starts",
-		"working now and again after every reboot.",
-		"",
-		redirect.ConfPath + " is the machine's own, so grove copied yours and added two",
-		"lines rather than writing its own. Worth reading before you install it:",
-		"",
-		"  diff " + redirect.ConfPath + " " + shell.Quote(staged.Conf),
-	}, "\n"), nil
+	return Plan{
+		Summary: "443 needs root here, and nothing redirects it yet",
+		Intro: fmt.Sprintf("The daemon listens on %d, and pf can send 443 there. The three files are\n", redirect.Port) +
+			"written; installing them is one privileged step:",
+		// The anchor first, so the parse check that follows can load it, and
+		// the check before pf.conf lands: a copy pfctl refuses would take
+		// Apple's rules down with grove's.
+		Steps: []shell.Step{
+			{"cp", staged.Anchor, redirect.AnchorPath},
+			{"pfctl", "-nf", staged.Conf},
+			{"cp", staged.Conf, redirect.ConfPath},
+			{"cp", staged.Plist, redirect.PlistPath},
+			{"launchctl", "bootstrap", "system", redirect.PlistPath},
+		},
+		Outro: "The pfctl line only parses the copy, and the last line loads the job, which runs\n" +
+			"it, so the redirect starts working now and again after every reboot.\n" +
+			"\n" +
+			redirect.ConfPath + " is the machine's own, so grove copied yours and added two\n" +
+			"lines rather than writing its own. Worth reading before you install it:\n" +
+			"\n" +
+			"  diff " + redirect.ConfPath + " " + shell.Quote(staged.Conf),
+	}, nil
 }
 
-// RemoveRedirect exists because untrusting the root used to leave the redirect
+// RemovePorts exists because untrusting the root used to leave the redirect
 // and its boot job behind, so a machine with no grove on it still sent every
 // loopback connection on 443 to a port nothing was listening to.
-func RemoveRedirect(dir string) (string, error) {
+func RemovePorts(dir string) (Plan, error) {
 	state, err := inspect()
 	if err != nil {
-		return "", err
+		return Plan{}, err
 	}
 	if !state.Referenced && !state.Anchor && !state.Boot {
-		return "", nil
+		return Plan{}, nil
 	}
 
 	current, err := os.ReadFile(redirect.ConfPath)
 	if err != nil {
-		return "", err
+		return Plan{}, err
 	}
 	cleaned, _ := redirect.Without(string(current))
 	staged := filepath.Join(dir, "pf", "pf.conf.clean")
 	if err := os.MkdirAll(filepath.Dir(staged), 0o755); err != nil {
-		return "", err
+		return Plan{}, err
 	}
 	if err := os.WriteFile(staged, []byte(cleaned), 0o644); err != nil {
-		return "", err
+		return Plan{}, err
 	}
 
 	// The reference goes before the file it names: pf.conf mentioning an anchor
 	// that is gone makes pfctl refuse the whole ruleset, Apple's rules with it.
-	// Nobody pasting five lines stops at the first failure, so every prefix of
-	// this list has to leave pf loadable.
-	return strings.Join([]string{
-		"The redirect and the job that puts it back are still installed. Removing",
-		"them is one privileged step:",
-		"",
-		"  sudo cp " + shell.Quote(staged) + " " + redirect.ConfPath,
-		"  sudo pfctl -f " + redirect.ConfPath,
-		"  sudo pfctl -a " + redirect.AnchorName + " -F nat",
-		"  sudo launchctl bootout system " + redirect.PlistPath,
-		"  sudo rm " + redirect.PlistPath + " " + redirect.AnchorPath,
-		"  sudo ifconfig lo0 -alias " + Address,
-		"",
-		"In that order: the first two take grove out of the machine's own rules,",
-		"the third clears what is still loaded, then the files go, and the last",
-		"takes " + Address + " back off the loopback interface. pf itself is left",
-		"enabled, since it may have been on before grove and other rules may want it.",
-		"",
-		"pfctl warns that -f could flush rules the system added at startup. It says",
-		"that every time and it is not a failure; a real problem names a file and a",
-		"line. To read the file without loading it, add -n.",
-		"",
-		redirect.ConfPath + " is the machine's own, so grove took its two lines out of",
-		"the copy above rather than restoring one it remembered. Worth reading first:",
-		"",
-		"  diff " + redirect.ConfPath + " " + shell.Quote(staged),
-	}, "\n"), nil
+	// Grove stops at the first failure and a person pasting may not, so every
+	// prefix of this list has to leave pf loadable.
+	return Plan{
+		Summary: "the redirect and the job that puts it back are still installed",
+		Intro: "The redirect and the job that puts it back are still installed. Removing\n" +
+			"them is one privileged step:",
+		Steps: []shell.Step{
+			{"cp", staged, redirect.ConfPath},
+			{"pfctl", "-f", redirect.ConfPath},
+			{"pfctl", "-a", redirect.AnchorName, "-F", "nat"},
+			{"launchctl", "bootout", "system", redirect.PlistPath},
+			{"rm", redirect.PlistPath, redirect.AnchorPath},
+			{"ifconfig", "lo0", "-alias", Address},
+		},
+		Outro: "In that order: the first two take grove out of the machine's own rules,\n" +
+			"the third clears what is still loaded, then the files go, and the last\n" +
+			"takes " + Address + " back off the loopback interface. pf itself is left\n" +
+			"enabled, since it may have been on before grove and other rules may want it.\n" +
+			"\n" +
+			"pfctl warns that -f could flush rules the system added at startup. It says\n" +
+			"that every time and it is not a failure; a real problem names a file and a\n" +
+			"line.\n" +
+			"\n" +
+			redirect.ConfPath + " is the machine's own, so grove took its two lines out of\n" +
+			"the copy above rather than restoring one it remembered. Worth reading first:\n" +
+			"\n" +
+			"  diff " + redirect.ConfPath + " " + shell.Quote(staged),
+	}, nil
 }
 
 // Where pf sends 443, since macOS will not allow binding it. Nothing reaches

@@ -255,6 +255,20 @@ jobs:
           ./grove install --trust=false | tee after.txt
           grep -q "pf sends 443 to" after.txt
 
+      # The other way in: grove running the steps itself. Taking the redirect
+      # out and putting it back covers both plans on one runner, and leaves the
+      # machine as the paste did for the daemon step below.
+      - name: Uninstall takes the redirect back, and install --yes puts it back
+        run: |
+          set -euo pipefail
+          ./grove uninstall --trust=false --yes | tee uninstall.txt
+          grep -q "port 443 handed back" uninstall.txt
+          test ! -e /Library/LaunchDaemons/sh.grove.pf.plist
+          test ! -e /etc/pf.anchors/grove
+          ./grove install --trust=false --yes | tee yes.txt
+          grep -q "pf sends 443 to" yes.txt
+          sudo pfctl -a grove -s nat
+
       - name: The daemon serves, and 443 arrives at it
         run: |
           set -euo pipefail
@@ -276,6 +290,57 @@ jobs:
       - name: Doctor, for the record
         if: always()
         run: ./grove doctor || true
+
+  # The Linux half of the same question. Ubuntu runners have passwordless sudo,
+  # so --yes is the whole interaction, and the floor is asserted before as well
+  # as after: a runner that already allowed 443 would pass this while running
+  # nothing.
+  linux-443:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GROVE_STATE_DIR: ${{ github.workspace }}/grove state
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Build
+        run: go build -o grove ./cmd/grove
+
+      - name: Install lowers the port floor when told to
+        run: |
+          set -euo pipefail
+          test "$(sysctl -n net.ipv4.ip_unprivileged_port_start)" = "1024"
+          ./grove install --trust=false --yes | tee install.txt
+          grep -q "floor is 80, so grove can bind 443 and 80" install.txt
+          test -e /etc/sysctl.d/60-grove.conf
+          test "$(sysctl -n net.ipv4.ip_unprivileged_port_start)" = "80"
+
+      - name: The daemon binds 443 as itself
+        run: |
+          set -euo pipefail
+          ./grove restart
+          curl -sS --fail-with-body --cacert "$GROVE_STATE_DIR/root.crt" \
+            --resolve "ci.grov.site:443:127.0.0.4" \
+            -o /dev/null -w 'reached grove on 443, http=%{http_code}\n' \
+            "https://ci.grov.site/" || {
+              status=$?
+              test "$status" = "22"
+              echo "reached grove on 443, and it had nothing to route"
+            }
+
+      - name: Uninstall puts the floor back and stops grove
+        run: |
+          set -euo pipefail
+          ./grove uninstall --trust=false --yes | tee uninstall.txt
+          grep -q "port 443 handed back" uninstall.txt
+          grep -q STOPPED uninstall.txt
+          test ! -e /etc/sysctl.d/60-grove.conf
+          test "$(sysctl -n net.ipv4.ip_unprivileged_port_start)" = "1024"
 
   # The npm packaging is JavaScript and shell that no Go test covers, and it is
   # otherwise only exercised while cutting a release, which is the worst moment

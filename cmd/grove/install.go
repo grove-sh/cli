@@ -19,7 +19,7 @@ import (
 
 func newInstallCommand() *cobra.Command {
 	var stateDir string
-	var installTrust bool
+	var installTrust, yes bool
 
 	cmd := &cobra.Command{
 		Use:   "install",
@@ -31,8 +31,10 @@ ask for your password. Everything else is written under your own state
 directory. Re-running is safe: an existing CA is reused, and an already trusted
 root is left alone.
 
-Binding port 443 is reported rather than changed, since that is a machine wide
-setting you should apply yourself.
+Reaching port 443 is a machine wide change, a sysctl on Linux and a pf redirect
+on macOS, so it is printed in full and run only when you say so: at the prompt,
+or in advance with --yes. Where there is no terminal to ask, the steps are
+printed and left to you.
 
 Nothing here starts a daemon or arranges for one to start later. Grove runs
 while you are using it: any grove exec starts one, and grove start does it on
@@ -40,6 +42,7 @@ its own.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
+			paint := styles(out)
 
 			if err := makePrivate(stateDir, out); err != nil {
 				return err
@@ -50,59 +53,101 @@ its own.`,
 			}
 
 			trusted := trust.Trusted(root.Certificate())
-			state := "already trusted"
+			state, tone := "already trusted", ok
 			switch {
 			case !trusted && !installTrust:
-				state = "not trusted, skipped by --trust=false"
+				state, tone = "not trusted, skipped by --trust=false", warn
 			case !trusted:
-				fmt.Fprintln(out, "installing the root into your trust stores, sudo may ask for your password")
+				fmt.Fprintln(out, paint.dim("installing the root into your trust stores, sudo may ask for your password"))
 				if err := trust.Install(root.Certificate()); err != nil {
 					return err
 				}
 				state = "installed"
 			}
+			bundle, bundleTone := settleBundle(stateDir, root.Certificate(), root.RootPEM())
+			access := platform.PrivilegedPorts()
 
 			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 			fmt.Fprintf(w, "authority\t%s\n", filepath.Join(stateDir, trust.RootFile))
-			fmt.Fprintf(w, "trust store\t%s\n", state)
-			fmt.Fprintf(w, "runtime bundle\t%s\n", settleBundle(stateDir, root.Certificate(), root.RootPEM()))
+			fmt.Fprintf(w, "trust store\t%s\n", paint.paint(tone)(state))
+			fmt.Fprintf(w, "runtime bundle\t%s\n", paint.paint(bundleTone)(bundle))
+			fmt.Fprintf(w, "port 443\t%s\n", paint.paint(portTone(access))(access.Detail))
 			w.Flush()
 
-			reportPrivilegedPorts(out, stateDir)
-			return nil
+			return offerPorts(out, cmd.ErrOrStderr(), cmd.InOrStdin(), stateDir, access, yes)
 		},
 	}
 
 	cmd.Flags().StringVar(&stateDir, "state-dir", daemon.StateDir(), "directory holding the CA and bundle")
 	cmd.Flags().BoolVar(&installTrust, "trust", true, "install the root into the system trust stores")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "run the privileged step without asking")
 	return cmd
+}
+
+// Allowed with advice left is a yes with something still to do, so it reads
+// as a caution rather than a pass.
+func portTone(access platform.PortAccess) string {
+	if access.Allowed && access.Advice == "" {
+		return ok
+	}
+	return warn
+}
+
+// A platform with files to stage knows more than the static advice, and
+// failing to stage beats falling back to advice that names nothing.
+func offerPorts(out, errOut io.Writer, in io.Reader, stateDir string, access platform.PortAccess, yes bool) error {
+	paint := styles(out)
+	if access.Allowed && access.Advice == "" {
+		return nil
+	}
+	plan, err := platform.PreparePorts(stateDir)
+	if err != nil {
+		fmt.Fprintf(out, "\n%s\n", paint.bad("grove could not prepare the change to port 443: "+err.Error()))
+		return nil
+	}
+	if plan.Empty() {
+		if access.Advice != "" {
+			fmt.Fprintf(out, "\n%s\n", paint.warn(access.Advice))
+		}
+		return nil
+	}
+
+	applied, err := elevationFor(yes, in, out, errOut).offer(plan)
+	if err != nil || !applied {
+		return err
+	}
+	// Asked again rather than assumed: the platform reads the machine, so
+	// this line is what actually changed and not what was meant to.
+	after := platform.PrivilegedPorts()
+	fmt.Fprintf(out, "\n%s\n", paint.paint(portTone(after))(after.Detail))
+	return nil
 }
 
 // Exactly one bundle in play, so grove's copy goes the moment the system file
 // will do. trust.Bundle explains which is which.
-func settleBundle(stateDir string, root *x509.Certificate, rootPEM []byte) string {
+func settleBundle(stateDir string, root *x509.Certificate, rootPEM []byte) (string, string) {
 	system := trust.SystemBundle()
 	if system == "" {
-		return "no bundle on this system, so runtimes carrying their own will not trust grove"
+		return "no bundle on this system, so runtimes carrying their own will not trust grove", warn
 	}
 
 	if trust.SystemBundleTrusts(root) {
 		if err := trust.RemoveBundle(stateDir); err != nil {
-			return fmt.Sprintf("%s carries this root, but grove's stale copy remains: %v", system, err)
+			return fmt.Sprintf("%s carries this root, but grove's stale copy remains: %v", system, err), warn
 		}
-		return system + ", which carries this root"
+		return system + ", which carries this root", ok
 	}
 
 	merged, err := trust.WriteBundle(stateDir, rootPEM)
 	if err != nil {
-		return fmt.Sprintf("could not merge one: %v", err)
+		return fmt.Sprintf("could not merge one: %v", err), bad
 	}
-	return merged + ", merged because " + system + " does not carry this root"
+	return merged + ", merged because " + system + " does not carry this root", ok
 }
 
 func newUninstallCommand() *cobra.Command {
 	var stateDir, socket string
-	var removeTrust, force bool
+	var removeTrust, force, yes bool
 
 	cmd := &cobra.Command{
 		Use:   "uninstall",
@@ -114,7 +159,8 @@ rather than generating another one. Certificates already issued keep working
 for anything that still trusts the root.
 
 Where a platform needed a privileged step to reach port 443, this prints the
-step that undoes it, the same way install printed the one that set it up.
+step that undoes it and offers to run it, the same way install did the one that
+set it up. --yes answers in advance.
 
 Grove is stopped too, since a root the machine no longer trusts leaves nothing
 worth serving. Every lease on the machine goes with it, so this refuses while
@@ -122,6 +168,7 @@ anything is answering on a port grove leased.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
+			paint := styles(out)
 			held, unread := whatItHolds(socket)
 			if !force {
 				if unread != nil {
@@ -136,12 +183,14 @@ anything is answering on a port grove leased.`,
 			if err != nil {
 				return err
 			}
+			state, tone := "removed", ok
 			switch {
 			case !removeTrust:
-				fmt.Fprintln(out, "trust store     left alone by --trust=false")
+				state, tone = "left alone by --trust=false", warn
 			case !trust.Trusted(root.Certificate()):
-				fmt.Fprintln(out, "this root is not in the system trust store")
+				state, tone = "this root is not in the system trust store", ok
 			default:
+				fmt.Fprintln(out, paint.dim("removing the root from your trust stores, this may ask for your password or authorization"))
 				if err := trust.Uninstall(root.Certificate()); err != nil {
 					return err
 				}
@@ -149,12 +198,26 @@ anything is answering on a port grove leased.`,
 
 			// After the trust store, which is what someone came for. The
 			// redirect outlives this process either way.
-			advice, err := platform.RemoveRedirect(stateDir)
+			plan, planErr := platform.RemovePorts(stateDir)
+			ports, portsTone := "nothing of grove's left in place", ok
 			switch {
-			case err != nil:
-				fmt.Fprintf(cmd.ErrOrStderr(), "\ngrove could not stage the removal: %v\n", err)
-			case advice != "":
-				fmt.Fprintf(out, "\n%s\n", advice)
+			case planErr != nil:
+				ports, portsTone = "grove could not stage the removal: "+planErr.Error(), bad
+			case !plan.Empty():
+				ports, portsTone = plan.Summary, warn
+			}
+
+			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+			fmt.Fprintf(w, "trust store\t%s\n", paint.paint(tone)(state))
+			fmt.Fprintf(w, "port 443\t%s\n", paint.paint(portsTone)(ports))
+			w.Flush()
+
+			applied, err := elevationFor(yes, cmd.InOrStdin(), out, cmd.ErrOrStderr()).offer(plan)
+			if err != nil {
+				return err
+			}
+			if applied {
+				fmt.Fprintf(out, "\n%s\n", paint.good("port 443 handed back"))
 			}
 
 			// Last, so a trust store that would not budge leaves grove serving
@@ -173,11 +236,12 @@ anything is answering on a port grove leased.`,
 
 	cmd.Flags().StringVar(&stateDir, "state-dir", daemon.StateDir(), "directory holding the CA")
 	// Untrusting a root asks macOS for authorization nobody can give on a
-	// runner, so the keychain half has to be skippable for CI to paste and run
-	// the removal this prints.
+	// runner, so the keychain half has to be skippable for CI to run the
+	// removal this offers.
 	cmd.Flags().BoolVar(&removeTrust, "trust", true, "remove the root from the system trust stores")
 	cmd.Flags().StringVar(&socket, "socket", daemon.DefaultSocket(), "control socket path")
 	cmd.Flags().BoolVar(&force, "force", false, "untrust even while a running command is served over https")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "run the privileged step without asking")
 	return cmd
 }
 
@@ -197,33 +261,4 @@ func makePrivate(dir string, out io.Writer) error {
 		fmt.Fprintf(out, "tightened %s from %#o to 0700\n", dir, info.Mode().Perm())
 	}
 	return nil
-}
-
-func reportPrivilegedPorts(out io.Writer, stateDir string) {
-	access := platform.PrivilegedPorts()
-	if access.Allowed {
-		fmt.Fprintf(out, "\n%s\n", access.Detail)
-		// A yes can still leave something to do: a floor that clears 443 but
-		// not 80 costs the http redirect.
-		if access.Advice != "" {
-			fmt.Fprintf(out, "\n%s\n", access.Advice)
-		}
-		return
-	}
-	fmt.Fprintf(out, "\n%s.\n", access.Detail)
-
-	// A platform with files to stage knows more than the static advice, and
-	// failing to stage beats falling back to advice that names nothing.
-	advice, err := platform.PrepareRedirect(stateDir)
-	switch {
-	case err != nil:
-		fmt.Fprintf(out, "\ngrove could not prepare the redirect: %v\n", err)
-		return
-	case advice != "":
-		fmt.Fprintf(out, "\n%s\n", advice)
-		return
-	}
-	if access.Advice != "" {
-		fmt.Fprintf(out, "\n%s\n", access.Advice)
-	}
 }

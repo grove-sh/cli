@@ -55,8 +55,10 @@ func wrap(code string) func(string) string {
 	return func(s string) string { return code + s + reset }
 }
 
-func isTerminal(w io.Writer) bool {
-	file, ok := w.(*os.File)
+// Takes any stream, since a prompt has to check the reader it waits on as well
+// as the writer it asks through.
+func isTerminal(stream any) bool {
+	file, ok := stream.(*os.File)
 	if !ok {
 		return false
 	}
