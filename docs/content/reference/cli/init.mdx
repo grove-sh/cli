@@ -1,0 +1,20 @@
+---
+title: grove init
+description: Write a grove.toml at the root of this worktree from what the project contains.
+---
+
+```sh
+grove init [--force]
+```
+
+Write a `grove.toml` at the root of this worktree. What it finds becomes what it writes: a route per app, and the supabase stack's ports if there is one. Read it before trusting it, since guessing which variable an app reads its URL from is exactly that.
+
+## What it looks for
+
+Apps are judged by their dependencies rather than by a dev script, which a library has too. A `package.json` depending on `next` gets a route whose URL variable is prefixed `NEXT_PUBLIC_`; one depending on `vite` gets `VITE_`. A `supabase/config.toml` becomes the stack's detached entries, each wired to the variable the supabase CLI reads: routes for `api`, `studio` (on the label `supabase`, which is what someone opening the hostname is looking for), and `mail`, and bare ports for `db`, `shadow`, `pooler`, and `analytics`. A routed service the config turns off is written as a bare port instead.
+
+## Flags
+
+| Flag | Meaning |
+|------|---------|
+| `--force` | Overwrite an existing `grove.toml`. Without it, an existing file is left alone. |

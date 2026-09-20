@@ -1,0 +1,28 @@
+---
+title: grove doctor
+description: Check the things that have to be true before grove can serve a hostname, and name the fix for each that is not.
+---
+
+```sh
+grove doctor
+```
+
+Each check reports on its own. A failure exits non-zero so this can gate a script; a warning does not.
+
+```
+Grove           running
+Authority       installed and trusted
+Runtime bundle  /etc/ssl/certs/ca-certificates.crt, which carries grove's root
+Version         v0.5.0
+Platform        linux-x64
+```
+
+That's a healthy machine outside a project. Inside one, the project's own checks come first, and every check that only speaks up when something is wrong stays quiet. [Troubleshooting](/guides/troubleshooting#ask-doctor) lists every check and what it looks at.
+
+## Flags
+
+| Flag | Meaning |
+|------|---------|
+| `--domain` | The domain every context lives under, for the DNS check. |
+| `--state-dir` | The directory holding the CA. |
+| `--socket` | The control socket to reach the daemon on. |

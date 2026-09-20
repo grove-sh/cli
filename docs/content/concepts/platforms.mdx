@@ -1,0 +1,40 @@
+---
+title: Linux and macOS
+description: Low ports differ by platform. Here is the privileged step each one needs, what it changes, and where grove keeps its state.
+---
+
+Grove prints the privileged step in full and runs it only at a prompt or with `--yes`. The steps are argv lists, printed and executed from the same slice, so what was pasted and what grove ran cannot differ.
+
+## Linux
+
+Linux's floor on privileged ports is per-port, not per-address, so lowering it is all that's needed. Install writes one line into a file named for grove and stages it; installing it is the privileged step:
+
+```sh
+sudo cp <staged> /etc/sysctl.d/60-grove.conf
+sudo sysctl -p /etc/sysctl.d/60-grove.conf
+```
+
+The line is `net.ipv4.ip_unprivileged_port_start=80`: 80 rather than 443 so grove can also answer plain http and send it to https. The machine reads the file again at every boot, and the daemon runs as you rather than as root. With the floor lowered, the daemon binds `127.0.0.4:443` and `127.0.0.4:80` directly.
+
+`grove uninstall` offers to remove that file and put the floor back to 1024. Only grove's own file is taken back: a floor lowered some other way is the machine's setting.
+
+## macOS
+
+macOS can't lower anything, so the daemon binds `10443` and `10080` and a pf rule redirects. The rule is scoped to `127.0.0.4` rather than the whole interface: an earlier unscoped version took every loopback connection on 443, so a lando proxy could bind the port and never be reached.
+
+macOS also needs the address itself. It configures only `127.0.0.1` on the loopback interface, so `127.0.0.4` has to be added as an alias, and a reboot removes it. `grove install` stages a small root-owned launchd job that puts the alias and the pf rules back at boot. That's the address and the firewall rule coming back, not grove: nothing starts a daemon at boot on either platform.
+
+Removing a trust root on macOS asks for authorization, so `grove uninstall` does too.
+
+## Where state lives
+
+| | Linux | macOS |
+|-|-------|-------|
+| State directory | `$XDG_STATE_HOME/grove`, or `~/.local/state/grove` | `~/Library/Application Support/grove` |
+| Control socket | `$XDG_RUNTIME_DIR/grove/control.sock`, or `control.sock` in the state directory | `control.sock` in the state directory |
+
+The state directory holds the CA, `ports.json`, and `daemon.log`. `GROVE_STATE_DIR` and `GROVE_SOCKET` override each, and the socket one matters on macOS: a unix socket path caps out near 104 bytes there, and a deep home directory can blow it on its own.
+
+## Trying a change without disturbing the daemon in use
+
+One daemon serves the machine, and `grove restart` with the defaults stops the one serving your real worktrees. Point `GROVE_STATE_DIR` and `GROVE_SOCKET` into a temp directory and `GROVE_LISTEN` and `GROVE_HTTP_LISTEN` at high ports, and a second daemon runs beside the live one.

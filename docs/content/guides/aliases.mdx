@@ -1,0 +1,32 @@
+---
+title: One app on more than one hostname
+description: A storefront and its admin, or a site and its asset host, is one server on one port, so in grove it is one route with an alias.
+sidebar:
+  label: Route aliases
+---
+
+Some apps answer on two names. A storefront and its admin or a site and the host it serves assets from. That's still one server on one port, so in grove it's one route with an alias, not two routes.
+
+```toml grove.toml
+# https://<context>.grov.site
+# https://<context>-admin.grov.site
+[routes.web]
+dir = "apps/web"
+label = ""
+aliases = ["admin"]
+env.PORT = "{port}"
+
+[env]
+SITE_URL = "{web.url}"
+ADMIN_URL = "{web.admin.url}"
+```
+
+Both hostnames proxy to the one port grove leased for `web`, and both appear and disappear with that lease.
+
+Templates tell the two apart. `{web.url}` is the route's own hostname, and so are `GROVE_HOST` and `GROVE_URL`, so a route's name always means one thing however many hostnames it answers on. The alias is `{web.admin.url}`, or `{web.admin.host}` for the bare name. There's no `{web.admin.port}`, because the alias shares the route's port, and grove says so rather than handing back the same number twice.
+
+An alias is a label under the domain like any other, which is why it's `<context>-admin.grov.site` and not `admin.<context>.grov.site`. And like any other label, only one route can claim it, whether as its own name or as an alias.
+
+:::note
+Labels are lowercased and hyphenated on the way in, so the alias a template has to name can differ from the one the file spelled. When a template names an alias the route doesn't have, the error lists the ones it does.
+:::

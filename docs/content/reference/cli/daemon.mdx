@@ -1,0 +1,62 @@
+---
+title: grove start, stop, restart
+description: The daemon is one process for the machine. These bring it up, take it down, and replace it.
+sidebar:
+  label: start, stop, restart
+---
+
+One daemon serves every context on the machine. It terminates TLS for each context's hostname, routes it to the port that context leased, and holds the leases. A lease lasts exactly as long as the `grove exec` connection that asked for it, so stopping the daemon drops all of them at once.
+
+Nothing supervises the daemon and nothing starts it at boot. Its output goes to `daemon.log` in the state directory.
+
+## grove start
+
+```sh
+grove start
+```
+
+Start the daemon in the background, if it is not already running.
+
+Running commands through `grove exec` starts one on its own, so this is for bringing the proxy up without running anything: a hostname you have bookmarked answers again without touching the project it belongs to.
+
+## grove stop
+
+```sh
+grove stop [--force]
+```
+
+Stop the running daemon.
+
+Every lease goes with it, detached ones included, since nothing about them survives the process. Stopping a daemon that is not running is not an error.
+
+One daemon serves the machine, so this reaches projects other than the one you are standing in. It refuses while anything is answering on a port grove leased, since those routes go with the daemon. A port nothing answers on does not stop it, and `grove hold` is what puts a detached route back. It tells you what it dropped.
+
+## grove restart
+
+```sh
+grove restart
+```
+
+Stop the daemon if it is running, then start a fresh one in the background.
+
+This is what to run after rebuilding or upgrading grove, since the daemon keeps speaking the protocol it was built with.
+
+Detached ports are taken again on the far side: before stopping anything, restart notes which worktrees hold detached leases, and once the new daemon is up it runs the equivalent of `grove hold` in each. A lease held by a running command is not, since nothing reconnects that command to a new daemon, so it has to be run again. Restart tells you which routes that cost.
+
+## Flags
+
+`start` and `restart` take the daemon's own settings, which are also the `GROVE_LISTEN`, `GROVE_HTTP_LISTEN`, `GROVE_SOCKET`, and `GROVE_STATE_DIR` variables:
+
+| Flag | Meaning |
+|------|---------|
+| `--listen` | The address to serve HTTPS on. |
+| `--http-listen` | The address to answer plain HTTP on, redirecting to HTTPS. |
+| `--domain` | The domain every context lives under. |
+| `--ca-dir` | The directory holding the local CA. |
+| `--socket` | The control socket path. |
+
+`stop` takes `--socket` and `--force`, which stops even while a running command holds a lease.
+
+## grove daemon
+
+Hidden from the command list, `grove daemon` runs the proxy and lease registry in the foreground. It's what `start` spawns, and not how anyone starts a daemon for themselves.

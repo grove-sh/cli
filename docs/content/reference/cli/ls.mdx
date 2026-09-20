@@ -1,0 +1,33 @@
+---
+title: grove ls
+description: List this context's routes, live or not, or every lease on the machine.
+---
+
+```sh
+grove ls [--all]
+```
+
+List the routes this context declares, live or not, and the ports it is serving.
+
+```
+ROUTE  URL                    PORT   STATE
+web    https://app.grov.site  20107  running
+db     -                      20402  claimed
+```
+
+Every hostname comes from the config rather than from a lease, so a route that nothing is serving still has a URL, marked `idle`. It has no port, because a port exists only while something holds one.
+
+A route grove has handed a port to reads `running` when something answers on it and `claimed` when nothing does, which is what a stopped stack looks like: its ports stay allocated until `grove release` hands them back.
+
+A bare port appears once grove has handed it out, since there is nothing to open and the number only means something when something holds it. Until then it is left out rather than guessed at.
+
+Outside a project, and with `--all`, this lists every live lease on the machine instead.
+
+On a terminal, each URL is coloured by how much to believe it: green opens, yellow would open if something were listening, red won't open until grove is finished being set up, and the line under the table says what's missing. The same is said in words, so piped output loses nothing.
+
+## Flags
+
+| Flag | Meaning |
+|------|---------|
+| `--all` | List every live lease on the machine instead. |
+| `--socket` | The control socket to reach the daemon on. |

@@ -1,0 +1,40 @@
+---
+title: grove exec
+description: Run a command with this context's ports and hostnames in its environment.
+---
+
+```sh
+grove exec [flags] -- command [args...]
+```
+
+Grove leases a port for the route this directory belongs to, routes the route's hostname to it, and holds that lease for as long as the command runs. Entries marked detached are always active, since whatever binds them outlives the command. Signals and the exit code pass through.
+
+```sh
+grove exec -- vite dev
+grove exec -s admin -- vite dev
+grove exec --no-bind -- playwright test
+```
+
+Everything after `--` is the command, untouched: flags there belong to it, not to grove.
+
+With `CI` set in the environment and no daemon to talk to, the command runs with its environment untouched instead of failing, because a build service is the authority on its own environment and grove is not running there. `--if-available` asks for the same tolerance anywhere.
+
+`--no-bind` is for a command that reads this context's ports without listening on one, a test suite asserting on them being the usual case. It takes no lease, so it can run alongside the command that holds them, and it reports the port that command is on. Where nothing holds a port, the answer is the one a lease would get rather than one anything is serving, and no hostname routes to it.
+
+## Which entry it binds
+
+The directory decides: the deepest route whose `dir` contains it, or the one route with no `dir`. `-s` names an entry outright, from anywhere in the project. A detached entry is never "the" entry, since every exec takes all of them anyway.
+
+## Flags
+
+| Flag | Meaning |
+|------|---------|
+| `-s`, `--service` | The route or port to bind, overriding the directory. |
+| `--no-bind` | Read this context's ports without leasing them, for a command that will not listen. |
+| `--if-available` | Run the command unchanged when grove is not running, rather than failing. |
+| `--autostart` | Start a daemon if none is running. On by default. |
+| `--socket` | The control socket to reach the daemon on. |
+
+## What it sets
+
+`GROVE_CONTEXT`, then `GROVE_PORT`, `GROVE_HOST`, and `GROVE_URL` for the bound entry, then everything the config resolves, layered as [Environment layering](/concepts/environment) describes. The full list is in [Environment variables](/reference/environment-variables).

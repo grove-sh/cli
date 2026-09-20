@@ -1,0 +1,18 @@
+---
+title: grove context
+description: Print the grove context resolved for the current directory.
+---
+
+```sh
+grove context [--json]
+```
+
+The context is derived from the git worktree you are standing in, and names the hostname, database, and ports grove allocates. `GROVE_CONTEXT_OVERRIDE` replaces it.
+
+`--json` is the stable contract other tools should read. `is_main` marks the context that is the project itself, which is the main clone where there is one and a worktree of a bare repository where there is not. [Contexts and naming](/concepts/contexts) says how each field is decided.
+
+## Flags
+
+| Flag | Meaning |
+|------|---------|
+| `--json` | Print as JSON. |

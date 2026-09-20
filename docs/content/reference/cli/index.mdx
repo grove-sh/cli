@@ -1,0 +1,46 @@
+---
+title: CLI
+description: Every grove command, the flags they share, and the exit codes they promise.
+sidebar:
+  label: Overview
+---
+
+```
+grove init                       write a grove.toml for this project
+grove install                    set this machine up: authority, trust, port 443
+grove uninstall                  stop grove and untrust its root
+grove exec [-s <name>] -- <cmd>  run a command in this context
+grove env [--format shell|json]  print that environment instead of running
+grove ls [--all]                 this context's routes, or every lease on the machine
+grove hold                       take this context's detached ports
+grove release [name...]          let them go
+grove context [--json]           how this directory resolves
+grove doctor                     DNS, trust, the daemon, and port 443
+grove start | stop | restart     the daemon, which is one process for the machine
+```
+
+`grove --version` prints the version, and `grove completion <shell>` generates a completion script.
+
+## Flags most commands share
+
+| Flag | Meaning |
+|------|---------|
+| `--socket` | The control socket to reach the daemon on. Defaults to `GROVE_SOCKET` or the platform path. |
+| `--state-dir` | The directory holding the CA. Defaults to `GROVE_STATE_DIR` or the platform path. |
+| `-y`, `--yes` | On `install` and `uninstall`: run the privileged step without asking. |
+| `--force` | On `stop` and `uninstall`: go ahead while a running command is served. On `init`: overwrite an existing file. |
+
+## Exit codes
+
+Exit codes are contracts.
+
+| Code | Meaning |
+|------|---------|
+| `0` | Done. For `doctor`, every check passed or warned. |
+| `1` | Grove failed, and said why on stderr. For `doctor`, a check failed. |
+| `2` | A bad invocation: an unknown flag, the wrong arguments, or a value a flag doesn't take. |
+| anything else | From `exec`, the child's own exit code. A child killed by a signal exits the way a shell reports it. |
+
+## Errors name the fix
+
+Messages are written for someone who has never heard of grove, and they spell the command in the form you can actually run. Inside a package that installed grove from npm, that's `pnpm grove doctor` or `npx grove doctor` rather than `grove doctor`.

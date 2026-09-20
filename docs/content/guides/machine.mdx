@@ -1,0 +1,56 @@
+---
+title: Setting up a machine
+description: Install the binary, generate and trust a local certificate authority, and take the one privileged step that lets grove answer on port 443.
+---
+
+```sh
+npm install -g @grove-sh/cli
+```
+
+Or, if you've got Go handy, `go install github.com/grove-sh/cli/cmd/grove@latest`. Either way there's one more step, once per machine:
+
+```sh
+grove install
+```
+
+That generates a local certificate authority, adds it to your trust stores, and shows you the one privileged step your platform needs. Installing into the system trust store needs elevated privileges, so it may ask for your password. Everything else is written under your own state directory. Re-running is safe: an existing CA is reused, and an already trusted root is left alone.
+
+## The privileged step
+
+Reaching port 443 is a machine-wide change. On Linux it's a sysctl lowering the unprivileged port floor. On macOS it's a pf redirect and a loopback alias, because nothing there can bind 443 as you. Those commands change your machine rather than your project, so grove prints them in full and asks before running them. `grove install --yes` answers in advance, and if there's no terminal to ask, the commands are printed and left to you.
+
+The printed lines and the lines grove runs come from the same list, so what you were shown and what happened can't differ. [Linux and macOS](/concepts/platforms) has the step for each platform and what it changes.
+
+## Where grove listens
+
+Grove serves `127.0.0.4`, not `127.0.0.1`, so it sits beside whatever else wants port 443. The wildcard DNS for `grov.site` points there, so you never see the address in a URL, and a lando or docker proxy on `127.0.0.1:443` never notices grove.
+
+Nothing runs at boot. Grove is up while you're using it. Any `grove exec` starts a daemon when none is answering, and `grove start` does it on its own. The exception is CI, where nothing answering means grove [steps aside](/guides/ci) instead.
+
+## Check it
+
+```sh
+grove doctor
+```
+
+```
+Grove           running
+Authority       installed and trusted
+Runtime bundle  /etc/ssl/certs/ca-certificates.crt, which carries grove's root
+Version         v0.5.0
+Platform        linux-x64
+```
+
+That's a healthy machine. Doctor also checks that the wildcard DNS resolves here and that 443 reaches grove, but those two only speak up when something is wrong, and when they do they name the fix. It's also the first thing to run after `grove install`, before anything has had a chance to go wrong.
+
+:::note[Resolvers that strip loopback answers]
+`*.grov.site` resolves to a loopback address, and some resolvers refuse to hand those back as a rebinding defence. Pi-hole, NextDNS, dnsmasq with `stop-dns-rebind`, and several routers do this. Doctor's DNS check reports it; the fix is to allowlist `grov.site` in the resolver.
+:::
+
+## Taking it back out
+
+```sh
+grove uninstall
+```
+
+This stops grove, removes its root from the trust stores, and offers to undo the privileged step the same way install offered to take it: printed in full, run on a yes or with `--yes`. The CA files stay on disk, so a later `grove install` trusts the same root rather than generating another one. On macOS, removing a trust root asks for authorization, since that isn't something to do quietly.

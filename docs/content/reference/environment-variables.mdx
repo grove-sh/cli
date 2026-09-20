@@ -1,0 +1,40 @@
+---
+title: Environment variables
+description: The variables grove sets in the commands it runs, and the ones it reads.
+---
+
+## Set by grove
+
+`grove exec` and `grove env` put these in the environment, above your shell and your `env_files`. `.env.local` may not set them, since grove fills them from the lease it holds.
+
+| Variable | Value |
+|----------|-------|
+| `GROVE_CONTEXT` | The context's slug. Set whether or not anything is bound, so a script can name the context for itself without the file repeating `{context.slug}`. |
+| `GROVE_PORT` | The bound entry's port. Only when an entry is bound. |
+| `GROVE_HOST` | The bound route's hostname. Not set for a `[ports.x]` entry. |
+| `GROVE_URL` | `https://` and that hostname. |
+| `NODE_EXTRA_CA_CERTS` | Grove's root, for node. Left alone if you already set it. |
+| `REQUESTS_CA_BUNDLE` | A bundle carrying grove's root, for python requests. Left alone if set. |
+| `DENO_CERT` | The same bundle, for deno. Left alone if set. |
+
+## Read by grove
+
+| Variable | Effect |
+|----------|--------|
+| `CI` | With no daemon answering, `grove exec` runs the command untouched instead of failing. Empty, `0`, and `false` count as unset. |
+| `GROVE_CONTEXT_OVERRIDE` | Replaces the context outright, ignoring the worktree and `name`. Not `GROVE_CONTEXT`, which is exported into every command and would follow a process tree into other worktrees. |
+| `GROVE_STATE_DIR` | Where the CA, `ports.json`, and `daemon.log` live. Defaults per [platform](/concepts/platforms#where-state-lives). |
+| `GROVE_SOCKET` | The control socket path. The escape hatch for a home directory too deep for macOS's socket path limit. |
+| `GROVE_LISTEN` | The address the daemon serves HTTPS on. Default `127.0.0.4:443`, or `10443` on macOS behind pf. |
+| `GROVE_HTTP_LISTEN` | The address the daemon answers plain HTTP on, redirecting to HTTPS. |
+| `GROVE_SYSTEM_BUNDLE` | The system CA bundle to point runtimes at, when grove's guess is wrong. |
+| `XDG_STATE_HOME`, `XDG_RUNTIME_DIR` | Honoured on Linux for the state directory and the socket. |
+| `NO_COLOR`, `TERM=dumb` | Turn colour off. Nothing is said in colour alone, so the words are the same either way. |
+
+The listen and socket variables are also how to run a second daemon beside the one serving your real worktrees while trying a change.
+
+## Read by the npm shim
+
+| Variable | Effect |
+|----------|--------|
+| `GROVE_BINARY_OVERRIDE` | A binary to run instead of the one npm installed, so a project's `pnpm dev` can exercise a build from a working tree. The daemon inherits it, since grove re-executes itself. Turborepo's strict env mode drops any variable not in `globalPassThroughEnv`, so a task run through turbo needs it listed. |

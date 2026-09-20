@@ -28,7 +28,7 @@
   </defs>
 
   <g transform="translate(-17.28 1.33) scale(0.77778)">
-    <use href="#body" fill="#14170F" mask="url(#cut)"/>
+    <use href="#body" fill="#3C782C" mask="url(#cut)"/>
   </g>
 
   <g transform="translate(71.05 66.00) scale(0.080000 -0.080000)" fill="#14170F">

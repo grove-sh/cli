@@ -1,0 +1,44 @@
+---
+title: Detached ports
+description: Mark an entry detached when whatever binds it outlives the command that asked, as supabase start and docker compose up do.
+---
+
+A route's lease normally lasts exactly as long as the command holding it. Run `grove exec -- vite dev`, and the port and hostname are yours until the dev server exits. That's the right shape for a process that's a child of grove, and the wrong shape for `supabase start` or `docker compose up -d`, which return in seconds and leave a stack holding ports for hours.
+
+Mark those entries `detached`:
+
+```toml grove.toml
+[env]
+SUPABASE_PROJECT_ID = "{context.slug}"
+SUPABASE_API_PORT = "{api.port}"
+SUPABASE_DB_PORT = "{db.port}"
+
+# https://<context>-api.grov.site
+[routes.api]
+detached = true
+
+[ports.db]
+detached = true
+```
+
+Two things are new here. A `[ports.x]` entry is a port with no hostname, for a database or an SMTP sink that nothing browses to. And `detached = true` means the lease outlives whatever command took it. Every `grove exec` in the project takes all of its detached entries, so the first command you run has already reserved the whole stack's ports, and the stack can come up on them and stay up after that command is gone.
+
+```sh
+grove exec -- supabase start
+```
+
+That gives supabase a project ID named after the worktree and ports that belong to this context, so two worktrees run two stacks side by side. `grove ls` shows them as `claimed` until something answers, and `running` once it does.
+
+## Walked ports are written down
+
+Detached ports also get written down. If two contexts collide on one and grove walks to the next free port, the walked port is recorded, so a restart hands the same port back and a database URL never quietly starts pointing at another worktree's data. [Ports and leases](/concepts/ports-and-leases) says why only detached ports need this.
+
+## Letting go
+
+Since nothing exits to end a detached lease, you end it yourself. `grove release` hands back every detached port this context holds, or name the ones to let go:
+
+```sh
+grove release db
+```
+
+And after a daemon restart, `grove hold` re-registers them, so a stack that's still running gets its hostname back. `grove restart` does that for you in every worktree that held one; run `hold` yourself after a crash, a reboot, or a `grove stop` followed by a `grove start` later.
