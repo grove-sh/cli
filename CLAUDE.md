@@ -37,6 +37,27 @@ Releases are cut by pushing a `v*` tag. No version is written down in the repo: 
 
 `npm/` is the published package: `cli/bin/grove.js` is the shim that picks a platform binary, `platform/` is the template the four of them are stamped from, and `stage.sh` and `rehearse.sh` build and rehearse a release. It is JavaScript and shell, so no Go test reaches it.
 
+`docs/` is grov.site: a blume site whose root is the landing page (`pages/index.astro`) and whose `content/` is served under `/docs`. It deploys to GitHub Pages from `.github/workflows/docs.yml` on every push to main that touches it; pull requests only build and run the link check.
+
+## Keeping the docs true
+
+The reference pages under `docs/content/reference` were written from the code, not the README, and nothing checks them against it. When a command, flag, `grove.toml` key, template token, or `GROVE_*` variable changes, the matching page changes in the same commit:
+
+- `reference/cli/<command>.mdx` mirrors `grove <command> --help`: the Long text, the flags table, and the examples. The `Example` string in `cmd/grove/exec.go` is the one the `exec` page and the README both repeat.
+- `reference/grove-toml.mdx` mirrors the struct tags in `internal/config/config.go` and the merge rules for `grove.local.toml`.
+- `reference/templates.mdx` mirrors `lookup` in `internal/config/template.go`, errors included.
+- `reference/environment-variables.mdx` lists every `GROVE_*` name the code reads or sets, plus the trust variables in `internal/trust`.
+- `guides/troubleshooting.mdx` lists doctor's checks in the order `cmd/grove/doctor.go` prints them.
+
+Copy names from the code rather than from memory, and keep the README's pitch and quickstart in step with `docs/content/index.mdx` and `quickstart.mdx`, since the README now links into the site for everything else.
+
+```sh
+cd docs && pnpm build     # what the Docs workflow runs; fonts are vendored, so no network
+cd docs && pnpm validate  # fails on a broken internal link, the way gofmt fails CI
+```
+
+`pnpm build` refuses while `blume dev` is running, since both write `.blume/`; `pnpm build --isolated` builds beside it into `.blume-verify/`, which is gitignored. Examples wrap the framework's own command, `grove exec -- vite dev`, never `pnpm dev`: the wrapper belongs in a `package.json` script, and an example that wraps `pnpm` reads as though every command needs it.
+
 ## How the pieces fit
 
 **One daemon serves the machine.** `grove daemon` is hidden and runs in the foreground; `grove start`, `restart`, and any `grove exec` spawn it detached by re-executing `os.Executable()` with `Setsid`, logging to `daemon.log` in the state directory. Nothing supervises it and nothing starts it at boot.
