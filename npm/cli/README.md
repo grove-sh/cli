@@ -1,42 +1,85 @@
-# grove
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://grov.site/grove-banner-dark.svg">
+    <img src="https://grov.site/grove-banner-light.svg" alt="grove" width="300">
+  </picture>
+</p>
 
-Two branches of the same app cannot both be running, not without juggling ports by hand and editing `.env` for each one. So mostly you stop the first to look at the second.
+<p align="center">
+  Run every branch at once, agents included. Each worktree gets its own hostname, ports, and env vars.
+</p>
 
-Grove makes a git worktree the unit. Each one gets its own hostname, its own ports, and its own environment, so several checkouts serve at the same time:
+<p align="center">
+  <a href="https://www.npmjs.com/package/@grove-sh/cli"><img alt="npm" src="https://img.shields.io/npm/v/@grove-sh/cli?style=flat-square&color=3C782C"></a>
+  <a href="https://github.com/grove-sh/cli/actions/workflows/ci.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/grove-sh/cli/ci.yml?branch=main&label=build&style=flat-square&color=3C782C"></a>
+  <a href="https://github.com/grove-sh/cli/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-3C782C?style=flat-square"></a>
+</p>
+
+---
+
+You probably have a feature you're working on, a PR you promised to review, and an agent or two grinding away on branches of their own, sometimes in a different repo. Nothing stops you running all of that at once. Nothing coordinates it either. You pick ports by hand, you edit `.env` in each checkout, and you swear you'll put it all back afterwards. So mostly you stop one thing to look at another.
+
+Grove uses worktrees to keep contexts separate. Every worktree of every repo on your machine is a context, and each one gets its own hostname, its own ports, and its own env vars. One daemon serves them all, so run as many worktrees on as many projects as you like and they won't collide:
 
 ```
-~/work/app            https://app.grov.site          postgres on 20402
-~/worktrees/app/feat  https://app-feat.grov.site     postgres on 20533
+~/code/app            https://app.grov.site        web:20107   db:20402
+~/worktrees/app/feat  https://app-feat.grov.site   web:20871   db:20533
+~/code/shop           https://shop.grov.site       web:20334   db:20118
 ```
 
-No port in the URL, a real certificate your browser trusts, and one command to run anything inside that context:
+No port in the URL, a certificate your browser actually trusts, and one command to run anything inside that context:
 
 ```sh
-grove exec -- pnpm dev
+grove exec -- vite dev
 ```
 
-## Installing
+There's nothing to configure per worktree. Ports come from a hash of the worktree and the thing being served, so a fresh checkout is addressable the moment it exists and leaves nothing behind when you delete it. And since the worktree's name is a value you can template, `{context.slug}` in a database URL points each one at its own database on the postgres you're already running.
+
+## Documentation
+
+You can read the documentation [here](https://grov.site/docs).
+
+## Quickstart
 
 ```sh
 npm install -g @grove-sh/cli
-grove install
+grove install            # once per machine
+grove init               # once per project, writes grove.toml
+grove exec -- vite dev
 ```
 
 This package is a wrapper. It installs the binary for your platform and runs it.
 
 `grove install` is a separate step on purpose. It generates a certificate authority and adds it to your trust stores, and it prints the one privileged step your platform needs, running it only when you say so. Neither belongs in an `npm install` that nobody is watching.
 
-## It runs beside your other tools
+## Why not lando or ddev?
 
-Grove serves `127.0.0.4`, so it never competes for port 443:
+You could describe grove as "lando, but bring your own services". That's close, but it undersells the part that matters.
 
-```
-127.0.0.1:443   docker-proxy   <- lando
-127.0.0.4:443   grove
-```
+lando and ddev get a lot right. You get a real hostname like `app.lndo.site` or `app.ddev.site`, https with a certificate your browser trusts, and a stack that comes up with one command. Grove keeps all of that.
 
-Nothing to stop before you can use something else. And grove does not run your services, it addresses the ones you already start. If you want containers built and a stack managed, that is lando or ddev, and grove is happy to sit next to either.
+What they assume, along with docker compose, is that the project is the unit. One checkout, one hostname, one set of ports. Clone the same project a second time and it collides with the first until you rename it and hand-edit the config. Their answer is to wrap everything in containers, which does isolate your services. Unfortunately it isolates your tooling right along with them, and you're still stuck at one checkout per project.
 
-Full documentation: https://github.com/grove-sh/cli
+Grove takes a different approach.
 
-Early development. Nothing here is stable yet.
+**A context is a worktree.** Hostnames, ports, and env vars are derived from the worktree, not written down. A fresh checkout serves on its own name with no setup, and five checkouts are no harder than one. That holds across repos too, so nothing defaults to 3000 twice. Run several agents at once and each has its own stack to check its work against.
+
+**Bring your own services and namespace them.** Grove doesn't run postgres or redis. It addresses the ones you already run and gives each worktree its own slice. `{context.slug}` in a connection string is a database per worktree on one server. The service is shared; the data isn't.
+
+**Your tooling stays on your host.** `pnpm dev` runs as you, with your node and your files. Hot reload watches the real filesystem, your debugger attaches, and the paths in your editor are the paths the process sees. No VM to feed, no bind mount to wait on.
+
+**Real hostnames, real HTTPS.** A wildcard certificate from a root your machine trusts, and real DNS under `grov.site`. No hosts file, no port in the URL, and secure cookies and OAuth redirects behave like production. Two branches are two origins, so they never share a session. `localhost:3000` and `localhost:3001` do, because cookies don't care about ports.
+
+**Adopting it isn't a team decision.** Under CI grove steps aside and runs your command untouched, and `--if-available` asks for the same anywhere. A teammate who never ran `grove install` runs the same scripts. Your lando project keeps working too.
+
+|                             | lando, ddev            | docker compose | grove               |
+|-----------------------------|------------------------|----------------|---------------------|
+| The unit                    | project                | project        | worktree            |
+| Runs your services          | yes                    | yes            | no, addresses yours |
+| Where your tooling runs     | container              | container      | your host           |
+| Several checkouts at once   | rename and reconfigure | juggle ports   | nothing to do       |
+| Needed in CI                | yes                    | yes            | no                  |
+
+## What grove asks of your project
+
+Your services have to be namespaceable. A database per worktree works because postgres has databases. A single-tenant listener like the Stripe webhook forwarder doesn't multiply, however nicely you ask. Each worktree's database also needs its own migrations and seed, which is a chore grove creates and does nothing about. Last, your dev server has to bind the port it's handed. Next.js reads `PORT` on its own, Vite has to be told, and a server that picks its own port is one grove can't reach. That catches nearly everyone, so it has [a page of its own](https://grov.site/docs/guides/dev-server).
