@@ -21,6 +21,15 @@
   --blume-code-background: #0f110c;
 }
 
+/* Chromium cross-fades the page on navigation, and the ground under the two
+   snapshots is unpainted white for the length of it, so every navigation
+   flashes. Painting html, the transition root, or color-scheme all leave it;
+   only dropping the fade removes the interval. Firefox never showed it. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
 /* The wordmark above the introduction's title, from components/PageHeader.astro,
    one file per colour mode. Blume's toggle sets data-theme rather than the OS
    preference, so a <picture> media query would not follow it. */

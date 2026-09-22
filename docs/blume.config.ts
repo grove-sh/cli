@@ -3,7 +3,7 @@ import { defineConfig } from "blume";
 export default defineConfig({
   title: "grove",
   description:
-    "Local HTTPS hostnames, port allocation, and env vars, scoped per git worktree.",
+    "An HTTPS hostname, leased ports, and env vars for every git worktree, so every branch you or an agent is working on can run at once.",
   logo: {
     image: {
       light: "/grove-banner-light.svg",
@@ -31,29 +31,39 @@ export default defineConfig({
     radius: "sm",
     // Self-hosted from the fontsource packages rather than fetched from
     // Google at build: that fetch failed often enough to fail CI on a retry.
-    // Each is the variable Latin file, so one @font-face covers every weight.
+    // Static faces at the weights the pages render, not the variable file:
+    // blume preloads by exact weight (body 400/500, display 500, mono 400) and
+    // a range matches none of them, so nothing was preloaded and every first
+    // paint swapped fonts. An italic per weight is free, since a face is only
+    // fetched when something asks for it.
     fonts: {
       display: {
         name: "Source Serif 4",
         fallback: "serif",
         variants: [
-          { src: "./node_modules/@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-normal.woff2", weight: "200..900" },
-          { src: "./node_modules/@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-italic.woff2", weight: "200..900", style: "italic" },
+          { src: "./node_modules/@fontsource/source-serif-4/files/source-serif-4-latin-500-normal.woff2", weight: 500 },
+          { src: "./node_modules/@fontsource/source-serif-4/files/source-serif-4-latin-500-italic.woff2", weight: 500, style: "italic" },
         ],
       },
       body: {
         name: "Inter",
         variants: [
-          { src: "./node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2", weight: "100..900" },
-          { src: "./node_modules/@fontsource-variable/inter/files/inter-latin-wght-italic.woff2", weight: "100..900", style: "italic" },
+          { src: "./node_modules/@fontsource/inter/files/inter-latin-400-normal.woff2", weight: 400 },
+          { src: "./node_modules/@fontsource/inter/files/inter-latin-400-italic.woff2", weight: 400, style: "italic" },
+          { src: "./node_modules/@fontsource/inter/files/inter-latin-500-normal.woff2", weight: 500 },
+          { src: "./node_modules/@fontsource/inter/files/inter-latin-500-italic.woff2", weight: 500, style: "italic" },
+          { src: "./node_modules/@fontsource/inter/files/inter-latin-600-normal.woff2", weight: 600 },
+          { src: "./node_modules/@fontsource/inter/files/inter-latin-600-italic.woff2", weight: 600, style: "italic" },
         ],
       },
       mono: {
         name: "JetBrains Mono",
         fallback: "mono",
         variants: [
-          { src: "./node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2", weight: "100..800" },
-          { src: "./node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-italic.woff2", weight: "100..800", style: "italic" },
+          { src: "./node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2", weight: 400 },
+          { src: "./node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-italic.woff2", weight: 400, style: "italic" },
+          { src: "./node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-500-normal.woff2", weight: 500 },
+          { src: "./node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-500-italic.woff2", weight: 500, style: "italic" },
         ],
       },
     },
@@ -70,32 +80,32 @@ export default defineConfig({
     ],
   },
   deployment: {
-    site: "https://grov.site",
+    // site: "https://grov.site",
+    site: "https://fe8f-46-110-132-221.ngrok-free.app",
   },
   seo: {
-    // Rendered at build. The card is always dark, so it takes the dark palette.
-    og: {
-      logo: "/grove-banner-dark.svg",
-      // Cards would follow the theme's fonts on their own, but blume hands
-      // the renderer the family name unquoted, and "Source Serif 4" is not
-      // a valid bare font-family because of the digit: the build fails on
-      // every card. Listing the font here takes a different path that works,
-      // at the cost of the title/body split, so the whole card is serif:
-      // bold for the title, regular for the rest. Local files, one weight
-      // each, since the renderer takes no variable font and fetching from
-      // Google is the flake the site fonts above avoid.
-      fonts: [
-        { name: "Source Serif 4", src: "./node_modules/@fontsource/source-serif-4/files/source-serif-4-latin-400-normal.woff2", weight: 400 },
-        { name: "Source Serif 4", src: "./node_modules/@fontsource/source-serif-4/files/source-serif-4-latin-700-normal.woff2", weight: 700 },
+    // One card for the whole site, public/og.png, pointed at from
+    // components/Layout.astro and pages/index.astro. Turning blume's per-page
+    // cards back on needs an `og.fonts` list: the renderer takes the family
+    // name unquoted, and "Source Serif 4" is not a valid bare font-family
+    // because of the digit, so every card fails to render without one.
+    og: { enabled: false },
+    // Identity for the agents that read JSON-LD before recommending a tool.
+    // Both need deployment.site, since their @ids are absolute.
+    organization: {
+      name: "grove",
+      sameAs: ["https://github.com/grove-sh"],
+    },
+    software: {
+      // schema.org wants a URL or a CreativeWork here, not the SPDX name.
+      license: "https://www.apache.org/licenses/LICENSE-2.0",
+      operatingSystem: "macOS, Linux",
+      // An Offer of 0 is how schema.org says free; omitting price says nothing.
+      price: 0,
+      sameAs: [
+        "https://github.com/grove-sh/cli",
+        "https://www.npmjs.com/package/@grove-sh/cli",
       ],
-      site: "grov.site",
-      palette: {
-        accent: "#7fc96b",
-        background: "#14170f",
-        foreground: "#f0ece3",
-        muted: "#8fa394",
-        border: "#2b2b2b",
-      },
     },
   },
   integrations: [
@@ -105,7 +115,7 @@ export default defineConfig({
         "astro:config:setup": ({ updateConfig }) => {
           updateConfig({
             vite: {
-              // server: { allowedHosts: [".ngrok-free.app"] },
+              server: { allowedHosts: [".ngrok-free.app"] },
               build: {
                 rollupOptions: {
                   onwarn(warning, warn) {

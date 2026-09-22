@@ -1,0 +1,19 @@
+---
+import RootLayout from "blume/components/layout/RootLayout.astro";
+import data from "blume:data";
+import { ogImagePath } from "./og-image.ts";
+
+// One social card for every docs page. The alternative blume offers is
+// `seo.image` per page, which a new page would have to remember and would
+// silently ship no card without. og:image has to be absolute, since a crawler
+// has no document to resolve a path against.
+const site = data.config.site?.replace(/\/$/, "") ?? null;
+
+// `ogGenerated` is what declares the size, but it also labels the card with the
+// page title as og:image:alt, which is not what this one shows. The landing
+// page passes a real alt and size through PageLayout, which takes both.
+---
+
+<RootLayout {...Astro.props} ogImage={site && `${site}${ogImagePath}`} ogGenerated={false}>
+  <slot />
+</RootLayout>

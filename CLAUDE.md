@@ -56,7 +56,9 @@ cd docs && pnpm build     # what the Docs workflow runs; fonts are vendored, so 
 cd docs && pnpm validate  # fails on a broken internal link, the way gofmt fails CI
 ```
 
-`pnpm build` refuses while `blume dev` is running, since both write `.blume/`; `pnpm build --isolated` builds beside it into `.blume-verify/`, which is gitignored. Examples wrap the framework's own command, `grove exec -- vite dev`, never `pnpm dev`: the wrapper belongs in a `package.json` script, and an example that wraps `pnpm` reads as though every command needs it.
+`pnpm build` refuses while `blume dev` is running, since both write `.blume/`; `pnpm build --isolated` builds beside it into `.blume-verify/`, which is gitignored. `cd docs && npx blume audit` reads the last build and reports the SEO problems a link check cannot see, so it wants a `pnpm build` rather than an isolated one.
+
+Every page shares one social card, `docs/public/og.png`, rather than the per-page card blume renders: `components/Layout.astro` wraps the page shell to set `og:image` in one place, so a new page carries the card without remembering a frontmatter line. The PNG is committed and `docs/scripts/og-card.sh` regenerates it from the banner and the tagline, which needs rsvg-convert and ImageMagick but only when the card itself changes. Examples wrap the framework's own command, `grove exec -- vite dev`, never `pnpm dev`: the wrapper belongs in a `package.json` script, and an example that wraps `pnpm` reads as though every command needs it.
 
 ## How the pieces fit
 

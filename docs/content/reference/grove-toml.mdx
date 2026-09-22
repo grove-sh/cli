@@ -1,6 +1,6 @@
 ---
 title: grove.toml
-description: Every key grove reads from grove.toml and grove.local.toml, and what it refuses.
+description: Every key grove reads from grove.toml and grove.local.toml, what each one does, how the two files merge, and what grove refuses.
 ---
 
 `grove.toml` sits at the root of the project, and every grove command finds it by walking up from the directory it's run in. Unknown keys are an error, so a typo fails at load rather than being silently ignored, and every template in the file is resolved against dummy values when it's read, so a token naming nothing fails there too.

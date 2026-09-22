@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  Local HTTPS hostnames, port allocation, and env vars, scoped per git worktree.
+  Run every branch at once, agents included. Each worktree gets its own hostname, ports, and env vars.
 </p>
 
 <p align="center">

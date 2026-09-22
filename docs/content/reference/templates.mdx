@@ -1,6 +1,6 @@
 ---
 title: Templates
-description: Every token a value in grove.toml can carry, what it resolves to, and the errors a wrong one gets.
+description: Every token a value in grove.toml can carry, what each one resolves to, and the error a wrong one gets when the config is read.
 ---
 
 A `{token}` in any value under `[env]` or an entry's `env` is replaced when the environment is built. Every template is checked against dummy values when the file is read, so a token naming nothing fails at load, not at use.
