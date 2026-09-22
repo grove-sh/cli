@@ -1,6 +1,7 @@
 ---
 import PageLayout from "blume/components/layout/PageLayout.astro";
 import data from "blume:data";
+import { ogImagePath, ogImageSize } from "../components/og-image.ts";
 
 export const prerender = true;
 
@@ -20,7 +21,12 @@ const worktrees = [
 const install = "npm install -g @grove-sh/cli";
 
 const description =
-  "Local HTTPS hostnames, port allocation, and env vars, scoped per git worktree.";
+  "Run every branch at once, agents included. Each worktree gets its own hostname, ports, and env vars.";
+
+// A search result is read cold by someone who has never heard of grove, so the
+// snippet names the reason before the mechanism rather than reusing the tagline.
+const snippet =
+  "Agents work in branches, and every branch needs somewhere to run. Grove gives each git worktree its own HTTPS hostname, ports, and env vars.";
 ---
 
 <PageLayout
@@ -35,8 +41,11 @@ const description =
   searchEnabled={config.search.enabled}
   siteUrl={config.site}
   ogEnabled={config.og.enabled}
+  ogImage={ogImagePath}
+  ogImageAlt="grove: all your worktrees, running at once, each with its own hostname, ports, and env vars"
+  ogImageSize={ogImageSize}
   structuredDataEnabled={config.structuredData}
-  page={{ title: "grove: local HTTPS for every git worktree", description, route: "/" }}
+  page={{ title: "grove: local HTTPS for every git worktree", description: snippet, route: "/" }}
 >
   <main class="grove-home">
     <div class="grove-home-lockup">
