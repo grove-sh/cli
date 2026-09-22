@@ -385,7 +385,10 @@ func TestClientNamesAnOlderDaemon(t *testing.T) {
 	if !errors.As(err, &mismatch) {
 		t.Fatalf("err = %v, want VersionError", err)
 	}
-	for _, want := range []string{"grove restart", "grove hold"} {
+	// The prose as well as the command: a restart alone settles nothing while
+	// two projects install different versions, and that is the half worth
+	// keeping asserted.
+	for _, want := range []string{"grove restart", "One daemon serves the machine"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not name %q, so it says a problem without a way out: %v", want, err)
 		}
@@ -924,7 +927,7 @@ func TestTheErrorsNameHowGroveWasReached(t *testing.T) {
 	grove := shell.Invocation()
 
 	mismatch := (&daemon.VersionError{Daemon: 3, CLI: 4}).Error()
-	if !strings.Contains(mismatch, "'"+grove+" restart'") || !strings.Contains(mismatch, "'"+grove+" hold'") {
+	if !strings.Contains(mismatch, "'"+grove+" restart'") {
 		t.Errorf("version error does not name the caller's grove: %q", mismatch)
 	}
 

@@ -241,5 +241,5 @@ func (e *VersionError) Error() string {
 	// from inside a project that installed grove rather than from a shell that
 	// has it on PATH.
 	grove := shell.Invocation()
-	return fmt.Sprintf("the running daemon speaks control protocol v%d and this grove speaks v%d; restart it with '%s restart', then '%s hold' in each project, since a restart drops every detached port", e.Daemon, e.CLI, grove, grove)
+	return fmt.Sprintf("the running daemon speaks control protocol v%d and this grove speaks v%d; restart it with '%s restart' to hand it to this build, which says what that cost. One daemon serves the machine, so a project installing the other version cannot reach it until that project upgrades too.", e.Daemon, e.CLI, grove)
 }
