@@ -78,3 +78,9 @@ Context         holding ports as app-main, and resolving app now
 ## The daemon is serving an old build
 
 A running daemon keeps serving the build it started as, and it only complains about a mismatch when the wire protocol changed. After upgrading grove, `grove restart`. Detached ports are taken again on the far side; a lease held by a running command is not, so that command has to be run again, and restart tells you which routes that cost.
+
+## Two projects install different groves
+
+One daemon serves the machine, so when the wire protocol changes between versions only one of those groves can talk to it. Whichever project restarts last owns the daemon, and every project on the other version gets a protocol mismatch until it upgrades too. Restarting from the stranded project only trades which one works.
+
+The fix is to put every project on the same grove, not to keep restarting. [`grove doctor`](/reference/cli/doctor) reads the version a project installs under `Project grove`, which is where a workspace resolving more than one shows up.
