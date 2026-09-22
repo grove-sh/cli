@@ -11,6 +11,7 @@ export default defineMeta({
     "ls",
     "hold",
     "release",
+    "forget",
     "context",
     "doctor",
     "daemon",

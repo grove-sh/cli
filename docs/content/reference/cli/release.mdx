@@ -11,6 +11,8 @@ A detached port outlives the command that asked for it, because a container stac
 
 With no names, every detached port this context holds is released.
 
+The record of where the port landed stays, so the same entry gets the same number next time. [`grove forget`](/reference/cli/forget) is what drops that, for a worktree that is gone.
+
 ```sh
 grove release
 grove release studio db

@@ -33,7 +33,7 @@ A 503 tells you which half is wrong.
 grove doctor
 ```
 
-Each check reports on its own, and a failure names the fix. A failure exits non-zero so doctor can gate a script; a warning does not. The checks, in the order they're printed. The three that only speak up when something is wrong stay out of a healthy report, and the project checks only appear inside a project.
+Each check reports on its own, and a failure names the fix. A failure exits non-zero so doctor can gate a script; a warning does not. The checks, in the order they're printed. The four that only speak up when something is wrong stay out of a healthy report, and the project checks only appear inside a project.
 
 | Check | What it looks at |
 |-------|------------------|
@@ -48,6 +48,9 @@ Each check reports on its own, and a failure names the fix. A failure exits non-
 | Project grove | Which grove the project installs, and whether packages disagree. |
 | Project | Whether `grove.toml` and `grove.local.toml` parse. Nothing in this directory runs until they do. |
 | Env override | Whether `.env.local` is tracked by git. That file overrides for everyone, and a shared one hides the values grove leased. |
+| Port records | Whether `ports.json` still reserves ports for a worktree that is no longer on disk. Quiet when it doesn't. |
+
+`Port records` is the one check about something that costs nothing to leave alone. Every context that has ever leased a detached port keeps its line, which is what hands the ports back when a checkout is remade under the same name, and nothing else on the machine ever mentions one. [`grove forget`](/reference/cli/forget) drops them, keeping any whose ports still answer.
 
 `Version` and `Platform` close the report. They aren't checks, but they're the two things every bug report needs.
 

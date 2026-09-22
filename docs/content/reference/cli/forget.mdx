@@ -1,0 +1,29 @@
+---
+title: grove forget
+description: Drop the recorded ports of a context whose worktree is gone.
+---
+
+```sh
+grove forget [context...]
+```
+
+Every detached port is written down, so a stack keeps its port when the daemon goes away and comes back. That record outlives the worktree, which is what hands the ports back if you make the checkout again under the same name. Nothing else removes one.
+
+With no names, every context whose worktree is no longer on disk is forgotten. Naming contexts forgets those instead, wherever their worktree is.
+
+A context is kept, and said so, while it holds a lease or while something is answering on one of its ports: the record is what stops another worktree being handed that port, so dropping it while a stack is up is the thing this record exists to prevent.
+
+```sh
+grove forget
+grove forget mass-lodge-old-branch
+```
+
+A record written by a grove that predated the worktree key has no path to check, so an unnamed sweep leaves it alone. It learns one the next time that context runs anything through grove. A worktree already deleted by then never gets that chance, so those records are the one case the sweep will never find: name them once.
+
+A context that is kept is reported rather than treated as a failure, so naming one that turns out to be in use still exits zero.
+
+## Flags
+
+| Flag | Meaning |
+|------|---------|
+| `--socket` | The control socket to reach the daemon on. |

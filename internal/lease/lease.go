@@ -143,7 +143,7 @@ func (r *Registry) Acquire(req Request) (*Lease, error) {
 		}
 	}
 
-	port, err := r.pick(k, req.Detached, true)
+	port, err := r.pick(k, req.Worktree, req.Detached, true)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +191,7 @@ func (r *Registry) Resolve(req Request) (Lease, error) {
 		return found, nil
 	}
 
-	port, err := r.pick(k, req.Detached, false)
+	port, err := r.pick(k, req.Worktree, req.Detached, false)
 	if err != nil {
 		return Lease{}, err
 	}
@@ -287,7 +287,7 @@ func hashOffset(rng PortRange, slug, service string) int {
 // it did not write.
 // record is false for a caller only asking what a port would be: writing down
 // a lease nobody took would make the answer to a question outlive the asking.
-func (r *Registry) pick(k key, detached, record bool) (int, error) {
+func (r *Registry) pick(k key, worktree string, detached, record bool) (int, error) {
 	size := r.rng.size()
 	offset := hashOffset(r.rng, k.slug, k.service)
 
@@ -296,6 +296,15 @@ func (r *Registry) pick(k key, detached, record bool) (int, error) {
 		// already. A changed range or a since-taken port falls back to the walk.
 		if port, ok := r.memory.Port(k.slug, k.service); ok && r.rng.Holds(port) {
 			if _, taken := r.ports[port]; !taken {
+				if record {
+					// The port is settled but the path may not be: an entry
+					// takes this branch every time after its first allocation,
+					// so returning here without writing is how a record made
+					// before paths were kept would never gain one, and how a
+					// worktree that moved would keep naming where it was.
+					// Remember writes nothing when both already match.
+					_ = r.memory.Remember(k.slug, k.service, worktree, port)
+				}
 				return port, nil
 			}
 		}
@@ -322,7 +331,7 @@ func (r *Registry) pick(k key, detached, record bool) (int, error) {
 				if record {
 					// Failing to write it down costs a reshuffle next restart,
 					// which is worth less than refusing the lease.
-					_ = r.memory.Remember(k.slug, k.service, port)
+					_ = r.memory.Remember(k.slug, k.service, worktree, port)
 				}
 				return port, nil
 			}

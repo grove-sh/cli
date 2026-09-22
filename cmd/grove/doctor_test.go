@@ -675,3 +675,35 @@ func TestOnlyASplitProjectIsWorthAnAlarm(t *testing.T) {
 		t.Errorf("being a version behind was reported as a problem: %+v", other)
 	}
 }
+
+// A record whose worktree is gone costs almost nothing, so this is the only
+// place it is ever mentioned. Nothing else on the machine reports one.
+func TestDoctorNamesARecordWhoseWorktreeIsGone(t *testing.T) {
+	gone := filepath.Join(t.TempDir(), "deleted")
+	socket, stateDir := recordingDaemonSeeded(t,
+		map[string]map[string]int{"app1": {"db": 20040}},
+		map[string]string{"app1": gone})
+
+	_, stdout, _ := exercise(t, "doctor", "--socket", socket, "--state-dir", stateDir)
+
+	if !strings.Contains(stdout, "Port records") || !strings.Contains(stdout, "app1") {
+		t.Errorf("doctor said nothing about the stale record:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "forget") {
+		t.Errorf("the finding names no command to run:\n%s", stdout)
+	}
+}
+
+// Every context that ever ran is in that file, and most of them are fine, so
+// a healthy machine must not grow a row for them.
+func TestDoctorSaysNothingAboutRecordsThatAreFine(t *testing.T) {
+	socket, stateDir := recordingDaemonSeeded(t,
+		map[string]map[string]int{"app1": {"db": 20040}},
+		map[string]string{"app1": t.TempDir()})
+
+	_, stdout, _ := exercise(t, "doctor", "--socket", socket, "--state-dir", stateDir)
+
+	if strings.Contains(stdout, "Port records") {
+		t.Errorf("a healthy record was reported on:\n%s", stdout)
+	}
+}
