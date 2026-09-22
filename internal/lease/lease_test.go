@@ -479,6 +479,22 @@ func TestADetachedLeaseStillReportsAFullRange(t *testing.T) {
 	}
 }
 
+// Neither a lease nor a record is something ls will show, so the one error
+// that can name no holder has to name what to do instead.
+func TestExhaustedErrorNamesTheRemedy(t *testing.T) {
+	r := registry(t, lease.Options{Range: lease.PortRange{Low: 20000, High: 20000}, Free: allFree, Memory: &recorder{}})
+	acquireDetached(t, r, "app1", "db", "/src/app1")
+
+	_, err := r.Acquire(lease.Request{Slug: "app2", Service: "db", Worktree: "/src/app2", Detached: true})
+
+	if err == nil {
+		t.Fatal("a full range was not refused")
+	}
+	if !strings.Contains(err.Error(), shell.Invocation()+" release") {
+		t.Errorf("err = %q, and names no command to run", err)
+	}
+}
+
 func acquireDetached(t *testing.T, r *lease.Registry, slug, service, worktree string) *lease.Lease {
 	t.Helper()
 	l, err := r.Acquire(lease.Request{Slug: slug, Service: service, Worktree: worktree, Detached: true})
@@ -487,6 +503,103 @@ func acquireDetached(t *testing.T, r *lease.Registry, slug, service, worktree st
 	}
 	t.Cleanup(l.Release)
 	return l
+}
+
+// The entry that wins a collision has to be written down too, or the record
+// defends only the loser.
+func TestEveryDetachedAllocationIsRemembered(t *testing.T) {
+	shared := &recorder{}
+	r := registry(t, lease.Options{Free: allFree, Memory: shared})
+
+	got := acquireDetached(t, r, "app1", "db", "/src/app1")
+
+	if port, ok := shared.ports["app1\x00db"]; !ok || port != got.Port {
+		t.Errorf("the record says %d, %v; want the %d the entry took without walking", port, ok, got.Port)
+	}
+}
+
+// A stack whose daemon is gone leaves no lease behind, and a detached pick
+// never probes, so the record is the only thing that can say the port is
+// spoken for. A stopped stack and a deleted worktree look alike from here, so
+// while there is anywhere else to go the record is honoured either way.
+func TestAnotherEntrysRecordIsLeftAloneWhileTheRangeHasRoom(t *testing.T) {
+	rng := lease.PortRange{Low: 20000, High: 20001}
+	contested := lease.PredictPort(rng, "app2", "db")
+	shared := &recorder{ports: map[string]int{"app1\x00db": contested}}
+
+	r := registry(t, lease.Options{Range: rng, Free: allFree, Memory: shared})
+	got := acquireDetached(t, r, "app2", "db", "/src/app2")
+
+	if got.Port == contested {
+		t.Fatalf("took app1's recorded port %d with the rest of the range free", contested)
+	}
+	if port, ok := shared.ports["app1\x00db"]; !ok || port != contested {
+		t.Errorf("app1's record is %d, %v; nothing should have disturbed it", port, ok)
+	}
+	if port := shared.ports["app2\x00db"]; port != got.Port {
+		t.Errorf("the record says app2 is on %d, not the %d it walked to", port, got.Port)
+	}
+}
+
+// The backstop, which a thousand-port range means nothing reaches in practice:
+// a full range is still not a reason to refuse a lease while a record in it
+// has nothing listening behind it.
+func TestAStaleRecordIsReclaimedWhenTheRangeRunsOut(t *testing.T) {
+	rng := lease.PortRange{Low: 20000, High: 20000}
+	shared := &recorder{ports: map[string]int{"app1\x00db": 20000}}
+
+	r := registry(t, lease.Options{Range: rng, Free: allFree, Memory: shared})
+	got := acquireDetached(t, r, "app2", "db", "/src/app2")
+
+	if got.Port != 20000 {
+		t.Fatalf("port = %d, want the one port in the range", got.Port)
+	}
+	if _, ok := shared.ports["app1\x00db"]; ok {
+		t.Error("the stale record for app1 is still there")
+	}
+	if port := shared.ports["app2\x00db"]; port != 20000 {
+		t.Errorf("the record says app2 is on %d, not 20000", port)
+	}
+}
+
+// Pressure is not licence: the last port in the range still belongs to whoever
+// is listening on it, so the answer is that there is no port rather than one
+// that is already serving another worktree.
+func TestALiveRecordedPortIsNotReclaimedUnderPressure(t *testing.T) {
+	rng := lease.PortRange{Low: 20000, High: 20000}
+	shared := &recorder{ports: map[string]int{"app1\x00db": 20000}}
+	stackStillUp := func(int) bool { return false }
+
+	r := registry(t, lease.Options{Range: rng, Free: stackStillUp, Memory: shared})
+
+	_, err := r.Acquire(lease.Request{Slug: "app2", Service: "db", Worktree: "/src/app2", Detached: true})
+
+	var exhausted *lease.ExhaustedError
+	if !errors.As(err, &exhausted) {
+		t.Fatalf("err = %v, want ExhaustedError rather than app1's port", err)
+	}
+	if port, ok := shared.ports["app1\x00db"]; !ok || port != 20000 {
+		t.Errorf("app1's record is %d, %v; a refused lease must not disturb it", port, ok)
+	}
+}
+
+// Resolve only reads, so an answer must not cost another entry its record.
+func TestResolveLeavesAnotherEntrysRecordAlone(t *testing.T) {
+	rng := lease.PortRange{Low: 20000, High: 20001}
+	contested := lease.PredictPort(rng, "app2", "db")
+	shared := &recorder{ports: map[string]int{"app1\x00db": contested}}
+
+	r := registry(t, lease.Options{Range: rng, Free: allFree, Memory: shared})
+	if _, err := r.Resolve(lease.Request{Slug: "app2", Service: "db", Worktree: "/src/app2", Detached: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if port, ok := shared.ports["app1\x00db"]; !ok || port != contested {
+		t.Errorf("a reading changed the record: app1 = %d, %v", port, ok)
+	}
+	if _, ok := shared.ports["app2\x00db"]; ok {
+		t.Error("a reading wrote a record for app2")
+	}
 }
 
 // recorder is a Memory with no file behind it, so a test can watch what gets
@@ -500,11 +613,26 @@ func (m *recorder) Port(slug, service string) (int, bool) {
 	return port, ok
 }
 
+func (m *recorder) Owner(port int) (string, string, bool) {
+	for k, held := range m.ports {
+		if held == port {
+			slug, service, _ := strings.Cut(k, "\x00")
+			return slug, service, true
+		}
+	}
+	return "", "", false
+}
+
 func (m *recorder) Remember(slug, service string, port int) error {
 	if m.ports == nil {
 		m.ports = map[string]int{}
 	}
 	m.ports[slug+"\x00"+service] = port
+	return nil
+}
+
+func (m *recorder) Forget(slug, service string) error {
+	delete(m.ports, slug+"\x00"+service)
 	return nil
 }
 

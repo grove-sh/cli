@@ -3,6 +3,7 @@ package lease_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/grove-sh/cli/internal/lease"
@@ -85,5 +86,54 @@ func TestMemoryLeavesNoHalfWrittenFile(t *testing.T) {
 	}
 	if port, _ := reread.Port("app1", "db"); port != 20502 {
 		t.Errorf("the file carries %d, not the last port written", port)
+	}
+}
+
+func TestMemoryFindsAnEntryByItsPort(t *testing.T) {
+	m, err := lease.OpenMemory(filepath.Join(t.TempDir(), "ports.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Remember("app1", "db", 20040); err != nil {
+		t.Fatal(err)
+	}
+
+	slug, service, ok := m.Owner(20040)
+	if !ok || slug != "app1" || service != "db" {
+		t.Errorf("Owner(20040) = %q, %q, %v", slug, service, ok)
+	}
+	if _, _, ok := m.Owner(20041); ok {
+		t.Error("a port nobody holds came back with an owner")
+	}
+}
+
+// The last entry of a context takes the context with it, so the file does not
+// fill with empty objects for worktrees that are gone.
+func TestMemoryForgetsThroughTheFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ports.json")
+	m, err := lease.OpenMemory(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Remember("app1", "db", 20040); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Forget("app1", "db"); err != nil {
+		t.Fatal(err)
+	}
+
+	reread, err := lease.OpenMemory(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reread.Port("app1", "db"); ok {
+		t.Error("the forgotten entry is still in the file")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "app1") {
+		t.Errorf("the file still names the context:\n%s", body)
 	}
 }

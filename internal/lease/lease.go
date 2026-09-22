@@ -278,14 +278,15 @@ func hashOffset(rng PortRange, slug, service string) int {
 }
 
 // Starting from a hash means the same context tends to get the same port on any
-// machine. A detached port never asks whether it is free, since a port already
-// in use is the expected case: usually the stack this entry describes, still
-// running. It must still avoid a port another entry holds, and hashes collide
-// roughly once in a few hundred entries. Walking past one is only safe because
-// where it landed is written down: see Memory for what happens otherwise.
+// machine. A detached port never asks whether its own port is free, since a
+// port already in use is the expected case: usually the stack this entry
+// describes, still running. It must still avoid a port another entry holds,
+// and hashes collide roughly once in a few hundred entries. Walking past one is
+// only safe because where every detached entry landed is written down: see
+// Memory for what happens otherwise, and below for what a walk owes a record
+// it did not write.
 // record is false for a caller only asking what a port would be: writing down
-// an exception for a lease nobody took would make the answer to a question
-// outlive the asking.
+// a lease nobody took would make the answer to a question outlive the asking.
 func (r *Registry) pick(k key, detached, record bool) (int, error) {
 	size := r.rng.size()
 	offset := hashOffset(r.rng, k.slug, k.service)
@@ -298,17 +299,33 @@ func (r *Registry) pick(k key, detached, record bool) (int, error) {
 				return port, nil
 			}
 		}
-		for i := 0; i < size; i++ {
-			port := r.rng.Low + (offset+i)%size
-			if _, taken := r.ports[port]; taken {
-				continue
+		// A port another entry's record names is left alone on the first pass
+		// whether or not anything answers there, so a stack stopped for the
+		// evening keeps the port its containers are configured for. The second
+		// pass is a backstop and not a cleanup: with a thousand ports and a few
+		// dozen entries it never runs, so a record ordinarily outlives the
+		// worktree, which is what hands the port back if that worktree returns.
+		for _, reclaim := range []bool{false, true} {
+			for i := 0; i < size; i++ {
+				port := r.rng.Low + (offset+i)%size
+				if _, taken := r.ports[port]; taken {
+					continue
+				}
+				if slug, service, ok := r.memory.Owner(port); ok && (slug != k.slug || service != k.service) {
+					if !reclaim || !r.free(port) {
+						continue
+					}
+					if record {
+						_ = r.memory.Forget(slug, service)
+					}
+				}
+				if record {
+					// Failing to write it down costs a reshuffle next restart,
+					// which is worth less than refusing the lease.
+					_ = r.memory.Remember(k.slug, k.service, port)
+				}
+				return port, nil
 			}
-			if i > 0 && record {
-				// Failing to write down an exception costs a reshuffle next
-				// restart, which is worth less than refusing the lease.
-				_ = r.memory.Remember(k.slug, k.service, port)
-			}
-			return port, nil
 		}
 		return 0, &ExhaustedError{Range: r.rng}
 	}
@@ -374,8 +391,13 @@ type ExhaustedError struct {
 	Range PortRange
 }
 
+// Every port is leased, or recorded for a context with something answering on
+// it. Neither is visible in ls, which lists leases, so the remedy names what
+// the caller can do rather than a file to go reading. Both halves of it, since
+// releasing leaves the record standing: it is the port going quiet that frees
+// it, and releasing a port whose stack is still up prints this again.
 func (e *ExhaustedError) Error() string {
-	return fmt.Sprintf("lease: no free port in %s", e.Range)
+	return fmt.Sprintf("lease: no free port in %s; stop a stack you are done with, and end its port with '%s release'", e.Range, shell.Invocation())
 }
 
 func describe(slug, service string) string {
