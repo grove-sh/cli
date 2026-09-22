@@ -36,9 +36,13 @@ type Config struct {
 type Server struct {
 	domain   string
 	registry *lease.Registry
-	proxy    *proxy.Server
-	cert     *tls.Certificate
-	root     []byte
+
+	// Held apart from the registry, which allocates out of the record and has
+	// no reason to report on it or prune it.
+	memory recordFile
+	proxy  *proxy.Server
+	cert   *tls.Certificate
+	root   []byte
 
 	version  string
 	listen   string
@@ -86,12 +90,20 @@ func New(cfg Config) (*Server, error) {
 		domain:   cfg.Domain,
 		version:  cfg.Version,
 		registry: registry,
+		memory:   memory,
 		proxy:    proxy.New(),
 		cert:     cert,
 		root:     root.RootPEM(),
 		conns:    make(map[net.Conn]struct{}),
 		routed:   make(map[routeKey][]string),
 	}, nil
+}
+
+// The reporting half of the record, which is not what a registry wants from
+// one: allocation asks about a single entry, and these two are about the file.
+type recordFile interface {
+	Records() []lease.Record
+	ForgetContext(slug string) ([]lease.Record, error)
 }
 
 func (s *Server) RootPEM() []byte { return s.root }
@@ -245,9 +257,56 @@ func (s *Server) handle(conn net.Conn) {
 		s.acquire(conn, enc, req)
 	case OpResolve:
 		s.resolve(enc, req)
+	case OpRecords:
+		enc.Encode(Response{Version: Version, Records: s.records()})
+	case OpForget:
+		s.forget(enc, req)
 	default:
 		enc.Encode(Response{Version: Version, Error: fmt.Sprintf("daemon: unknown op %q", req.Op)})
 	}
+}
+
+func (s *Server) records() []Record {
+	held := s.memory.Records()
+	out := make([]Record, 0, len(held))
+	for _, r := range held {
+		out = append(out, Record{Slug: r.Slug, Service: r.Service, Port: r.Port, Worktree: r.Worktree})
+	}
+	return out
+}
+
+// A context still holding a lease keeps its record, since forgetting it would
+// hand the port away underneath a stack this daemon is currently routing to.
+// The caller filters those out with a better message, so reaching one here is
+// a lease taken since it asked, and the refusal covers every name before any
+// record is dropped: a partial write reported as a failure leaves the caller
+// believing nothing went.
+func (s *Server) forget(enc *json.Encoder, req Request) {
+	leased := map[string]bool{}
+	for _, l := range s.registry.List() {
+		leased[l.Slug] = true
+	}
+	for _, slug := range req.Names {
+		if leased[slug] {
+			enc.Encode(Response{Version: Version, Error: fmt.Sprintf("daemon: %s took a lease while you were asking, so its record is in use; release it first", slug)})
+			return
+		}
+	}
+
+	var gone []Record
+	for _, slug := range req.Names {
+		dropped, err := s.memory.ForgetContext(slug)
+		if err != nil {
+			// What went already is as much of the answer as there is, and
+			// saying only the error would leave those records unaccounted for.
+			enc.Encode(Response{Version: Version, Error: err.Error(), Records: gone})
+			return
+		}
+		for _, r := range dropped {
+			gone = append(gone, Record{Slug: r.Slug, Service: r.Service, Port: r.Port, Worktree: r.Worktree})
+		}
+	}
+	enc.Encode(Response{Version: Version, Records: gone})
 }
 
 // Deliberately not touching s.routed or syncRoutes: a resolved host is the one

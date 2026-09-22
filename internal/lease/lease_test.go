@@ -605,7 +605,8 @@ func TestResolveLeavesAnotherEntrysRecordAlone(t *testing.T) {
 // recorder is a Memory with no file behind it, so a test can watch what gets
 // written without one.
 type recorder struct {
-	ports map[string]int
+	ports     map[string]int
+	worktrees map[string]string
 }
 
 func (m *recorder) Port(slug, service string) (int, bool) {
@@ -623,11 +624,15 @@ func (m *recorder) Owner(port int) (string, string, bool) {
 	return "", "", false
 }
 
-func (m *recorder) Remember(slug, service string, port int) error {
+func (m *recorder) Remember(slug, service, worktree string, port int) error {
 	if m.ports == nil {
 		m.ports = map[string]int{}
 	}
 	m.ports[slug+"\x00"+service] = port
+	if m.worktrees == nil {
+		m.worktrees = map[string]string{}
+	}
+	m.worktrees[slug] = worktree
 	return nil
 }
 
@@ -700,7 +705,7 @@ func TestResolveRemembersNothing(t *testing.T) {
 func TestResolveFollowsWhereADetachedPortLanded(t *testing.T) {
 	rng := lease.PortRange{Low: 20000, High: 20099}
 	shared := &recorder{}
-	if err := shared.Remember("app1", "db", 20077); err != nil {
+	if err := shared.Remember("app1", "db", "/src/app1", 20077); err != nil {
 		t.Fatal(err)
 	}
 	r := registry(t, lease.Options{Range: rng, Free: allFree, Memory: shared})
@@ -736,5 +741,57 @@ func TestBusyDetachedNamesHowGroveWasReached(t *testing.T) {
 
 	if !strings.Contains(err, "'"+shell.Invocation()+" release db'") {
 		t.Errorf("busy error does not name the caller's grove: %q", err)
+	}
+}
+
+// An entry takes the remembered-port branch every time after its first
+// allocation, so a record written before paths were kept, or one whose
+// worktree has since moved, only ever gains the right path here.
+func TestARememberedPortStillLearnsWhereItsWorktreeIs(t *testing.T) {
+	shared := &recorder{}
+	if err := shared.Remember("app1", "db", "", 20040); err != nil {
+		t.Fatal(err)
+	}
+	r := registry(t, lease.Options{Free: allFree, Memory: shared})
+
+	got := acquireDetached(t, r, "app1", "db", "/src/app1")
+
+	if got.Port != 20040 {
+		t.Fatalf("port = %d, want the remembered 20040", got.Port)
+	}
+	if shared.worktrees["app1"] != "/src/app1" {
+		t.Errorf("worktree = %q, want the one the lease was taken from", shared.worktrees["app1"])
+	}
+}
+
+func TestAWorktreeThatMovedIsRecordedWhereItIsNow(t *testing.T) {
+	shared := &recorder{}
+	if err := shared.Remember("app1", "db", "/src/old", 20040); err != nil {
+		t.Fatal(err)
+	}
+	r := registry(t, lease.Options{Free: allFree, Memory: shared})
+
+	acquireDetached(t, r, "app1", "db", "/src/new")
+
+	if shared.worktrees["app1"] != "/src/new" {
+		t.Errorf("worktree = %q, and still names where the checkout was", shared.worktrees["app1"])
+	}
+}
+
+// Resolve only reads, so asking where a port would go must not rewrite the
+// path the record carries.
+func TestResolveDoesNotRewriteTheRecordedWorktree(t *testing.T) {
+	shared := &recorder{}
+	if err := shared.Remember("app1", "db", "/src/old", 20040); err != nil {
+		t.Fatal(err)
+	}
+	r := registry(t, lease.Options{Free: allFree, Memory: shared})
+
+	if _, err := r.Resolve(lease.Request{Slug: "app1", Service: "db", Worktree: "/src/new", Detached: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if shared.worktrees["app1"] != "/src/old" {
+		t.Errorf("worktree = %q; a reading changed the record", shared.worktrees["app1"])
 	}
 }

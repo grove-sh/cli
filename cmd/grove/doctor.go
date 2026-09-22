@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -114,6 +115,11 @@ script; a warning does not.`,
 			if f, worth := checkOverrideFile(cfg); worth {
 				findings = append(findings, f)
 			}
+			if answered {
+				if f, worth := checkStaleRecords(socket); worth {
+					findings = append(findings, f)
+				}
+			}
 
 			out := cmd.OutOrStdout()
 			paint := styles(out)
@@ -165,6 +171,8 @@ func remedy(fix string) string {
 		return "Start it with " + grove + " start, which puts it in the background."
 	case "grove restart":
 		return "Run " + grove + " restart to pick up the build you have installed. Attached ports need their commands run again, since a restart drops them."
+	case "forget":
+		return "Run " + grove + " forget to drop them, which keeps any whose ports still answer."
 	}
 	return ""
 }
@@ -488,6 +496,45 @@ func staleDaemon(daemonBuild, cliBuild string) string {
 // context is derived put the same worktree on two slugs, which moves every port
 // and hostname, and every symptom of it reads as grove losing track of a stack
 // that is plainly running.
+// Only where a path can be checked and is missing. A record is harmless, so
+// this is worth a line for the one reason nothing else gives: nothing removes
+// one, and a machine that has been through a few branches accumulates them
+// with no other sign.
+func checkStaleRecords(socket string) (finding, bool) {
+	client, err := daemon.Dial(socket)
+	if err != nil {
+		return finding{}, false
+	}
+	defer client.Close()
+
+	records, err := client.Records()
+	if err != nil {
+		return finding{}, false
+	}
+
+	gone := map[string]bool{}
+	for _, r := range records {
+		if r.Worktree == "" || gone[r.Slug] {
+			continue
+		}
+		if _, err := os.Stat(r.Worktree); os.IsNotExist(err) {
+			gone[r.Slug] = true
+		}
+	}
+	if len(gone) == 0 {
+		return finding{}, false
+	}
+
+	slugs := slices.Sorted(maps.Keys(gone))
+	return finding{
+		name:   "Port records",
+		state:  warn,
+		detail: fmt.Sprintf("%s for a worktree that is no longer there", strings.Join(slugs, ", ")),
+		advice: "Each of those keeps its ports reserved, so an entry that hashes onto one walks past it. Remaking the checkout under the same name hands the ports back, which is why they are kept.",
+		fix:    "forget",
+	}, true
+}
+
 func checkProjectGrove(dir, running string) (finding, bool) {
 	root, err := config.Find(dir)
 	if err != nil {

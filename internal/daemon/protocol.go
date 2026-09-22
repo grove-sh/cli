@@ -2,7 +2,7 @@ package daemon
 
 // A grove binary is rebuilt far more often than its daemon is restarted, so a
 // mismatch has to name itself rather than surface as a missing field.
-const Version = 4
+const Version = 5
 
 const (
 	OpAcquire = "acquire"
@@ -11,6 +11,8 @@ const (
 	OpRelease = "release"
 	OpStatus  = "status"
 	OpStop    = "stop"
+	OpRecords = "records"
+	OpForget  = "forget"
 )
 
 type Request struct {
@@ -42,6 +44,7 @@ type Response struct {
 	Grants   map[string]Grant `json:"grants,omitempty"`
 	Leases   []Live           `json:"leases,omitempty"`
 	Released []string         `json:"released,omitempty"`
+	Records  []Record         `json:"records,omitempty"`
 	Status   *Status          `json:"status,omitempty"`
 }
 
@@ -66,6 +69,15 @@ type Grant struct {
 	// The composed alias hostnames, in the order the entry named them. Host is
 	// the one the entry means when a single hostname is wanted.
 	Aliases []string `json:"aliases,omitempty"`
+}
+
+// What ports.json holds for one entry. Unlike a lease this outlives the daemon
+// and the worktree both, which is the whole reason anything reports on it.
+type Record struct {
+	Slug     string `json:"slug"`
+	Service  string `json:"service"`
+	Port     int    `json:"port"`
+	Worktree string `json:"worktree,omitempty"`
 }
 
 type Live struct {

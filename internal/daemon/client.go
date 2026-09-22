@@ -119,6 +119,32 @@ func (c *Client) Release(slug, worktree string, names []string) ([]string, error
 	return resp.Released, nil
 }
 
+func (c *Client) Records() ([]Record, error) {
+	resp, err := c.roundTrip(Request{Op: OpRecords})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Records, nil
+}
+
+// Forget takes whole contexts, and answers with the lines that went, so the
+// caller reports what it did rather than what it asked for. A failure partway
+// carries both: exchange rather than roundTrip, which reads a refusal as the
+// fact of one and drops what came with it.
+func (c *Client) Forget(slugs []string) ([]Record, error) {
+	resp, err := c.exchange(Request{Op: OpForget, Names: slugs, Version: Version})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != "" {
+		return resp.Records, errors.New(resp.Error)
+	}
+	if resp.Version != Version {
+		return nil, &VersionError{Daemon: resp.Version, CLI: Version}
+	}
+	return resp.Records, nil
+}
+
 func (c *Client) Status() (Status, error) {
 	resp, err := c.roundTrip(Request{Op: OpStatus})
 	if err != nil {

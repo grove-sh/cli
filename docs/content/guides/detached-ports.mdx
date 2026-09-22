@@ -42,3 +42,5 @@ grove release db
 ```
 
 And after a daemon restart, `grove hold` re-registers them, so a stack that's still running gets its hostname back. `grove restart` does that for you in every worktree that held one; run `hold` yourself after a crash, a reboot, or a `grove stop` followed by a `grove start` later.
+
+Releasing ends the lease and leaves the record, which is what hands the port back if the stack comes up again. When the worktree itself is gone, [`grove forget`](/reference/cli/forget) drops the record, and `grove doctor` names the contexts worth forgetting.
