@@ -1,13 +1,13 @@
 ---
 title: Ports and leases
-description: Ports are derived from a hash rather than stored, and a lease lasts exactly as long as the connection that asked for it, so there is no state to clean up.
+description: Ports are derived from a hash and detached ones are written down, while a lease lasts exactly as long as the connection that asked for it.
 ---
 
-## Ports are derived, not stored
+## Ports are derived, then remembered
 
-A port comes from a hash of the context and the entry's name, landing inside 20000 to 20999. That's below Linux's ephemeral range, so nothing else on the machine picks one of them by accident. Ports are stable without being stored: a fresh checkout is addressable the moment it exists, and deleting it leaves nothing behind.
+A port comes from a hash of the context and the entry's name, landing inside 20000 to 20999. That's below Linux's ephemeral range, so nothing else on the machine picks one of them by accident. Nothing has to be allocated in advance: a fresh checkout is addressable the moment it exists.
 
-When two entries collide on one port, grove walks to the next free one. Only a walked **detached** port is written down, in `ports.json` beside the CA. Without that record, colliding entries would re-resolve in whatever order they ask after a restart, and an entry could be handed the port another worktree's stack is still listening on. A database URL pointing at someone else's data is why the file exists. An attached port doesn't need it, since its command is gone when the daemon is.
+When two entries collide on one port, grove walks to the next free one. Every **detached** port is written down, in `ports.json` beside the CA. Without that record, colliding entries would re-resolve in whatever order they ask after a restart, and an entry could be handed the port another worktree's stack is still listening on. A database URL pointing at someone else's data is why the file exists. It covers the daemon coming back empty too, after a reboot that restarted your containers but not grove: a port the record gives another entry is left to that entry, so stopping a stack for the evening doesn't cost it its port. A record outlives the worktree that earned it, so deleting a checkout and making it again hands the same ports back. With a thousand ports to a few dozen entries, nothing prunes one in normal use: a record whose port has gone quiet is reclaimed only if the range ever fills, which is a backstop rather than housekeeping. An attached port doesn't need any of this, since its command is gone when the daemon is.
 
 ## Lease lifetime is the point
 

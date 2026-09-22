@@ -29,9 +29,9 @@ grove exec -- supabase start
 
 That gives supabase a project ID named after the worktree and ports that belong to this context, so two worktrees run two stacks side by side. `grove ls` shows them as `claimed` until something answers, and `running` once it does.
 
-## Walked ports are written down
+## Detached ports are written down
 
-Detached ports also get written down. If two contexts collide on one and grove walks to the next free port, the walked port is recorded, so a restart hands the same port back and a database URL never quietly starts pointing at another worktree's data. [Ports and leases](/concepts/ports-and-leases) says why only detached ports need this.
+Every one of them lands in `ports.json`, so a restart hands the same port back and a database URL never quietly starts pointing at another worktree's data, even when two contexts collide on a port and one of them had to walk. [Ports and leases](/concepts/ports-and-leases) says why only detached ports need this.
 
 ## Letting go
 
