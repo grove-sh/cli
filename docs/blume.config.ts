@@ -80,8 +80,7 @@ export default defineConfig({
     ],
   },
   deployment: {
-    // site: "https://grov.site",
-    site: "https://fe8f-46-110-132-221.ngrok-free.app",
+    site: "https://grov.site",
   },
   seo: {
     // One card for the whole site, public/og.png, pointed at from
