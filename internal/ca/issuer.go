@@ -14,6 +14,10 @@ import (
 type Issuer struct {
 	root   *CA
 	domain string
+	// What hostnames sit one label under: the domain, or <host>.<domain> on a
+	// machine that shares. Its own wildcard covers that machine's unrouted
+	// names, which the domain's cannot reach two labels deep.
+	zone   string
 	routed func(name string) bool
 
 	mu     sync.Mutex
@@ -24,10 +28,17 @@ type Issuer struct {
 // Only names routed asks about get a leaf of their own. Once the daemon answers
 // on the tailnet, minting for any name a client offers would let a peer fill
 // memory with one signed leaf per invented hostname.
-func NewIssuer(root *CA, domain string, routed func(name string) bool) *Issuer {
+// An empty zone means the domain itself.
+func NewIssuer(root *CA, domain, zone string, routed func(name string) bool) *Issuer {
+	domain = strings.ToLower(domain)
+	zone = strings.ToLower(zone)
+	if zone == "" {
+		zone = domain
+	}
 	return &Issuer{
 		root:   root,
-		domain: strings.ToLower(domain),
+		domain: domain,
+		zone:   zone,
 		routed: routed,
 		leaves: map[string]*tls.Certificate{},
 	}
@@ -46,10 +57,19 @@ func (i *Issuer) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, e
 	if name != i.domain && !strings.HasSuffix(name, "."+i.domain) && name != wildcard {
 		return nil, fmt.Errorf("ca: %q is not under %s", name, i.domain)
 	}
-	// An unrouted name still gets the wildcard, so one label deep it reaches the
-	// proxy's 503 page, which says what to run, rather than a handshake failure.
-	if name != wildcard && !i.routed(name) {
-		name = wildcard
+	// An unrouted name still gets a wildcard, so it reaches the proxy's 503
+	// page, which says what to run, rather than a handshake failure. On a
+	// machine that shares, every name is two labels deep and only the zone's
+	// wildcard covers it. Two wildcards at most, so a peer offering invented
+	// names still costs nothing beyond them.
+	zoneWildcard := "*." + i.zone
+	if name != wildcard && name != zoneWildcard && !i.routed(name) {
+		sub, underZone := strings.CutSuffix(name, "."+i.zone)
+		if underZone && i.zone != i.domain && !strings.Contains(sub, ".") {
+			name = zoneWildcard
+		} else {
+			name = wildcard
+		}
 	}
 
 	i.mu.Lock()

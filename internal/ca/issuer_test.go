@@ -29,7 +29,7 @@ func issuer(t *testing.T) (*ca.Issuer, *x509.CertPool) {
 	if !pool.AppendCertsFromPEM(root.RootPEM()) {
 		t.Fatal("root not added to pool")
 	}
-	return ca.NewIssuer(root, domain, everyName), pool
+	return ca.NewIssuer(root, domain, "", everyName), pool
 }
 
 func TestIssuerServesAnyDepthUnderTheDomain(t *testing.T) {
@@ -87,7 +87,7 @@ func TestIssuerMintsOnlyForRoutedNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	const routed = "app.capella." + domain
-	iss := ca.NewIssuer(root, domain, func(name string) bool { return name == routed })
+	iss := ca.NewIssuer(root, domain, "", func(name string) bool { return name == routed })
 
 	leaf, err := iss.GetCertificate(&tls.ClientHelloInfo{ServerName: routed})
 	if err != nil {
@@ -143,7 +143,7 @@ func TestMultiLevelHostnameHandshakesAndRoutes(t *testing.T) {
 	}
 	p := proxy.New()
 	p.SetRoutes([]proxy.Route{{Host: host, Upstream: strings.TrimPrefix(upstream.URL, "http://")}})
-	iss := ca.NewIssuer(root, domain, p.Routes)
+	iss := ca.NewIssuer(root, domain, "", p.Routes)
 	go p.Serve(ln, iss.GetCertificate)
 	t.Cleanup(func() { ln.Close() })
 
@@ -172,7 +172,7 @@ func BenchmarkIssueColdLeaf(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	iss := ca.NewIssuer(root, domain, everyName)
+	iss := ca.NewIssuer(root, domain, "", everyName)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		name := fmt.Sprintf("c%d.app.%s", i, domain)
@@ -187,7 +187,7 @@ func BenchmarkIssueCachedLeaf(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	iss := ca.NewIssuer(root, domain, everyName)
+	iss := ca.NewIssuer(root, domain, "", everyName)
 	hello := &tls.ClientHelloInfo{ServerName: "app." + domain}
 	if _, err := iss.GetCertificate(hello); err != nil {
 		b.Fatal(err)
@@ -197,5 +197,39 @@ func BenchmarkIssueCachedLeaf(b *testing.B) {
 		if _, err := iss.GetCertificate(hello); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// On a machine that shares, every hostname is two labels deep, so the domain's
+// wildcard covers none of them: an unrouted one, such as a stack not running
+// since a reboot, showed a certificate error instead of the 503 page saying
+// what to run. The zone's wildcard covers them, and minting stays bounded.
+func TestIssuerCoversUnroutedNamesUnderTheZone(t *testing.T) {
+	root, err := ca.OpenOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const zone = "regulus." + domain
+	iss := ca.NewIssuer(root, domain, zone, func(string) bool { return false })
+
+	for i := 0; i < 50; i++ {
+		name := fmt.Sprintf("x%d.%s", i, zone)
+		leaf, err := iss.GetCertificate(&tls.ClientHelloInfo{ServerName: name})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if err := leaf.Leaf.VerifyHostname(name); err != nil {
+			t.Errorf("%s: unrouted name under the zone is not covered: %v", name, err)
+		}
+	}
+	// One label under the domain still gets the domain's wildcard, and deeper
+	// than the zone gets nothing new to sign.
+	for _, name := range []string{"app." + domain, "a.b." + zone, "x.other." + domain} {
+		if _, err := iss.GetCertificate(&tls.ClientHelloInfo{ServerName: name}); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	if got := iss.Minted(); got != 2 {
+		t.Errorf("minted %d leaves, want 2: the zone's wildcard and the domain's", got)
 	}
 }
