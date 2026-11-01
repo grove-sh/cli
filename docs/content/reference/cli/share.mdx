@@ -1,0 +1,40 @@
+---
+title: grove share
+description: Make this machine's contexts reachable from your other devices on Tailscale, or stop with --off.
+---
+
+```sh
+grove share [--off] [--yes] [--state-dir <dir>]
+```
+
+Make this machine's contexts reachable from your other devices on Tailscale.
+
+Sharing ties this machine to the tailnet it is on now. Every context's hostname gains the machine's name, so `app.grov.site` becomes `app.<host>.grov.site`, and the same worktree checked out on two machines is two hostnames. The names stay that way off the tailnet too, where they still resolve to this machine, so a running dev server's URL never changes under it.
+
+While the machine is on that tailnet, the daemon answers DNS for `*.<host>.grov.site` on its tailnet address and forwards tailnet port 443 to itself through Tailscale Serve. On any other tailnet it stands down, so joining someone else's does not offer them your dev servers. It never takes port 443 from another Serve handler; it says which one to move instead.
+
+One step is left to you: a split DNS entry in the Tailscale admin console that sends `*.<host>.grov.site` to this machine. `grove share` prints it. Answering on port 53 also means lowering the unprivileged port floor, which is printed in full and run only when you say so, as [`grove install`](/reference/cli/install) does.
+
+Each device that opens these hostnames has to trust this machine's root.
+To stop sharing with `--off`, connect to the recorded tailnet first.
+
+Grove needs Tailscale operator access to configure Serve as your user. If it reports access denied, run `sudo tailscale set --operator="$USER"`, then try again.
+
+Linux only for now. [Share across devices](/guides/tailnet) walks through the whole setup.
+
+## Flags
+
+| Flag | Meaning |
+|------|---------|
+| `--off` | Stop sharing. Connect to the recorded tailnet first; otherwise the command fails and keeps the record so you can retry. Hostnames go back to `<context>.grov.site`, and grove's tailnet port 443 mapping is removed. Anyone else's is left alone. It exits 1 if the mapping might still be there, and running it again finishes the job, with or without a share record. The running daemon stops sharing within ten seconds. |
+| `-y`, `--yes` | Run the privileged step without asking. |
+| `--state-dir` | The directory holding the CA and the share record, `share.json`. |
+
+## Examples
+
+```sh
+grove share         # share on the tailnet this machine is on
+grove share --off   # stop sharing and go back to <context>.grov.site
+```
+
+Either way, run `grove restart` afterwards, then any dev servers it was serving, so their URLs follow.

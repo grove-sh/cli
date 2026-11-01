@@ -21,7 +21,7 @@ Releases are cut by pushing a `v*` tag. No version is written down in the repo: 
 
 ## Layout
 
-`cmd/grove` is the cobra CLI, one file per command. Beyond `exec`, `ls`, `hold`, `release`, `forget`, and the `start`/`stop`/`restart` trio, that is `install`/`uninstall` (the privileged and trust-store path), `doctor` (a finding per check, with a remedy where there is one to name, and usually where a platform change needs its matching edit), `init`, `env`, and `context`. `internal/*` holds everything with logic in it:
+`cmd/grove` is the cobra CLI, one file per command. Beyond `exec`, `ls`, `hold`, `release`, `forget`, and the `start`/`stop`/`restart` trio, that is `install`/`uninstall` (the privileged and trust-store path), `share` (reaching contexts from other devices on a tailnet), `doctor` (a finding per check, with a remedy where there is one to name, and usually where a platform change needs its matching edit), `init`, `env`, and `context`. `internal/*` holds everything with logic in it:
 
 | | |
 |-|-|
@@ -32,6 +32,7 @@ Releases are cut by pushing a `v*` tag. No version is written down in the repo: 
 | `proxy` | hostname to loopback port, with the 503 pages |
 | `ca` / `trust` | the local root, a leaf per routed hostname, and the trust stores |
 | `platform` | the only place GOOS branches; keeps build tags out of the rest |
+| `tailnet` | tailscaled's local API, the share record and zone, the Serve mapping for 443, and the split DNS resolver |
 | `redirect` | the macOS pf rules, as text, so Linux can test them |
 | `shell` | text a shell will run: quoting values, the argv steps a privileged plan is made of, and naming grove itself |
 
@@ -81,6 +82,8 @@ The four places still naming `127.0.0.1` are the other side of the proxy, where 
 **Low ports differ by platform.** Linux lowers `ip_unprivileged_port_start` and binds 443 on the address directly, since the floor is per-port not per-address, so nothing else was needed there. macOS cannot lower anything, so the daemon binds 10443/10080 and pf redirects, scoped `to <address>` rather than the whole interface: an earlier unscoped rule took every loopback connection on 443, so a lando proxy could bind the port and never be reached. macOS also needs the address itself, which it does not configure and a reboot removes, so the launchd job adds the `lo0` alias as well as reloading pf. That makes the job load-bearing for hostnames resolving at all, not just for the redirect. Either way grove *prints* the privileged step in full and runs it only at a prompt or with `--yes` (`elevation` in `cmd/grove/privileged.go`). The steps are `shell.Step` argv values, printed and executed from the same slice, so what was pasted and what grove ran cannot differ. `redirect` is pure string manipulation so its tests run anywhere.
 
 **What install prints is tested by pasting it.** The `macos-443` job greps `^[[:space:]]+sudo ` out of `grove install`'s output, runs those lines, and asserts `pf sends 443 to`. So the two-space indent in `platform_*.go` and that phrasing in `internal/redirect` are load-bearing with no Go test covering either: a job reconstructing the instructions could pass while the real ones were wrong. It points `GROVE_STATE_DIR` at a path containing a space on purpose, because splitting those paths into the wrong number of arguments once passed CI without one. The `linux-443` job and the tail of `macos-443` take the other path, `uninstall --yes` then `install --yes`, so grove running the steps itself is covered too.
+
+**Sharing moves hostnames one label down.** `grove share` writes `share.json` beside the CA, naming a tailnet and the machine's MagicDNS label, and from then on `tailnet.Zone` makes every hostname `<context>.<host>.grov.site`, in the CLI (`zone()` in `cmd/grove/share.go`) and the daemon (`Config.Zone`) alike. The record is held rather than re-read from Tailscale on purpose: hostnames must not move when tailscaled stops or switches tailnets. The daemon's `sharing` loop asks tailscaled's local API every ten seconds, and only on the recorded tailnet does it bind the split DNS resolver on the tailnet address and claim tailnet 443 through Serve as a raw TCP forward to its own listener. It never takes 443 from another Serve handler (t3code's is the usual one), and it releases its own mapping on any other tailnet. It also re-reads `share.json` on every check and stands down when the record is gone or changed, since otherwise `share --off` would be undone within ten seconds by a daemon still holding the share it started with. Linux only: `platform.TailscaleSocket` is empty elsewhere.
 
 `grov.site` is real wildcard DNS pointing at `platform.Address`, so there are no hosts-file entries to manage. `*.v4.grov.site` also points there and is kept for the 0.3.0 betas, which shipped while `*.grov.site` still answered `127.0.0.1`: deleting it would break a published version. The domain is not a config key yet: `defaultDomain` in `cmd/grove/main.go` is a constant, and nothing in `internal/config` reads a domain.
 

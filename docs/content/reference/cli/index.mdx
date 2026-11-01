@@ -9,6 +9,7 @@ sidebar:
 grove init                       write a grove.toml for this project
 grove install                    set this machine up: authority, trust, port 443
 grove uninstall                  stop grove and untrust its root
+grove share [--off]              reach this machine's contexts from your other devices
 grove exec [-s <name>] -- <cmd>  run a command in this context
 grove env [--format shell|json]  print that environment instead of running
 grove ls [--all]                 this context's routes, or every lease on the machine
@@ -16,7 +17,7 @@ grove hold                       take this context's detached ports
 grove release [name...]          let them go
 grove forget [context...]        drop the records of worktrees that are gone
 grove context [--json]           how this directory resolves
-grove doctor                     DNS, trust, the daemon, and port 443
+grove doctor                     DNS, trust, the daemon, port 443, and sharing
 grove start | stop | restart     the daemon, which is one process for the machine
 ```
 
@@ -28,7 +29,7 @@ grove start | stop | restart     the daemon, which is one process for the machin
 |------|---------|
 | `--socket` | The control socket to reach the daemon on. Defaults to `GROVE_SOCKET` or the platform path. |
 | `--state-dir` | The directory holding the CA. Defaults to `GROVE_STATE_DIR` or the platform path. |
-| `-y`, `--yes` | On `install` and `uninstall`: run the privileged step without asking. |
+| `-y`, `--yes` | On `install`, `uninstall`, and `share`: run the privileged step without asking. |
 | `--force` | On `stop` and `uninstall`: go ahead while a running command is served. On `init`: overwrite an existing file. |
 
 ## Exit codes

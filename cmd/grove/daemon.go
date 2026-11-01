@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -16,6 +17,7 @@ import (
 	"github.com/grove-sh/cli/internal/ca"
 	"github.com/grove-sh/cli/internal/daemon"
 	"github.com/grove-sh/cli/internal/platform"
+	"github.com/grove-sh/cli/internal/tailnet"
 )
 
 type daemonOptions struct {
@@ -138,7 +140,19 @@ for it, so stopping the daemon drops all of them at once.`,
 		Hidden: true,
 		Args:   usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			server, err := daemon.New(daemon.Config{Domain: opts.domain, CADir: opts.caDir, Version: resolveVersion()})
+			cfg := daemon.Config{Domain: opts.domain, CADir: opts.caDir, Version: resolveVersion()}
+			record, shared, err := tailnet.LoadShare(opts.caDir)
+			if err != nil {
+				return fmt.Errorf("%w\nrun %s share to write it again, or %s share --off", err, invocation(), invocation())
+			}
+			if shared {
+				cfg.Zone = tailnet.Zone(opts.domain, record, true)
+				cfg.Share = &record
+				cfg.Tailscale = tailnet.New(platform.TailscaleSocket())
+				cfg.Target = opts.listen
+				cfg.Logf = log.New(os.Stderr, "", log.LstdFlags).Printf
+			}
+			server, err := daemon.New(cfg)
 			if err != nil {
 				return err
 			}

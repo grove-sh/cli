@@ -59,6 +59,15 @@ func WSL() bool {
 	return strings.Contains(strings.ToLower(string(release)), "microsoft")
 }
 
+var portsPlan = Plan{
+	Summary: "the floor is above 80, so grove cannot bind 443 or 80 as you",
+	Intro: "Lowering the unprivileged port floor lets grove bind 443 and 80 as you, so the\n" +
+		"daemon never runs as root. The file is written; installing it is one privileged\n" +
+		"step:",
+	Outro: "80 rather than 443 so grove can also answer plain http and send it to https.\n" +
+		"The file is one line, and the machine reads it again at every boot.",
+}
+
 // A floor already at 80 leaves nothing to do; one at 443 still costs the http
 // redirect, so it is offered the same file.
 func PreparePorts(dir string) (Plan, error) {
@@ -66,32 +75,45 @@ func PreparePorts(dir string) (Plan, error) {
 	if access.Allowed && access.Advice == "" {
 		return Plan{}, nil
 	}
-	return lowerFloor(dir)
+	return lowerFloor(dir, 80, portsPlan)
 }
 
-// Staged as a file and copied rather than written through tee, so the reader
-// can open what root is about to be handed, and so the step is one command
-// with no pipe in it.
-func lowerFloor(dir string) (Plan, error) {
+func TailscaleSocket() string { return "/var/run/tailscale/tailscaled.sock" }
+
+var resolverPlan = Plan{
+	Summary: "the floor is above 53, so grove cannot answer DNS for your tailnet as you",
+	Intro: "Tailscale's split DNS sends this host's names to a resolver on port 53, which\n" +
+		"grove runs on its tailnet address. Lowering the floor to 53 lets it do that as\n" +
+		"you. The file is written; installing it is one privileged step:",
+	Outro: "It replaces the floor grove install set, in the same file, and the machine\n" +
+		"reads it again at every boot.",
+}
+
+// Reuse the install sysctl file so uninstall also removes the DNS port change.
+func PrepareResolver(dir string) (Plan, error) {
+	floor, err := os.ReadFile(unprivilegedPortStart)
+	if err == nil {
+		if start, err := strconv.Atoi(strings.TrimSpace(string(floor))); err == nil && start <= 53 {
+			return Plan{}, nil
+		}
+	}
+	return lowerFloor(dir, 53, resolverPlan)
+}
+
+// Stage the file so the user can inspect it before the privileged copy.
+func lowerFloor(dir string, floor int, plan Plan) (Plan, error) {
 	staged := filepath.Join(dir, "sysctl", filepath.Base(sysctlFile))
 	if err := os.MkdirAll(filepath.Dir(staged), 0o755); err != nil {
 		return Plan{}, err
 	}
-	if err := os.WriteFile(staged, []byte(sysctlKey+"=80\n"), 0o644); err != nil {
+	if err := os.WriteFile(staged, []byte(sysctlKey+"="+strconv.Itoa(floor)+"\n"), 0o644); err != nil {
 		return Plan{}, err
 	}
-	return Plan{
-		Summary: "the floor is above 80, so grove cannot bind 443 or 80 as you",
-		Intro: "Lowering the unprivileged port floor lets grove bind 443 and 80 as you, so the\n" +
-			"daemon never runs as root. The file is written; installing it is one privileged\n" +
-			"step:",
-		Steps: []shell.Step{
-			{"cp", staged, sysctlFile},
-			{"sysctl", "-p", sysctlFile},
-		},
-		Outro: "80 rather than 443 so grove can also answer plain http and send it to https.\n" +
-			"The file is one line, and the machine reads it again at every boot.",
-	}, nil
+	plan.Steps = []shell.Step{
+		{"cp", staged, sysctlFile},
+		{"sysctl", "-p", sysctlFile},
+	}
+	return plan, nil
 }
 
 // Only grove's own file is taken back. A floor lowered some other way is the

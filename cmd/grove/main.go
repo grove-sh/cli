@@ -106,6 +106,7 @@ already reads.`,
 		newHoldCommand(),
 		newUninstallCommand(),
 		newLsCommand(),
+		newShareCommand(),
 	)
 	return root
 }

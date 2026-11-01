@@ -156,3 +156,7 @@ func WSL() bool { return false }
 
 // The same arrangement for 80, out of the same anchor.
 func DefaultHTTPListen() string { return fmt.Sprintf("%s:%d", Address, redirect.HTTPPort) }
+
+func TailscaleSocket() string { return "" }
+
+func PrepareResolver(string) (Plan, error) { return Plan{}, nil }

@@ -55,7 +55,7 @@ func newDoctorCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "Check DNS, trust, grove itself, and port 443",
+		Short: "Check DNS, trust, grove itself, port 443, and sharing",
 		Long: `Check the things that have to be true before grove can serve a hostname.
 
 Each check reports on its own. A failure exits non-zero so this can gate a
@@ -85,6 +85,9 @@ script; a warning does not.`,
 				if f.state != ok {
 					findings = append(findings, f)
 				}
+			}
+			if f, worth := checkSharing(stateDir, defaultDaemonOptions().listen); worth {
+				findings = append(findings, f)
 			}
 			// Reported even when fine, unlike those: which worktree is the
 			// project answers why a hostname is what it is.

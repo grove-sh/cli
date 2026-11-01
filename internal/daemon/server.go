@@ -18,10 +18,13 @@ import (
 	"github.com/grove-sh/cli/internal/identity"
 	"github.com/grove-sh/cli/internal/lease"
 	"github.com/grove-sh/cli/internal/proxy"
+	"github.com/grove-sh/cli/internal/tailnet"
 )
 
 type Config struct {
 	Domain string
+	// Empty uses Domain, including for callers that do not configure sharing.
+	Zone string
 
 	// The authority, and the record of where detached ports landed.
 	CADir string
@@ -30,10 +33,18 @@ type Config struct {
 	// Reported to clients, so they can say when the running daemon is not the
 	// grove asking.
 	Version string
+
+	Share     *tailnet.Share
+	Tailscale Tailscale
+	Target    string
+	Logf      func(string, ...any)
+	// Zero uses port 53; tests can bind an unprivileged port.
+	DNSPort int
 }
 
 type Server struct {
 	domain   string
+	zone     string
 	registry *lease.Registry
 
 	// Held apart from the registry, which allocates out of the record and has
@@ -47,6 +58,8 @@ type Server struct {
 	listen   string
 	redirect *nethttp.Server
 	started  time.Time
+	sharing  *sharing
+	unshare  context.CancelFunc
 
 	mu      sync.Mutex
 	control net.Listener
@@ -83,8 +96,28 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	var share *sharing
+	if cfg.Share != nil && cfg.Tailscale != nil {
+		share = &sharing{
+			api:      cfg.Tailscale,
+			share:    *cfg.Share,
+			zone:     zoneOr(cfg.Zone, cfg.Domain),
+			target:   cfg.Target,
+			stateDir: cfg.CADir,
+			logf:     cfg.Logf,
+			dnsPort:  cfg.DNSPort,
+		}
+		if share.logf == nil {
+			share.logf = func(string, ...any) {}
+		}
+		if share.dnsPort == 0 {
+			share.dnsPort = 53
+		}
+	}
 	return &Server{
+		sharing:  share,
 		domain:   cfg.Domain,
+		zone:     zoneOr(cfg.Zone, cfg.Domain),
 		version:  cfg.Version,
 		registry: registry,
 		memory:   memory,
@@ -150,6 +183,13 @@ func (s *Server) Serve(control, https, http net.Listener) error {
 	if redirect != nil {
 		go func() { failed <- redirect.Serve(http) }()
 	}
+	if s.sharing != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.mu.Lock()
+		s.unshare = cancel
+		s.mu.Unlock()
+		go s.sharing.run(ctx)
+	}
 
 	Ready()
 
@@ -171,12 +211,16 @@ func (s *Server) Shutdown() {
 	s.closing = true
 	control := s.control
 	redirect := s.redirect
+	unshare := s.unshare
 	conns := make([]net.Conn, 0, len(s.conns))
 	for conn := range s.conns {
 		conns = append(conns, conn)
 	}
 	s.mu.Unlock()
 
+	if unshare != nil {
+		unshare()
+	}
 	if control != nil {
 		control.Close()
 	}
@@ -498,7 +542,14 @@ func (s *Server) hosts(slug string, entry Entry) (string, []string) {
 }
 
 func (s *Server) host(slug, label string) string {
-	return identity.ComposeLabel(slug, label) + "." + s.domain
+	return identity.ComposeLabel(slug, label) + "." + s.zone
+}
+
+func zoneOr(zone, domain string) string {
+	if zone == "" {
+		return domain
+	}
+	return zone
 }
 
 // toHTTPS sends a plain request to the same URL over TLS, which is the only
