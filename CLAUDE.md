@@ -30,7 +30,7 @@ Releases are cut by pushing a `v*` tag. No version is written down in the repo: 
 | `lease` | port allocation, and what a lease's lifetime is |
 | `daemon` | the control protocol, the server, and where state lives |
 | `proxy` | hostname to loopback port, with the 503 pages |
-| `ca` / `trust` | the local root, the wildcard leaf, and the trust stores |
+| `ca` / `trust` | the local root, a leaf per routed hostname, and the trust stores |
 | `platform` | the only place GOOS branches; keeps build tags out of the rest |
 | `redirect` | the macOS pf rules, as text, so Linux can test them |
 | `shell` | text a shell will run: quoting values, the argv steps a privileged plan is made of, and naming grove itself |

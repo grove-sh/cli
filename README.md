@@ -64,7 +64,7 @@ Grove takes a different approach.
 
 **Your tooling stays on your host.** `pnpm dev` runs as you, with your node and your files. Hot reload watches the real filesystem, your debugger attaches, and the paths in your editor are the paths the process sees. No VM to feed, no bind mount to wait on.
 
-**Real hostnames, real HTTPS.** A wildcard certificate from a root your machine trusts, and real DNS under `grov.site`. No hosts file, no port in the URL, and secure cookies and OAuth redirects behave like production. Two branches are two origins, so they never share a session. `localhost:3000` and `localhost:3001` do, because cookies don't care about ports.
+**Real hostnames, real HTTPS.** Certificates from a root your machine trusts, and real DNS under `grov.site`. No hosts file, no port in the URL, and secure cookies and OAuth redirects behave like production. Two branches are two origins, so they never share a session. `localhost:3000` and `localhost:3001` do, because cookies don't care about ports.
 
 **Adopting it isn't a team decision.** Under CI grove steps aside and runs your command untouched, and `--if-available` asks for the same anywhere. A teammate who never ran `grove install` runs the same scripts. Your lando project keeps working too.
 

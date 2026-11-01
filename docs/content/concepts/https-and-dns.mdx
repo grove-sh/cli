@@ -1,11 +1,11 @@
 ---
 title: HTTPS and DNS
-description: A local root, a wildcard leaf, real DNS pointing at loopback, and why grove serves 127.0.0.4 rather than 127.0.0.1.
+description: A local root, leaves issued per hostname, real DNS pointing at loopback, and why grove serves 127.0.0.4 rather than 127.0.0.1.
 ---
 
 ## The certificate authority
 
-`grove install` generates a root in your state directory and installs it into the system trust stores, which is the step that may ask for your password. The daemon issues a wildcard leaf for `*.grov.site` from that root, so every context's hostname is covered by one certificate and a new worktree needs nothing issued.
+`grove install` generates a root in your state directory and installs it into the system trust stores, which is the step that may ask for your password. The daemon signs leaves from that root as they're asked for, so a new worktree needs nothing issued ahead of time. A hostname grove routes gets a leaf of its own, which is what lets it sit more than one label under `grov.site`, since a wildcard covers exactly one. Any other name gets a shared `*.grov.site` leaf, so a context that isn't running still reaches the page saying what to run, and a client offering made-up names can't make the daemon sign one leaf apiece.
 
 Runtimes that ignore the OS store get told separately. `grove exec` sets `NODE_EXTRA_CA_CERTS` to the root, and `REQUESTS_CA_BUNDLE` and `DENO_CERT` to a bundle carrying it, since those two replace a trust store rather than adding to it and so need the whole thing. Where the system's own bundle was updated by the install, that's the one used; otherwise grove's. `grove doctor` reports which, and `GROVE_SYSTEM_BUNDLE` names one by hand.
 
