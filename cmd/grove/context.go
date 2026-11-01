@@ -70,13 +70,13 @@ func writeJSON(cmd *cobra.Command, ctx identity.Context) error {
 	return enc.Encode(struct {
 		identity.Context
 		Host string `json:"host"`
-	}{ctx, ctx.Host(defaultDomain)})
+	}{ctx, ctx.Host(zone())})
 }
 
 func writeTable(cmd *cobra.Command, ctx identity.Context) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	rows := [][2]string{
-		{"host", ctx.Host(defaultDomain)},
+		{"host", ctx.Host(zone())},
 		{"project", ctx.Project},
 		{"variant", ctx.Variant},
 		{"slug", ctx.Slug},

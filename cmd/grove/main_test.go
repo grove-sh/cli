@@ -24,6 +24,20 @@ func TestMain(m *testing.M) {
 	if os.Getenv("GROVE_TEST_RUN_CLI") == "1" {
 		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 	}
+	// The same reasoning for the state directory: a maintainer whose machine
+	// shares on a tailnet has a share.json there, and every hostname the
+	// suite expects would gain their machine's name. Tests that want a state
+	// directory of their own still set one.
+	if os.Getenv("GROVE_STATE_DIR") == "" {
+		dir, err := os.MkdirTemp("", "grove-state")
+		if err != nil {
+			panic(err)
+		}
+		os.Setenv("GROVE_STATE_DIR", dir)
+		code := m.Run()
+		os.RemoveAll(dir)
+		os.Exit(code)
+	}
 	os.Exit(m.Run())
 }
 

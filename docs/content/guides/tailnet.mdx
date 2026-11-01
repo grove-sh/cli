@@ -1,0 +1,68 @@
+---
+title: Share across devices
+description: Open a worktree running on one machine from your laptop or phone over Tailscale, at a hostname that names the machine.
+---
+
+Grove serves on loopback, so by default only the machine running a worktree can open it. On a tailnet, `grove share` changes that: each machine's contexts get hostnames that name the machine, and every device on the tailnet can open them.
+
+```
+~/code/app on regulus   https://app.regulus.grov.site
+~/code/app on capella   https://app.capella.grov.site
+```
+
+The origin is the same from every device, the machine itself included, so cookies, OAuth redirects, and URLs baked into the environment behave the same everywhere.
+
+Sharing is Linux only for now, and needs MagicDNS turned on for the tailnet.
+
+## On each machine that serves
+
+Grove runs as your user and needs Tailscale operator access to configure Serve. If this user is not already the operator, grant access once:
+
+```sh
+sudo tailscale set --operator="$USER"
+```
+
+Then enable sharing:
+
+```sh
+grove share
+grove restart
+```
+
+`grove share` records the tailnet the machine is on and prints three things:
+
+- **Port 443.** Grove forwards tailnet port 443 to itself through Tailscale Serve. If another Serve handler already has it, grove leaves it alone and says so. t3code's Tailscale Serve setting is the usual one: change its port, to 8443 for example, and grove takes 443 within ten seconds.
+- **Port 53.** The daemon answers DNS for the machine's hostnames on its tailnet address, which means lowering the unprivileged port floor to 53. It's the same file `grove install` wrote, printed in full and run when you say so.
+- **The split DNS entry.** In the [Tailscale admin console](https://login.tailscale.com/admin/dns), choose Add nameserver, then Custom. Enter the address it printed and turn on Restrict to domain with `<host>.grov.site`. Every plan can do this, the free one included.
+
+The restart matters. Every hostname on the machine changes, so the daemon and any dev servers it was serving need starting again for their URLs to follow.
+
+## On each device that opens them
+
+Every device needs two things. The first is **Use Tailscale DNS** turned on in the Tailscale app, or `--accept-dns` on Linux, which is the default. Without it the split DNS entry never applies. If the device uses an exit node, also turn on Use with exit node for each entry.
+
+The second is **the serving machine's root, trusted**. Each machine has its own. On another machine that runs grove, trust it by name:
+
+```sh
+grove trust capella
+```
+
+For a phone, send each serving machine's root to it over Taildrop, from that machine, and follow the install steps it prints:
+
+```sh
+grove trust --send pixel-9
+```
+
+Only the root's certificate travels, never its key. [`grove trust`](/reference/cli/trust) has the details, including how the fetch knows it reached the right machine.
+
+## Switching tailnets
+
+A machine shares on one tailnet. On any other, or with Tailscale disconnected, the daemon closes its resolver and takes its port 443 mapping down, so a client's tailnet never sees your dev servers. Hostnames keep the machine's name throughout and resolve to the machine itself, so local work carries on. Back on the shared tailnet, sharing resumes on its own.
+
+To share on a different tailnet, run `grove share` while on it.
+
+## Checking it
+
+`grove doctor` reports a Sharing line on any machine that shares. It names whichever part is missing: Tailscale not connected, nothing answering DNS, the split DNS entry absent, or port 443 held by something else.
+
+To stop, connect to the tailnet recorded by `grove share`, run `grove share --off`, then `grove restart`, and remove the split DNS entry.

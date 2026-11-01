@@ -43,6 +43,7 @@ Each check reports on its own, and a failure names the fix. A failure exits non-
 | DNS | Whether `*.grov.site` resolves here, and to loopback. Quiet when it does. |
 | Port 443 | Whether 443 reaches grove, and who holds it if not. Quiet when it does. |
 | HTTP redirect | Whether port 80 redirects to https. Quiet when it does. |
+| Sharing | On a machine that ran `grove share`: whether it's on the shared tailnet, answering DNS there, reached through split DNS, and holding tailnet port 443. Absent on a machine that doesn't share. |
 | Main worktree | Which worktree of a bare repository is the project itself, and what decided it. |
 | Context | Whether this worktree is holding ports under one name while resolving another. |
 | Project grove | Which grove the project installs, and whether packages disagree. |

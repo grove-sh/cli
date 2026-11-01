@@ -322,3 +322,30 @@ func TestReachesAnUpstreamOnIPv6Loopback(t *testing.T) {
 		t.Errorf("body = %q", got)
 	}
 }
+
+// The root answers on the zone's bare hostname at one path, and nowhere else,
+// so it cannot shadow a context's own routes.
+func TestServesTheRootOnlyAtItsHostAndPath(t *testing.T) {
+	p := proxy.New()
+	p.ServeRoot("capella.grov.site", []byte("PEM"))
+
+	get := func(host, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "https://"+host+path, nil)
+		p.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := get("Capella.grov.site", proxy.RootPath); rec.Code != 200 || rec.Body.String() != "PEM" ||
+		rec.Header().Get("Content-Type") != "application/x-pem-file" {
+		t.Errorf("root: %d %q %q", rec.Code, rec.Body.String(), rec.Header().Get("Content-Type"))
+	}
+	if rec := get("capella.grov.site", "/"); rec.Code != 503 {
+		t.Errorf("other path on the root host: %d", rec.Code)
+	}
+	if rec := get("app.capella.grov.site", proxy.RootPath); rec.Code != 503 {
+		t.Errorf("root path on another host: %d", rec.Code)
+	}
+	if !p.Routes("capella.grov.site") || p.Routes("app.capella.grov.site") {
+		t.Error("Routes should name the root's host so it gets a leaf, and nothing else unrouted")
+	}
+}

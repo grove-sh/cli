@@ -195,6 +195,15 @@ anything is answering on a port grove leased.`,
 					return err
 				}
 			}
+			// Roots grove trust added for other machines go with this one:
+			// they are grove's doing too, and nothing else would remove them.
+			if removeTrust {
+				for _, peer := range trustedPeers(stateDir) {
+					if err := untrustPeer(out, stateDir, peer.host); err != nil {
+						return err
+					}
+				}
+			}
 
 			// After the trust store, which is what someone came for. The
 			// redirect outlives this process either way.

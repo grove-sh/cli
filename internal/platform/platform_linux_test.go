@@ -12,7 +12,7 @@ import (
 func TestLowerFloorStagesTheFileItInstalls(t *testing.T) {
 	dir := t.TempDir()
 
-	plan, err := lowerFloor(dir)
+	plan, err := lowerFloor(dir, 80, portsPlan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,5 +39,27 @@ func TestLowerFloorStagesTheFileItInstalls(t *testing.T) {
 	}
 	if plan.Summary == "" || plan.Intro == "" || !strings.Contains(plan.Outro, "80 rather than 443") {
 		t.Errorf("plan is missing its prose: %+v", plan)
+	}
+}
+
+func TestResolverFloorRewritesTheSameFile(t *testing.T) {
+	dir := t.TempDir()
+	plan, err := lowerFloor(dir, 53, resolverPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged := filepath.Join(dir, "sysctl", "60-grove.conf")
+	body, err := os.ReadFile(staged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "net.ipv4.ip_unprivileged_port_start=53\n" {
+		t.Errorf("staged %q", body)
+	}
+	if len(plan.Steps) != 2 || plan.Steps[0].String() != "cp "+staged+" "+sysctlFile {
+		t.Errorf("steps %v", plan.Steps)
+	}
+	if plan.Summary == "" || !strings.Contains(plan.Intro, "port 53") {
+		t.Errorf("plan text: %+v", plan)
 	}
 }

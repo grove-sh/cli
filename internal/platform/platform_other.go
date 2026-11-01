@@ -24,3 +24,7 @@ func DefaultListen() string { return Address + ":443" }
 
 // Best effort, like 443: nothing breaks when it fails.
 func DefaultHTTPListen() string { return Address + ":80" }
+
+func TailscaleSocket() string { return "" }
+
+func PrepareResolver(string) (Plan, error) { return Plan{}, nil }

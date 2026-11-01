@@ -243,7 +243,7 @@ func valuesFrom(cfg *config.Config, context identity.Context, allocated map[stri
 
 // The hostname a label composes to, and the URL that reaches it.
 func hostFor(slug, label string) (host, url string) {
-	host = identity.ComposeLabel(slug, label) + "." + defaultDomain
+	host = identity.ComposeLabel(slug, label) + "." + zone()
 	return host, "https://" + host
 }
 

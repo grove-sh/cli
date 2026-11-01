@@ -17,6 +17,10 @@ Some resolvers strip answers that point into loopback as a rebinding defence. Pi
 
 The domain isn't a config key. It's a constant, and it's one decision with the address grove serves: a hostname resolving somewhere grove doesn't serve reaches nothing, which is what doctor's DNS check reports when they disagree.
 
+## On a tailnet
+
+[`grove share`](/reference/cli/share) moves a machine's hostnames one label down, to `<context>.<host>.grov.site`, which is the reason leaves are issued per hostname. The public wildcard still answers those names with `127.0.0.4`, so they keep working on the machine itself. On the tailnet, a split DNS entry sends `*.<host>.grov.site` to a resolver the daemon runs on the machine's tailnet address instead, and Tailscale Serve forwards tailnet port 443 to grove untouched, so grove still picks the certificate and the route from the hostname. [Share across devices](/guides/tailnet) has the setup.
+
 ## Why 127.0.0.4
 
 Grove serves `127.0.0.4`, not `127.0.0.1`. That's the whole reason it runs beside lando: nothing contends for `127.0.0.1:443`, so neither has to be stopped for the other, and there's no port to hand back.

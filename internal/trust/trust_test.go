@@ -1,6 +1,7 @@
 package trust_test
 
 import (
+	"crypto/x509"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,6 +12,55 @@ import (
 	"github.com/grove-sh/cli/internal/ca"
 	"github.com/grove-sh/cli/internal/trust"
 )
+
+func TestNodeBundleTracksPeerTrust(t *testing.T) {
+	dir := t.TempDir()
+	local, err := ca.OpenOrCreate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, err := ca.OpenOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	peerDir := filepath.Join(dir, "peers")
+	if err := os.Mkdir(peerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	peerPath := filepath.Join(peerDir, "capella.crt")
+	if err := os.WriteFile(peerPath, peer.RootPEM(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NODE_EXTRA_CA_CERTS", "")
+	os.Unsetenv("NODE_EXTRA_CA_CERTS")
+	for _, removed := range []bool{false, true} {
+		if removed {
+			if err := os.Remove(peerPath); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := trust.WriteNodeBundle(dir); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, trust.NodeBundleFile)
+		if !slices.Contains(trust.Env(dir), "NODE_EXTRA_CA_CERTS="+path) {
+			t.Fatal("Node environment does not use the roots bundle")
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pool := x509.NewCertPool()
+		pool.AppendCertsFromPEM(raw)
+		if _, err := local.Certificate().Verify(x509.VerifyOptions{Roots: pool}); err != nil {
+			t.Fatalf("local root missing: %v", err)
+		}
+		_, err = peer.Certificate().Verify(x509.VerifyOptions{Roots: pool})
+		if (err != nil) != removed {
+			t.Fatalf("peer removed=%v, verification error=%v", removed, err)
+		}
+	}
+}
 
 // After a real install the OS trust store rewrites the system bundle, so grove
 // keeps no copy. A freshly generated root is not in there.

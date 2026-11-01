@@ -20,9 +20,19 @@ type Route struct {
 	Upstream string
 }
 
+// RootPath is where the zone's bare hostname hands out the root, so a peer can
+// fetch it with grove trust. The certificate is public; only its key is not.
+const RootPath = "/.well-known/grove/root.crt"
+
 type Server struct {
 	routes atomic.Pointer[map[string]*httputil.ReverseProxy]
+	root   atomic.Pointer[rootDoc]
 	http   *http.Server
+}
+
+type rootDoc struct {
+	host string
+	pem  []byte
 }
 
 func New() *Server {
@@ -44,8 +54,19 @@ func (s *Server) SetRoutes(routes []Route) {
 	s.routes.Store(&table)
 }
 
+// ServeRoot answers RootPath on host with pem.
+func (s *Server) ServeRoot(host string, pem []byte) {
+	s.root.Store(&rootDoc{host: strings.ToLower(host), pem: pem})
+}
+
+// Routes counts the root's host too, so it gets a leaf naming it: the peer
+// fetching the root checks the connection's certificate chains to what it got.
 func (s *Server) Routes(host string) bool {
-	_, ok := (*s.routes.Load())[strings.ToLower(host)]
+	host = strings.ToLower(host)
+	if doc := s.root.Load(); doc != nil && doc.host == host {
+		return true
+	}
+	_, ok := (*s.routes.Load())[host]
 	return ok
 }
 
@@ -63,6 +84,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host := hostOnly(r.Host)
+	if doc := s.root.Load(); doc != nil && host == doc.host && r.URL.Path == RootPath {
+		w.Header().Set("Content-Type", "application/x-pem-file")
+		w.Write(doc.pem)
+		return
+	}
 	rp, ok := (*s.routes.Load())[host]
 	if !ok {
 		unavailable(w, host, "No grove context is bound to this hostname.")

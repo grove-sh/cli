@@ -10,6 +10,7 @@ export default defineMeta({
     "dev-server",
     "no-bind",
     "ci",
+    "tailnet",
     "troubleshooting",
   ],
 });
