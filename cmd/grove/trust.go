@@ -225,7 +225,12 @@ func trustPeer(out io.Writer, client *tailnet.Client, stateDir, host string) err
 	if err := os.WriteFile(peerFile(stateDir, host), raw, 0o644); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "\nhttps://<context>.%s.%s now opens here without a warning.\n", host, defaultDomain)
+	if err := trust.WriteNodeBundle(stateDir); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "\nhttps://<context>.%s.%s now opens here without a warning. Processes started\n"+
+		"before this keep the trust they began with, so restart a dev server that calls\n"+
+		"%s for it to trust the new root.\n", host, defaultDomain, host)
 	return nil
 }
 
@@ -300,6 +305,9 @@ func untrustPeer(out io.Writer, stateDir, host string) error {
 		return err
 	}
 	if err := os.Remove(peerFile(stateDir, host)); err != nil {
+		return err
+	}
+	if err := trust.WriteNodeBundle(stateDir); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "stopped trusting %s's root %s\n", host, fingerprint(cert))

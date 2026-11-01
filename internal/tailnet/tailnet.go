@@ -258,6 +258,19 @@ func (cfg *ServeConfig) tcp() (map[string]json.RawMessage, error) {
 }
 
 func (cfg *ServeConfig) Port443(target string) (Holder, error) {
+	// Foreground sessions own their listeners too, even though grove only
+	// writes background mappings.
+	var foreground map[string]struct{ TCP map[string]json.RawMessage }
+	if raw, ok := cfg.doc["Foreground"]; ok {
+		if err := json.Unmarshal(raw, &foreground); err != nil {
+			return Other, fmt.Errorf("tailnet: reading foreground Serve handlers: %w", err)
+		}
+	}
+	for _, session := range foreground {
+		if _, ok := session.TCP["443"]; ok {
+			return Other, nil
+		}
+	}
 	ports, err := cfg.tcp()
 	if err != nil {
 		return Other, err

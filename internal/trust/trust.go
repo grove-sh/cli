@@ -15,9 +15,35 @@ import (
 )
 
 const (
-	RootFile   = "root.crt"
-	BundleFile = "ca-bundle.pem"
+	RootFile       = "root.crt"
+	BundleFile     = "ca-bundle.pem"
+	NodeBundleFile = "node-roots.pem"
 )
+
+// WriteNodeBundle keeps Node's additional roots independent of the system
+// bundle, which may not contain this machine's root yet.
+func WriteNodeBundle(stateDir string) error {
+	roots, err := os.ReadFile(filepath.Join(stateDir, RootFile))
+	if err != nil {
+		return err
+	}
+	peers, err := filepath.Glob(filepath.Join(stateDir, "peers", "*.crt"))
+	if err != nil {
+		return err
+	}
+	for _, peer := range peers {
+		root, err := os.ReadFile(peer)
+		if err != nil {
+			return err
+		}
+		roots = append(append(roots, '\n'), root...)
+	}
+	dest := filepath.Join(stateDir, NodeBundleFile)
+	if err := os.WriteFile(dest+".tmp", roots, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(dest+".tmp", dest)
+}
 
 // Install shells out to sudo on Linux and macOS, so callers warn first.
 func Install(root *x509.Certificate) error {
@@ -172,8 +198,10 @@ func Env(stateDir string) []string {
 		out = append(out, name+"="+path)
 	}
 
-	// Node compiles in its own roots, and this variable adds rather than
-	// replaces, so it takes the root alone.
+	// Node compiles in its own roots. Add the local and trusted peer roots.
+	if node := existing(filepath.Join(stateDir, NodeBundleFile)); node != "" {
+		root = node
+	}
 	add("NODE_EXTRA_CA_CERTS", root)
 
 	// These replace a trust store rather than adding to it, so they need a whole

@@ -207,6 +207,29 @@ func TestReleaseLeavesSomeoneElsesPort(t *testing.T) {
 	}
 }
 
+func TestForeground443IsHeld(t *testing.T) {
+	for _, handler := range []string{`{"HTTPS":true}`, `{"TCPForward":"127.0.0.4:443"}`} {
+		body := `{"Foreground":{"session":{"TCP":{"443":` + handler + `}}}}`
+		cfg, err := tailnet.ParseServeConfig([]byte(body), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if holder, err := cfg.Port443(target); err != nil || holder != tailnet.Other {
+			t.Fatalf("holder=%v err=%v, want another holder", holder, err)
+		}
+		if changed, err := cfg.Claim443(target); changed || !tailnet.IsHeld(err) {
+			t.Fatalf("claim: changed=%v err=%v, want held", changed, err)
+		}
+		if changed, err := cfg.Release443(target); changed || err != nil {
+			t.Fatalf("release: changed=%v err=%v, want untouched", changed, err)
+		}
+		got, _ := cfg.MarshalJSON()
+		if string(got) != body {
+			t.Errorf("foreground config changed: %s", got)
+		}
+	}
+}
+
 func TestWriteAfterSomeoneElsesChangeIsRefused(t *testing.T) {
 	f := &fakeTailscaled{serve: `{}`}
 	c := startFake(t, f)
