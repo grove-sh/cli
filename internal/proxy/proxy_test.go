@@ -48,7 +48,8 @@ func newHarness(t *testing.T, routes []proxy.Route) *harness {
 	s := proxy.New()
 	s.SetRoutes(routes)
 	go func() {
-		if err := s.Serve(ln, cert); err != nil && err != http.ErrServerClosed {
+		certFor := func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return cert, nil }
+		if err := s.Serve(ln, certFor); err != nil && err != http.ErrServerClosed {
 			t.Log(err)
 		}
 	}()

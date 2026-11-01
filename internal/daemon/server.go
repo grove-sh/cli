@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,7 +40,7 @@ type Server struct {
 	// no reason to report on it or prune it.
 	memory recordFile
 	proxy  *proxy.Server
-	cert   *tls.Certificate
+	issuer *ca.Issuer
 	root   []byte
 
 	version  string
@@ -72,10 +71,8 @@ func New(cfg Config) (*Server, error) {
 		}
 		return nil, err
 	}
-	cert, err := root.Leaf("*."+cfg.Domain, cfg.Domain)
-	if err != nil {
-		return nil, err
-	}
+	prx := proxy.New()
+	issuer := ca.NewIssuer(root, cfg.Domain, prx.Routes)
 	// Beside the authority, so a daemon pointed elsewhere keeps its allocations
 	// there too.
 	memory, err := lease.OpenMemory(filepath.Join(cfg.CADir, "ports.json"))
@@ -91,8 +88,8 @@ func New(cfg Config) (*Server, error) {
 		version:  cfg.Version,
 		registry: registry,
 		memory:   memory,
-		proxy:    proxy.New(),
-		cert:     cert,
+		proxy:    prx,
+		issuer:   issuer,
 		root:     root.RootPEM(),
 		conns:    make(map[net.Conn]struct{}),
 		routed:   make(map[routeKey][]string),
@@ -149,7 +146,7 @@ func (s *Server) Serve(control, https, http net.Listener) error {
 
 	failed := make(chan error, 3)
 	go func() { failed <- s.serveControl(control) }()
-	go func() { failed <- s.proxy.Serve(https, s.cert) }()
+	go func() { failed <- s.proxy.Serve(https, s.issuer.GetCertificate) }()
 	if redirect != nil {
 		go func() { failed <- redirect.Serve(http) }()
 	}

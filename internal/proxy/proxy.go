@@ -44,12 +44,15 @@ func (s *Server) SetRoutes(routes []Route) {
 	s.routes.Store(&table)
 }
 
-func (s *Server) Serve(ln net.Listener, cert *tls.Certificate) error {
+func (s *Server) Routes(host string) bool {
+	_, ok := (*s.routes.Load())[strings.ToLower(host)]
+	return ok
+}
+
+func (s *Server) Serve(ln net.Listener, certFor func(*tls.ClientHelloInfo) (*tls.Certificate, error)) error {
 	s.http.TLSConfig = &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-			return cert, nil
-		},
+		MinVersion:     tls.VersionTLS12,
+		GetCertificate: certFor,
 	}
 	return s.http.ServeTLS(ln, "", "")
 }
