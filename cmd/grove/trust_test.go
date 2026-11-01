@@ -22,7 +22,7 @@ func servePeer(t *testing.T, signer, offered *ca.CA, host string) string {
 	t.Helper()
 	p := proxy.New()
 	p.ServeRoot(host, offered.RootPEM())
-	iss := ca.NewIssuer(signer, "grov.site", p.Routes)
+	iss := ca.NewIssuer(signer, "grov.site", "", p.Routes)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
