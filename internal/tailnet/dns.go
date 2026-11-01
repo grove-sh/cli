@@ -3,9 +3,11 @@ package tailnet
 import (
 	"encoding/binary"
 	"errors"
+	"io"
 	"net"
 	"net/netip"
 	"strings"
+	"time"
 )
 
 const (
@@ -39,6 +41,49 @@ func (r Resolver) Serve(conn net.PacketConn) error {
 		}
 		if reply := r.Answer(buf[:n]); reply != nil {
 			conn.WriteTo(reply, addr)
+		}
+	}
+}
+
+// ServeTCP answers the same queries over TCP, each message prefixed with its
+// length. Resolvers fall back to TCP and some check a server over it, so one
+// that refuses TCP can be reported unreachable while UDP works fine.
+func (r Resolver) ServeTCP(ln net.Listener) error {
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+			return err
+		}
+		go r.serveConn(conn)
+	}
+}
+
+// A client may send several queries on one connection; an idle one is closed
+// so a peer cannot hold sockets open indefinitely.
+func (r Resolver) serveConn(conn net.Conn) {
+	defer conn.Close()
+	var size [2]byte
+	for {
+		conn.SetDeadline(time.Now().Add(10 * time.Second))
+		if _, err := io.ReadFull(conn, size[:]); err != nil {
+			return
+		}
+		query := make([]byte, binary.BigEndian.Uint16(size[:]))
+		if _, err := io.ReadFull(conn, query); err != nil {
+			return
+		}
+		reply := r.Answer(query)
+		if reply == nil {
+			return
+		}
+		if _, err := conn.Write(binary.BigEndian.AppendUint16(nil, uint16(len(reply)))); err != nil {
+			return
+		}
+		if _, err := conn.Write(reply); err != nil {
+			return
 		}
 	}
 }

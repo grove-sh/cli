@@ -1,0 +1,37 @@
+---
+title: grove trust
+description: Trust another machine's grove root, or send this machine's to a phone or other device over Taildrop.
+---
+
+```sh
+grove trust [host] [--remove] [--send <device>] [--state-dir <dir>]
+```
+
+Trust another machine's grove root, or send this machine's to a device.
+
+Each machine that runs grove has its own root, so opening another machine's hostnames means trusting its root too. `grove trust <host>` fetches the root of a machine sharing on your tailnet and installs it into this machine's trust stores, which may ask for your password. It connects to that machine's tailnet address, taken from Tailscale rather than DNS, and Tailscale only lets that machine answer there. Grove also checks that the certificate it was served chains to the root it received, and prints the fingerprint.
+
+`grove trust --send <device>` sends this machine's root to a phone or another device over Taildrop, and says how to install it there. Run it on each machine whose hostnames the device should open.
+
+With no arguments, it prints this machine's root fingerprint and the roots it trusts from other machines. Linux only for now, apart from that listing.
+
+The roots it adds are kept under `peers/` in the state directory, so `--remove` and [`grove uninstall`](/reference/cli/uninstall) take back exactly those and nothing trusted some other way.
+
+## Flags
+
+| Flag | Meaning |
+|------|---------|
+| `--send` | Send this machine's root to the named tailnet device over Taildrop. Takes the device on its own. |
+| `--remove` | Stop trusting the named host's root, and remove it from the trust stores. |
+| `--state-dir` | The directory holding the CA and the trusted peer roots. |
+
+## Examples
+
+```sh
+grove trust                  # this machine's fingerprint, and the peers it trusts
+grove trust capella          # trust capella's root here
+grove trust --send pixel-9   # send this machine's root to a phone
+grove trust --remove capella # stop trusting capella's root
+```
+
+The machine being trusted has to be sharing, since its daemon hands out the root at `https://<host>.grov.site/.well-known/grove/root.crt` over the tailnet. Sending needs only Tailscale. Both may need [operator access](/reference/cli/share) for this user.

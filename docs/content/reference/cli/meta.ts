@@ -7,6 +7,7 @@ export default defineMeta({
     "install",
     "uninstall",
     "share",
+    "trust",
     "exec",
     "env",
     "ls",

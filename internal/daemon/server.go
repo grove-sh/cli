@@ -85,6 +85,7 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	prx := proxy.New()
+	prx.ServeRoot(zoneOr(cfg.Zone, cfg.Domain), root.RootPEM())
 	issuer := ca.NewIssuer(root, cfg.Domain, prx.Routes)
 	// Beside the authority, so a daemon pointed elsewhere keeps its allocations
 	// there too.

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -23,6 +24,10 @@ const OperatorFix = `sudo tailscale set --operator="$USER"`
 
 var ErrChanged = errors.New("tailnet: the Serve config changed underneath grove")
 
+// ErrNotAccepted means tailscaled took the file but the device never did,
+// usually a phone with Tailscale asleep in the background.
+var ErrNotAccepted = errors.New("tailnet: the device did not accept the file")
+
 type Status struct {
 	Running bool
 	Tailnet string
@@ -30,10 +35,35 @@ type Status struct {
 	Host string
 	IPv4 netip.Addr
 	IPv6 netip.Addr
+	// The other devices on the tailnet, which grove trust fetches roots from
+	// and sends this machine's root to.
+	Peers []Peer
+}
+
+type Peer struct {
+	// Tailscale's stable node ID, which is what Taildrop addresses.
+	ID string
+	// The first label of the peer's MagicDNS name, as Status.Host is for self.
+	Host   string
+	OS     string
+	IPv4   netip.Addr
+	Online bool
+}
+
+// Peer finds a device by the name it has on the tailnet.
+func (s Status) Peer(host string) (Peer, bool) {
+	host = strings.ToLower(host)
+	for _, p := range s.Peers {
+		if p.Host == host {
+			return p, true
+		}
+	}
+	return Peer{}, false
 }
 
 type Client struct {
-	http *http.Client
+	http     *http.Client
+	transfer *http.Client
 }
 
 func New(socket string) *Client {
@@ -41,14 +71,18 @@ func New(socket string) *Client {
 		return &Client{}
 	}
 	dialer := net.Dialer{Timeout: 2 * time.Second}
-	return &Client{http: &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return dialer.DialContext(ctx, "unix", socket)
-			},
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, "unix", socket)
 		},
-	}}
+	}
+	return &Client{
+		http: &http.Client{Timeout: 5 * time.Second, Transport: transport},
+		// A Taildrop send holds the request open until the device has the
+		// file, which a phone with Tailscale in the background can take far
+		// longer than five seconds to do. The caller's context bounds it.
+		transfer: &http.Client{Transport: transport},
+	}
 }
 
 func (c *Client) Status(ctx context.Context) (Status, error) {
@@ -57,6 +91,13 @@ func (c *Client) Status(ctx context.Context) (Status, error) {
 		CurrentTailnet *struct{ Name string }
 		Self           *struct {
 			DNSName      string
+			TailscaleIPs []string
+		}
+		Peer map[string]struct {
+			ID           string
+			DNSName      string
+			OS           string
+			Online       bool
 			TailscaleIPs []string
 		}
 	}
@@ -72,8 +113,7 @@ func (c *Client) Status(ctx context.Context) (Status, error) {
 		s.Tailnet = raw.CurrentTailnet.Name
 	}
 	if raw.Self != nil {
-		label, _, _ := strings.Cut(strings.TrimSuffix(raw.Self.DNSName, "."), ".")
-		s.Host = strings.ToLower(label)
+		s.Host = firstLabel(raw.Self.DNSName)
 		for _, ip := range raw.Self.TailscaleIPs {
 			addr, err := netip.ParseAddr(ip)
 			switch {
@@ -85,7 +125,55 @@ func (c *Client) Status(ctx context.Context) (Status, error) {
 			}
 		}
 	}
+	for _, p := range raw.Peer {
+		peer := Peer{ID: p.ID, Host: firstLabel(p.DNSName), OS: p.OS, Online: p.Online}
+		for _, ip := range p.TailscaleIPs {
+			if addr, err := netip.ParseAddr(ip); err == nil && addr.Is4() {
+				peer.IPv4 = addr
+				break
+			}
+		}
+		if peer.Host != "" {
+			s.Peers = append(s.Peers, peer)
+		}
+	}
 	return s, nil
+}
+
+func firstLabel(dnsName string) string {
+	label, _, _ := strings.Cut(strings.TrimSuffix(dnsName, "."), ".")
+	return strings.ToLower(label)
+}
+
+// SendFile delivers body to a device over Taildrop, which Tailscale encrypts
+// and authenticates end to end, so the device knows which machine sent it.
+func (c *Client) SendFile(ctx context.Context, to Peer, name string, body []byte) error {
+	if c.http == nil {
+		return ErrUnavailable
+	}
+	target := "http://local-tailscaled.sock/localapi/v0/file-put/" + url.PathEscape(to.ID) + "/" + url.PathEscape(name)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Sec-Tailscale", "localapi")
+	req.ContentLength = int64(len(body))
+	resp, err := c.transfer.Do(req)
+	switch {
+	case err != nil && errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("%w: %s", ErrNotAccepted, to.Host)
+	case err != nil:
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	defer resp.Body.Close()
+	msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	switch {
+	case resp.StatusCode == http.StatusForbidden:
+		return fmt.Errorf("%w: %s", ErrDenied, strings.TrimSpace(string(msg)))
+	case resp.StatusCode/100 != 2:
+		return fmt.Errorf("tailnet: sending %s to %s: %s: %s", name, to.Host, resp.Status, strings.TrimSpace(string(msg)))
+	}
+	return nil
 }
 
 // Preserve unknown handlers when updating the Serve config.

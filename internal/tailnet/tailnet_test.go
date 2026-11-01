@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/grove-sh/cli/internal/tailnet"
 )
@@ -24,6 +25,12 @@ type fakeTailscaled struct {
 	serve     string
 	etag      int
 	denyWrite bool
+	// What Taildrop was handed: the path names the device and the file.
+	sentPath string
+	sentBody string
+	// A phone that never takes the file: the request is held until the client
+	// gives up.
+	neverAccept bool
 }
 
 func (f *fakeTailscaled) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +61,21 @@ func (f *fakeTailscaled) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Etag", f.tag())
 		io.WriteString(w, f.serve)
 	default:
+		if strings.HasPrefix(r.URL.Path, "/localapi/v0/file-put/") && r.Method == http.MethodPut {
+			if f.neverAccept {
+				f.mu.Unlock()
+				<-r.Context().Done()
+				f.mu.Lock()
+				return
+			}
+			if f.denyWrite {
+				http.Error(w, "file access denied", http.StatusForbidden)
+				return
+			}
+			body, _ := io.ReadAll(r.Body)
+			f.sentPath, f.sentBody = r.URL.EscapedPath(), string(body)
+			return
+		}
 		http.NotFound(w, r)
 	}
 }
@@ -258,5 +280,63 @@ func TestShareRecordRoundTrips(t *testing.T) {
 	}
 	if zone := tailnet.Zone("grov.site", tailnet.Share{}, false); zone != "grov.site" {
 		t.Errorf("unshared zone %q", zone)
+	}
+}
+
+func TestStatusListsPeers(t *testing.T) {
+	c := startFake(t, &fakeTailscaled{status: `{
+		"BackendState": "Running",
+		"Self": {"DNSName": "regulus.tail0af9ab.ts.net."},
+		"Peer": {
+			"nodekey:a": {"ID": "nMGCzXpjyW11CNTRL", "DNSName": "pixel-9.tail0af9ab.ts.net.", "OS": "android", "Online": true, "TailscaleIPs": ["fd7a::1", "100.70.52.30"]},
+			"nodekey:b": {"ID": "neHR65UvQX11CNTRL", "DNSName": "Capella.tail0af9ab.ts.net.", "OS": "linux", "TailscaleIPs": ["100.76.35.70"]}
+		}
+	}`})
+	s, err := c.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	phone, ok := s.Peer("pixel-9")
+	if !ok || phone.ID != "nMGCzXpjyW11CNTRL" || phone.OS != "android" || !phone.Online || phone.IPv4.String() != "100.70.52.30" {
+		t.Errorf("pixel-9: %+v ok=%v", phone, ok)
+	}
+	if capella, ok := s.Peer("CAPELLA"); !ok || capella.Host != "capella" || capella.Online {
+		t.Errorf("capella: %+v ok=%v", capella, ok)
+	}
+	if _, ok := s.Peer("regulus"); ok {
+		t.Error("found this machine among its own peers")
+	}
+}
+
+func TestSendFileGoesToTheDeviceByStableID(t *testing.T) {
+	f := &fakeTailscaled{}
+	c := startFake(t, f)
+	phone := tailnet.Peer{ID: "nMGCzXpjyW11CNTRL", Host: "pixel-9"}
+	if err := c.SendFile(context.Background(), phone, "grove-regulus-root.crt", []byte("PEM")); err != nil {
+		t.Fatal(err)
+	}
+	if f.sentPath != "/localapi/v0/file-put/nMGCzXpjyW11CNTRL/grove-regulus-root.crt" || f.sentBody != "PEM" {
+		t.Errorf("sent %q %q", f.sentPath, f.sentBody)
+	}
+
+	f.denyWrite = true
+	if err := c.SendFile(context.Background(), phone, "x.crt", nil); !errors.Is(err, tailnet.ErrDenied) {
+		t.Errorf("denied: got %v, want ErrDenied", err)
+	}
+}
+
+// A device that does not take the file is a different failure from tailscaled
+// not answering, and taking longer than the status timeout is no failure at all.
+func TestSendFileToADeviceThatNeverAccepts(t *testing.T) {
+	c := startFake(t, &fakeTailscaled{neverAccept: true})
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	start := time.Now()
+	err := c.SendFile(ctx, tailnet.Peer{ID: "n1", Host: "pixel-9"}, "x.crt", []byte("PEM"))
+	if !errors.Is(err, tailnet.ErrNotAccepted) {
+		t.Fatalf("got %v, want ErrNotAccepted", err)
+	}
+	if waited := time.Since(start); waited < 5500*time.Millisecond {
+		t.Errorf("gave up after %v, before the caller's deadline; the status timeout is cutting sends short", waited)
 	}
 }

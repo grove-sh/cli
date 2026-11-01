@@ -34,6 +34,7 @@ type sharing struct {
 
 	mu       sync.Mutex
 	resolver net.PacketConn
+	tcp      net.Listener
 	bound    netip.Addr
 	// Suppress repeated log entries while the sharing state is unchanged.
 	said string
@@ -102,27 +103,40 @@ func (s *sharing) bindResolver(status tailnet.Status) error {
 	if s.resolver != nil && s.bound == status.IPv4 {
 		return nil
 	}
+	s.closeResolverLocked()
+	addr := net.JoinHostPort(status.IPv4.String(), strconv.Itoa(s.dnsPort))
+	conn, err := net.ListenPacket("udp", addr)
+	if err != nil {
+		return err
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		conn.Close()
+		return err
+	}
+	s.resolver, s.tcp, s.bound = conn, ln, status.IPv4
+	r := tailnet.Resolver{Zone: s.zone, IPv4: status.IPv4, IPv6: status.IPv6}
+	go r.Serve(conn)
+	go r.ServeTCP(ln)
+	return nil
+}
+
+func (s *sharing) closeResolverLocked() {
 	if s.resolver != nil {
 		s.resolver.Close()
 		s.resolver = nil
 	}
-	conn, err := net.ListenPacket("udp", net.JoinHostPort(status.IPv4.String(), strconv.Itoa(s.dnsPort)))
-	if err != nil {
-		return err
+	if s.tcp != nil {
+		s.tcp.Close()
+		s.tcp = nil
 	}
-	s.resolver, s.bound = conn, status.IPv4
-	go tailnet.Resolver{Zone: s.zone, IPv4: status.IPv4, IPv6: status.IPv6}.Serve(conn)
-	return nil
+	s.bound = netip.Addr{}
 }
 
 func (s *sharing) stopResolver() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.resolver != nil {
-		s.resolver.Close()
-		s.resolver = nil
-		s.bound = netip.Addr{}
-	}
+	s.closeResolverLocked()
 }
 
 func (s *sharing) claim(ctx context.Context) error {

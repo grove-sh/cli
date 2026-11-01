@@ -93,3 +93,25 @@ func TestResolverIgnoresGarbage(t *testing.T) {
 		t.Errorf("truncated name: got %v, want FORMERR", reply)
 	}
 }
+
+func TestResolverAnswersOverTCP(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go tailnet.Resolver{Zone: "capella.grov.site", IPv4: netip.MustParseAddr("100.76.35.70")}.ServeTCP(ln)
+	r := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", ln.Addr().String())
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	addrs, err := r.LookupNetIP(ctx, "ip4", "app.capella.grov.site")
+	if err != nil || len(addrs) != 1 || addrs[0].String() != "100.76.35.70" {
+		t.Fatalf("got %v %v", addrs, err)
+	}
+	if _, err := r.LookupNetIP(ctx, "ip4", "example.com"); err == nil {
+		t.Error("answered a name outside the zone over TCP")
+	}
+}

@@ -220,3 +220,29 @@ func TestSharingStopsWhenTheRecordGoes(t *testing.T) {
 		t.Errorf("last log %q does not say to restart", last)
 	}
 }
+
+// Resolvers fall back to TCP, so the daemon binds both and takes both down.
+func TestSharingAnswersOverTCPToo(t *testing.T) {
+	f := &fakeTailscale{status: onTailnet("dreamops.dev"), serve: `{}`}
+	s, _ := newSharing(t, f)
+	s.tick(context.Background())
+
+	tcpLookup := func() error {
+		r := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(s.dnsPort)))
+		}}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_, err := r.LookupNetIP(ctx, "ip4", "app.capella.grov.site")
+		return err
+	}
+	if err := tcpLookup(); err != nil {
+		t.Fatalf("over TCP: %v", err)
+	}
+	f.set(func(f *fakeTailscale) { f.status = onTailnet("client.example") })
+	s.tick(context.Background())
+	if err := tcpLookup(); err == nil {
+		t.Error("still answering over TCP on another tailnet")
+	}
+}

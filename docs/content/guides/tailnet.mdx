@@ -41,7 +41,19 @@ The restart matters. Every hostname on the machine changes, so the daemon and an
 
 Every device needs two things. The first is **Use Tailscale DNS** turned on in the Tailscale app, or `--accept-dns` on Linux, which is the default. Without it the split DNS entry never applies. If the device uses an exit node, also turn on Use with exit node for each entry.
 
-The second is **the serving machine's root, trusted**. Each machine has its own, at `root.crt` in its state directory, `~/.local/state/grove` on Linux. Copy it over and install it as a CA certificate: into the system trust store on a computer, or on Android through Settings, Security, Encryption & credentials, Install a certificate, CA certificate. Only the `.crt` travels, never the key.
+The second is **the serving machine's root, trusted**. Each machine has its own. On another machine that runs grove, trust it by name:
+
+```sh
+grove trust capella
+```
+
+For a phone, send each serving machine's root to it over Taildrop, from that machine, and follow the install steps it prints:
+
+```sh
+grove trust --send pixel-9
+```
+
+Only the root's certificate travels, never its key. [`grove trust`](/reference/cli/trust) has the details, including how the fetch knows it reached the right machine.
 
 ## Switching tailnets
 
